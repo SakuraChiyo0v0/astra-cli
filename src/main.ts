@@ -7,7 +7,9 @@
  * - stderr 是进度与诊断（每行一个 JSON），不当结果解析
  * - 退出码：0 成功 / 2 参数错 / 3 需要配置 / 4 没找到 / 5 上游或网络 / 130 取消
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { AstraError, toAstraError } from './core/errors.ts'
 import { failResult, okResult, writeJson } from './core/output.ts'
 import { describeCommand, parseCommandArgs, type Command } from './core/command.ts'
@@ -391,15 +393,25 @@ async function main(): Promise<number> {
  *
  * 改成比对路径：当前模块就是 argv[1]（被 node 当作主模块启动）才执行。
  * 被 import 时 argv[1] 是别的文件，自然不匹配。
+ *
+ * **必须用 fileURLToPath，不能用 URL.pathname。** pathname 是百分号编码的，
+ * 路径里有空格时拿到 `/a%20b/astra.mjs`，和 argv[1] 的 `/a b/astra.mjs` 永远对不上，
+ * 于是同一个"静默不执行"的病又回来了（实测，见 tests/entry.test.ts）。
  */
 function normalizePath(value: string): string {
-  // 统一成 posix 风格；顺便去掉 Windows 盘符前的多余斜杠
-  return value.split(String.fromCharCode(92)).join('/').replace(/^\/([A-Za-z]:)/, '$1')
+  const absolute = path.resolve(value)
+  // Node 解析模块 URL 时会跟随符号链接，argv[1] 不会。用软链启动时两边要拉到同一处比对。
+  try {
+    return realpathSync(absolute)
+  } catch {
+    return absolute
+  }
 }
-const entryPath = normalizePath(process.argv[1] ?? '')
-const selfPath = normalizePath(import.meta.url.startsWith('file://') ? new URL(import.meta.url).pathname : '')
+
+const entryPath = process.argv[1] ? normalizePath(process.argv[1]) : ''
+const selfPath = normalizePath(fileURLToPath(import.meta.url))
 // 打包产物里 import.meta.url 指向产物本身；开发态指向 src/main.ts。两者都应能对上 argv[1]。
-const isEntry = entryPath !== '' && (selfPath === entryPath || selfPath.endsWith(entryPath) || entryPath.endsWith(selfPath))
+const isEntry = entryPath !== '' && entryPath === selfPath
 if (isEntry) {
   main().then(
     (code) => {

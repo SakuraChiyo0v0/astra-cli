@@ -94,7 +94,7 @@ export function requireSteamId(credentials: SteamCredentials | null): string {
   if (!id) {
     throw new AstraError('STEAM_NO_STEAMID', '没有设置默认 SteamID64', {
       exitCode: 3,
-      hint: '`astra steam auth set-user 76561199038682501`，或命令里加 --user',
+      hint: '`astra steam auth set-user <17 位 SteamID64>`，或命令里加 --user',
     })
   }
   return id

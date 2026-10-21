@@ -9,6 +9,9 @@ astra.db
 astra.db-shm
 astra.db-wal
 *-session.json
+# Steam 凭据（Web API key + SteamID64）。不是 *-session.json，单独列，
+# 漏了这条一个 git add . 就把 key 推上公开仓库了。
+steam-credentials.json
 login-pending.json
 bili-login-pending.json
 login-qr.png

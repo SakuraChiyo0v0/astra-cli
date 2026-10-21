@@ -26,8 +26,10 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   { key: 'music.quality', description: '默认请求音质：128k / 320k / flac / 24bit（实际以文件实测为准）', default: 'flac',
     validate: (v) => (QUALITIES.includes(v) ? null : `只能是 ${QUALITIES.join(' / ')}`) },
-  { key: 'music.template', description: '落盘路径模板，变量 {artist} {albumartist} {album} {title} {year} {track} {disc} {ext}，支持 {track:02}',
+  { key: 'music.template', description: '落盘路径模板，变量 {artist} {primary_artist} {albumartist} {album} {title} {year} {track} {disc} {ext}，支持 {track:02}',
     default: '{albumartist}/{album}/{track:02} {title}.{ext}' },
+  { key: 'music.compilation-dir', description: '合辑（专辑歌手是「群星」）的落盘目录，代替模板里的歌手一层；设成 Various Artists 可让播放器按惯例归类', default: '合辑',
+    validate: (v) => (v.trim() === '' ? '不能为空' : /[\\/:*?"<>|]/.test(v) ? '目录名里不能有 \\ / : * ? " < > |' : null) },
   { key: 'music.lyric', description: '是否写歌词：embed（写进标签）/ lrc（另存 .lrc）/ both / none', default: 'both',
     validate: (v) => (['embed', 'lrc', 'both', 'none'].includes(v) ? null : '只能是 embed / lrc / both / none') },
   { key: 'music.wordLyric', description: '逐字歌词：auto（从酷狗取，时长对不上就跳过）/ off', default: 'auto',
@@ -50,8 +52,10 @@ export const CONFIG_KEYS: ConfigKey[] = [
   // 用 include/exclude 按域名控制，别让 B 站、网易云也绕一圈。
   { key: 'proxy.url', description: 'HTTP 代理地址（如 http://mihomo:7890）；留空则不用代理', default: '',
     validate: (v) => (v === '' || /^http:\/\/[^\s]+$/.test(v) ? null : '要写成 http://host:port') },
-  { key: 'proxy.include', description: '走代理的域名后缀，逗号分隔（如 steampowered.com,steamcommunity.com）；留空 = 全部走', default: '' },
-  { key: 'proxy.exclude', description: '不走代理的域名后缀，逗号分隔（优先级高于 include）', default: '' },
+  // 这两条的「留空」含义必须写清楚：include 留空**不是**"谁都不走"，而是"全走"。
+  // 只说一半会让人以为安全，实际把 B 站、网易云一起推进了代理。
+  { key: 'proxy.include', description: '走代理的域名后缀，逗号分隔（如 steampowered.com,steamcommunity.com）；留空 = 全部走代理', default: '' },
+  { key: 'proxy.exclude', description: '不走代理的域名后缀，逗号分隔（优先级高于 include）；留空 = 不排除', default: '' },
   // 视频文件大、CDN 也更容易被并发限速，默认比音乐保守
   { key: 'bili.concurrency', description: 'B 站批量任务并发数 1..3', default: '1',
     validate: (v) => (/^[1-3]$/.test(v) ? null : '只能是 1..3') },

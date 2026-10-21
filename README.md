@@ -11,12 +11,18 @@
 
 | 能力域 | 能做什么 | 命令数 |
 |-|-|-|
-| **音乐**（网易云） | 找歌 → 判断版本 → 取最高音质 → 写标签/封面/歌词 → 存进曲库 | 30 |
-| **B 站** | 视频 / 分 P / 收藏夹 / 合集下载，音视频合并，字幕，弹幕，热门 | 16 |
-| **媒体处理** | 抽音轨、裁剪、转码、截图（对本地文件） | 5 |
-| 基础设施 | 统一输出、配置、飞书通知、自检 | 5 |
+| **音乐**（网易云） | 找歌 → 判断版本 → 取最高音质 → 写标签/封面/歌词 → 存进曲库 | 33 |
+| **B 站** | 视频 / 分 P / 收藏夹 / 合集 / UP 主投稿下载，音视频合并，字幕，弹幕，热门 | 26 |
+| **媒体处理** | 抽音轨、裁剪、转码、截图、拼接、水印（对本地文件） | 7 |
+| **Steam** | 愿望单（带价格/折扣）、公开库存、玩家资料 | 8 |
+| **VRChat** | 好友、通知、世界、实例、群组、头像、收藏、经济 | 32 |
+| 基础设施 | 统一输出、配置、飞书通知、自检、后台任务、备份、审计 | 10 |
 
-规模：48 条命令（不含内部 worker），约 7600 行 TS，16 个测试文件 91 项测试。
+规模：116 条命令（不含内部 worker），约 15000 行 TS，36 个测试文件 226 项测试。
+
+**代理**：`proxy.url` / `include` / `exclude` 按域名决定哪些请求走代理，
+Steam 这类被墙的域名走代理，B 站和网易云保持直连（它们对代理 IP 更敏感）。
+注意 `proxy.include` **留空表示全部走代理**，与"谁都不走"相反。
 
 ### 音乐
 
@@ -61,6 +67,23 @@ astra media thumbnail <视频> --at 30       # 截一帧当封面
 
 DASH 的音视频是**分开的两个流**，下完用 ffmpeg 合并 —— 所以 B 站能力需要 ffmpeg（音乐那边不需要）。
 
+### Steam
+
+只做对"AI 代替我"有实际意义的两类：**愿望单**和**库存**。商店查询、评测、成就没做，那些自己看更合适。
+
+```sh
+astra steam auth set-user 7656xxxxxxxxxxxxx   # 设置默认 SteamID64
+astra steam wishlist --sort discount          # 愿望单：名字、价格、折扣、加入日期
+astra steam wishlist --no-details             # 只要 appid，快（不查商店）
+astra steam inventory --app 730               # CS2 库存
+astra steam me                                # 玩家资料（需要 Web API key）
+astra steam doctor                            # 网络 / 代理 / 凭据自检
+```
+
+愿望单的 appid 列表**不需要 key**，只要账号的"游戏详情"是公开的。
+补名字和价格要查 `store.steampowered.com`，那个域名必须走代理。
+`steamcommunity.com`（库存）也走代理 —— 库存接口对共享代理 IP 限流很严，会 429。
+
 ## 输出约定
 
 stdout 只有一个 JSON，进度和诊断走 stderr：
@@ -85,6 +108,7 @@ stdout 只有一个 JSON，进度和诊断走 stderr：
 
 需要登录的能力（私人歌单、日推、B 站高画质）各自存一份会话文件，权限 600：
 `netease-session.json` / `bili-session.json`。两者都是扫码登录，二维码出 PNG。
+Steam 的凭据（Web API key + SteamID64）同样权限 600，存在 `steam-credentials.json`。
 
 音源脚本不进仓库：`astra music source add <文件>` 导入，导入前会试加载。
 
@@ -101,15 +125,17 @@ npm run check      # 类型检查 + 测试 + 打包
 打包产物 `dist/astra.mjs` 是单文件（约 240KB），进容器只要一个 Node。
 
 部署见 [deploy/README.md](deploy/README.md)；
-Hermes 用的 skill 在 [skills/music/SKILL.md](skills/music/SKILL.md) 和 [skills/bili/SKILL.md](skills/bili/SKILL.md)。
+Hermes 用的 skill 在 [skills/music/SKILL.md](skills/music/SKILL.md)、[skills/bili/SKILL.md](skills/bili/SKILL.md)、
+[skills/steam/SKILL.md](skills/steam/SKILL.md) 和 [skills/vrchat/SKILL.md](skills/vrchat/SKILL.md)。
 
 ## 目录
 
 ```
-src/core/    输出约定、错误、配置、HTTP、SQLite、飞书通知、命令框架、通用任务骨架、路径模板、二维码
+src/core/    输出约定、错误、配置、HTTP、按域代理、SQLite、飞书通知、命令框架、通用任务骨架、路径模板、二维码
 src/lx/      洛雪音源宿主（vm 沙箱）与音源管理
 src/music/   网易云接口、版本判断、酷我同曲匹配、取链、下载、标签、曲库、订阅、逐字歌词
-src/bili/    B 站接口、wbi 签名、DASH 下载与合并、收藏夹/合集、扫码登录
+src/bili/    B 站接口、wbi 签名、DASH 下载与合并、收藏夹/合集/UP 投稿、扫码登录
+src/steam/   Steam 愿望单、库存、玩家资料、凭据
 tests/       node:test；夹具是真实抓取的响应和 ffmpeg 生成的真实音视频
 docs/        归档（每件事的"踩过的坑"）、PLAN（进度与待办）
 ```

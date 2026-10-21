@@ -20,9 +20,15 @@
  *
  * 这里用 `node:http` 的 CONNECT 建隧道，零依赖，且能精确控制每个请求。
  * 只支持 http/https 代理（SOCKS 需要额外协议握手，暂时不做）。
+ *
+ * ## 必须保留原始方法与 body
+ *
+ * 早先的实现把请求行硬写成 `GET`、body 直接丢掉 —— 只对"查一下"够用，
+ * 但 `proxy.include` 留空表示"全部走"，那样网易云的登录轮询、红心、
+ * 飞书 webhook 会全部静默变成无 body 的 GET，看起来像上游坏了。
+ * 现在把 method / body / Content-Length 原样带过去（见 tests/proxy.test.ts）。
  */
 import http from 'node:http'
-import https from 'node:https'
 import tls from 'node:tls'
 import zlib from 'node:zlib'
 import { getConfig } from './config.ts'
@@ -68,6 +74,13 @@ export function shouldProxy(host: string, config: ProxyConfig | null = proxyConf
   return config.include.some(matches)
 }
 
+/** 超时错误要带 `name = 'TimeoutError'`，上层靠这个名字区分超时和普通网络错误。 */
+function timeoutError(message: string): Error {
+  const err = new Error(message)
+  err.name = 'TimeoutError'
+  return err
+}
+
 /** 建一条到目标主机的隧道，返回裸 socket（HTTPS 还要在外面套 TLS）。 */
 export function openTunnel(proxyUrl: string, host: string, port: number, timeoutMs = 20_000): Promise<import('node:net').Socket> {
   return new Promise((resolve, reject) => {
@@ -100,11 +113,10 @@ export function openTunnel(proxyUrl: string, host: string, port: number, timeout
       resolve(socket)
     })
     request.on('error', reject)
-    request.on('timeout', () => request.destroy(new Error(`代理连接超时（${Math.round(timeoutMs / 1000)} 秒）`)))
+    request.on('timeout', () => request.destroy(timeoutError(`代理连接超时（${Math.round(timeoutMs / 1000)} 秒）`)))
     request.end()
   })
 }
-
 
 export interface ProxiedResponse {
   status: number
@@ -112,113 +124,164 @@ export interface ProxiedResponse {
   body: Buffer
 }
 
-const CRLF = String.fromCharCode(13) + String.fromCharCode(10)
-const HEADER_END = Buffer.from(CRLF + CRLF, 'latin1')
+export interface ProxiedRequestOptions {
+  /** 默认 GET。**必须原样带给上游** —— 见文件头的说明。 */
+  method?: string
+  headers?: Record<string, string>
+  body?: string | Buffer
+  timeoutMs?: number
+  /** 覆盖 `proxy.url`（测试用）。 */
+  proxyUrl?: string
+  signal?: AbortSignal
+}
+
+const CRLF = '\r\n'
+const HEADER_END = Buffer.from(`${CRLF}${CRLF}`, 'latin1')
 const CRLF_BUF = Buffer.from(CRLF, 'latin1')
 
+/** 响应体解压后会比原始字节长，header 里的长度和编码标记要跟着改，否则调用方会误判。 */
+function fixFramingHeaders(headers: Record<string, string>, body: Buffer): void {
+  delete headers['transfer-encoding']
+  delete headers['content-encoding']
+  headers['content-length'] = String(body.length)
+}
+
+/** 按 content-encoding 兜底解压。有的服务器无视 `Accept-Encoding: identity` 照样压缩。 */
+function decodeBody(body: Buffer, encoding: string): Buffer {
+  const tryDecode = (fn: (input: Buffer) => Buffer): Buffer => {
+    try {
+      return fn(body)
+    } catch {
+      // 解不开就原样返回，让调用方看到原始字节而不是骗它说成功了
+      return body
+    }
+  }
+  if (encoding.includes('gzip')) return tryDecode((b) => zlib.gunzipSync(b))
+  if (encoding.includes('deflate')) return tryDecode((b) => zlib.inflateSync(b))
+  if (encoding.includes('br')) return tryDecode((b) => zlib.brotliDecompressSync(b))
+  return body
+}
+
 /**
- * 经代理发一个 GET。
+ * 经代理发一个请求（任意方法）。
  *
  * **直接在隧道 socket 上写 HTTP 请求，不走 `https.request`。**
  * 后者在已完成 TLS 握手的 socket 上会再握手一次，Steam 商店接口会因此返回 400（实测）。
+ *
+ * 同样的原因，请求行、方法、body 都是自己拼的 —— 所以也就必须自己保证
+ * method / body / Content-Length 与调用方给的一致。
  */
-export async function proxiedGet(
-  url: string,
-  options: { headers?: Record<string, string>; timeoutMs?: number; proxyUrl?: string; signal?: AbortSignal } = {},
-): Promise<ProxiedResponse> {
+export async function proxiedRequest(url: string, options: ProxiedRequestOptions = {}): Promise<ProxiedResponse> {
   const config = proxyConfig()
   const proxyUrl = options.proxyUrl ?? config?.url
   if (!proxyUrl) throw new Error('没有配置代理')
 
   const target = new URL(url)
-  if (target.protocol !== 'https:') throw new Error(`经代理只支持 https，收到 ${target.protocol}`)
+  const isTls = target.protocol === 'https:'
+  if (!isTls && target.protocol !== 'http:') {
+    throw new Error(`经代理只支持 http / https，收到 ${target.protocol}`)
+  }
 
+  const port = Number(target.port || (isTls ? 443 : 80))
   const timeoutMs = options.timeoutMs ?? 20_000
-  const socket = await openTunnel(proxyUrl, target.hostname, Number(target.port || 443), timeoutMs)
+  const method = (options.method ?? 'GET').toUpperCase()
+  const body = options.body === undefined
+    ? null
+    : Buffer.isBuffer(options.body) ? options.body : Buffer.from(options.body, 'utf8')
+
+  const socket = await openTunnel(proxyUrl, target.hostname, port, timeoutMs)
 
   return await new Promise<ProxiedResponse>((resolve, reject) => {
-    const secure = tls.connect({ socket, servername: target.hostname })
-    const timer = setTimeout(() => {
-      secure.destroy()
-      reject(new Error(`经代理请求超时（${Math.round(timeoutMs / 1000)} 秒）`))
-    }, timeoutMs)
-    const onAbort = (): void => {
-      clearTimeout(timer)
-      secure.destroy()
-      reject(new Error('已取消'))
-    }
-    options.signal?.addEventListener('abort', onAbort, { once: true })
-    const cleanup = (): void => {
+    // https 在隧道上再套一层 TLS；http 直接用隧道 socket 说话
+    const conn = isTls ? tls.connect({ socket, servername: target.hostname }) : socket
+    let settled = false
+
+    const finish = (): void => {
+      settled = true
       clearTimeout(timer)
       options.signal?.removeEventListener('abort', onAbort)
     }
 
-    secure.on('error', (err) => {
-      cleanup()
+    const timer = setTimeout(() => {
+      if (settled) return
+      finish()
+      conn.destroy()
+      reject(timeoutError(`经代理请求超时（${Math.round(timeoutMs / 1000)} 秒）`))
+    }, timeoutMs)
+
+    const onAbort = (): void => {
+      if (settled) return
+      finish()
+      conn.destroy()
+      const err = new Error('已取消')
+      err.name = 'AbortError'
+      reject(err)
+    }
+    options.signal?.addEventListener('abort', onAbort, { once: true })
+
+    conn.on('error', (err) => {
+      if (settled) return
+      finish()
       reject(err)
     })
 
-    secure.on('secureConnect', () => {
-      const agent = options.headers?.['user-agent'] ?? 'astra-cli'
-      const extra = Object.entries(options.headers ?? {})
-        .filter(([k]) => !/^(host|connection|accept-encoding|user-agent)$/i.test(k))
+    const send = (): void => {
+      const headers = options.headers ?? {}
+      // 这几个头由本函数自己决定，调用方的值会被覆盖或丢弃：
+      // host / content-length 要按实际目标与字节数算，connection 固定 close，
+      // accept-encoding 固定 identity，user-agent 单独取值后统一写。
+      const extra = Object.entries(headers)
+        .filter(([k]) => !/^(host|connection|content-length|accept-encoding|user-agent)$/i.test(k))
         .map(([k, v]) => `${k}: ${v}`)
       const lines = [
-        `GET ${target.pathname}${target.search} HTTP/1.1`,
+        `${method} ${target.pathname}${target.search} HTTP/1.1`,
         `Host: ${target.host}`,
-        `User-Agent: ${agent}`,
-        'Accept: application/json',
+        `User-Agent: ${headers['user-agent'] ?? 'astra-cli'}`,
+        `Accept: ${headers.accept ?? '*/*'}`,
         'Accept-Encoding: identity',
         'Connection: close',
+        ...(body ? [`Content-Length: ${body.length}`] : []),
         ...extra,
       ]
-      secure.write(lines.join(CRLF) + CRLF + CRLF)
+      conn.write(lines.join(CRLF) + CRLF + CRLF)
+      if (body) conn.write(body)
+    }
 
-      const chunks: Buffer[] = []
-      secure.on('data', (chunk: Buffer) => chunks.push(chunk))
-      secure.on('end', () => {
-        cleanup()
-        const raw = Buffer.concat(chunks)
-        const separator = raw.indexOf(HEADER_END)
-        if (separator < 0) {
-          reject(new Error('代理响应格式异常（找不到头部结束标记）'))
-          return
-        }
-        const head = raw.subarray(0, separator).toString('latin1')
-        let body: Buffer = Buffer.from(raw.subarray(separator + 4))
-        const [statusLine, ...headerLines] = head.split(CRLF)
-        const status = Number(statusLine?.split(' ')[1] ?? 0)
-        const headers: Record<string, string> = {}
-        for (const line of headerLines) {
-          const colon = line.indexOf(':')
-          if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim()
-        }
-        if (headers['transfer-encoding']?.includes('chunked')) body = dechunk(body)
-        // 有的服务器无视 Accept-Encoding: identity 照样 gzip（Steam 的 429 响应就是）。
-        // 不在这里解开，调用方拿到的是乱码，JSON.parse 会失败，错误信息也会变得莫名其妙。
-        const encoding = headers['content-encoding'] ?? ''
-        if (encoding.includes('gzip')) {
-          try {
-            body = zlib.gunzipSync(body)
-          } catch {
-            // 解不开就原样返回，让调用方看到原始字节而不是骗它说成功了
-          }
-        } else if (encoding.includes('deflate')) {
-          try {
-            body = zlib.inflateSync(body)
-          } catch {
-            /* 同上 */
-          }
-        } else if (encoding.includes('br')) {
-          try {
-            body = zlib.brotliDecompressSync(body)
-          } catch {
-            /* 同上 */
-          }
-        }
-        resolve({ status, headers, body })
-      })
+    const chunks: Buffer[] = []
+    conn.on('data', (chunk: Buffer) => chunks.push(chunk))
+    conn.on('end', () => {
+      if (settled) return
+      finish()
+      const raw = Buffer.concat(chunks)
+      const separator = raw.indexOf(HEADER_END)
+      if (separator < 0) {
+        reject(new Error('代理响应格式异常（找不到头部结束标记）'))
+        return
+      }
+      const head = raw.subarray(0, separator).toString('latin1')
+      let responseBody: Buffer = Buffer.from(raw.subarray(separator + 4))
+      const [statusLine, ...headerLines] = head.split(CRLF)
+      const status = Number(statusLine?.split(' ')[1] ?? Number.NaN)
+      if (!Number.isFinite(status) || status < 100) {
+        reject(new Error(`代理响应格式异常（状态行：${statusLine ?? '(空)'}）`))
+        return
+      }
+      const responseHeaders: Record<string, string> = {}
+      for (const line of headerLines) {
+        const colon = line.indexOf(':')
+        if (colon > 0) responseHeaders[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim()
+      }
+      if (responseHeaders['transfer-encoding']?.includes('chunked')) responseBody = dechunk(responseBody)
+      responseBody = decodeBody(responseBody, responseHeaders['content-encoding'] ?? '')
+      fixFramingHeaders(responseHeaders, responseBody)
+      resolve({ status, headers: responseHeaders, body: responseBody })
     })
+
+    if (isTls) {
+      (conn as import('node:tls').TLSSocket).on('secureConnect', send)
+    } else {
+      send()
+    }
   })
 }
 
@@ -238,10 +301,10 @@ function dechunk(input: Buffer): Buffer {
   return parts.length > 0 ? Buffer.concat(parts) : input
 }
 
-/** 该主机走代理就用 proxiedGet，否则返回 null 让调用方走普通 fetch。 */
-export async function maybeProxiedGet(
+/** 该主机走代理就经代理发，否则返回 null 让调用方走普通 fetch。 */
+export async function maybeProxiedRequest(
   url: string,
-  options: { headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal } = {},
+  options: Omit<ProxiedRequestOptions, 'proxyUrl'> = {},
 ): Promise<ProxiedResponse | null> {
   const config = proxyConfig()
   if (!config) return null
@@ -252,5 +315,5 @@ export async function maybeProxiedGet(
     return null
   }
   if (!shouldProxy(host, config)) return null
-  return await proxiedGet(url, { ...options, proxyUrl: config.url })
+  return await proxiedRequest(url, { ...options, proxyUrl: config.url })
 }

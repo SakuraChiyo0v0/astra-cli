@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.12.1 — 2026-10-21
+
+**修复 v0.12.0 的代理实现，其中一条会在配了代理之后静默改坏所有写请求。**
+
+- **修（严重）**：经代理的请求一律被写成 `GET`、body 被丢弃。`proxy.include` 留空表示
+  "全部走代理"，所以只设 `proxy.url` 不设 `include` 时，网易云登录轮询、红心、飞书 webhook
+  全部变成无 body 的 GET —— 上游报错，但看不出原因。现在方法 / body / Content-Length 原样带过去，
+  并新增 `PUT` / `DELETE` 的覆盖。`proxiedGet` → `proxiedRequest`
+- **修**：经代理的请求绕过了 `retries`，5xx 不再重试。现在直连和代理走同一套重试
+- **修**：代理连不上时错误漏成 `INTERNAL` / exitCode 1 / 不可重试。现在归一为
+  `NETWORK_ERROR` / exit 5 / `retryable: true`，hint 指向代理网络
+- **修**：入口判定在**路径含空格**时静默失效（退出码 0、零输出）。`URL.pathname` 是百分号编码
+  路径，和 `argv[1]` 永远对不上；改用 `fileURLToPath` + `realpathSync`
+- **修**：`steam-credentials.json` 没进 `.gitignore`（仓库是公开的），一个 `git add .` 就会把
+  Web API key 推上去
+- **修**：经代理时的 gzip/chunked 解压后没有同步 `Content-Length`，调用方会误判正文长度
+- **修**：`appDetails` 的注释写"一次最多 50 个、内部分批"，实际是逐个请求并发 4，没有上限
+- 测试：新增 `tests/proxy-transport.test.ts`（12 项，本地起真代理）与 `tests/entry.test.ts`
+  （6 项，在带空格/中文目录里跑打包产物）。两条都验证过"撤掉修复会变红"
+- 文档：README 补 Steam 与代理、更新规模数字；新增 `skills/steam/SKILL.md`；
+  `deploy/README.md` 补 `proxy-net` 的前提与配置；`docs/PLAN.md` 勾掉 P4-1；
+  `config list` 里写清 `proxy.include` 留空 = 全部走
+
+
+## 0.12.2 — 2026-10-23
+
+**音乐：合辑归到一处，专辑艺术家不再拼一串**
+
+- 合辑（网易云专辑歌手是「群星」）落到 `合辑/<专辑>/`，不再每个歌手各起一个目录。
+  目录名可用 `music.compilation-dir` 改，设成 `Various Artists` 就让 Navidrome 按惯例归类
+- 合辑的 `album_artist` 标签写 `Various Artists`（Navidrome / Plex 认的标准值，「群星」它们不认）
+- 新增模板变量 `{primary_artist}`：只取第一位歌手。原来的 `{artist}` 仍拼全部歌手
+- 合辑只影响新下载；已下好的文件不动
+
+
 ## 0.12.0 — 2026-10-21
 
 **新增 Steam 域 + 代理基础设施**

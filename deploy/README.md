@@ -2,7 +2,7 @@
 
 ```
 飞书 ⇄ Hermes 容器（WebSocket 出站）── terminal ──▶ astra.mjs ──▶ 网易云 / 音源 ──▶ <音乐目录>/astra
-              │
+              │                                        └── 按域代理 ──▶ mihomo:7890 ──▶ Steam 等
               └── OpenAI 兼容 ──▶ workbuddy2api:7863（同机容器，按容器名直连）
 ```
 
@@ -52,6 +52,27 @@ Hermes 的 terminal 是 local 后端，agent 能在容器里跑任意命令。�
 回收方式：删掉 compose 里对应的那行挂载，`docker compose up -d` 重建即生效。
 `/volume1/音乐` 下有 `#recycle`，删文件会先进回收站，算一层缓冲。
 
+## 出站代理网络（proxy-net）
+
+Steam 的域名在国内多数不通，astra 靠 mihomo 走代理访问。这条链路有两个前提：
+
+1. **`proxy-net` 必须是独立网络**，不能借用别的项目的网络（比如曾经的 `asf_default`）。
+   借用的话，那个项目一 `down` 或重建网络，代理就跟着断，而依赖藏在 `external: true` 里不明显。
+   建法：`docker network create proxy-net`，然后 mihomo 和 hermes 都接进去。
+2. **astra 侧要配**（进容器执行）：
+
+   ```sh
+   docker exec hermes astra config set proxy.url http://mihomo:7890
+   docker exec hermes astra config set proxy.include steampowered.com,steamcommunity.com
+   docker exec hermes astra config set proxy.exclude bilibili.com,music.163.com
+   docker exec hermes astra doctor
+   ```
+
+   `proxy.include` **留空表示全部走代理**，与直觉相反 —— 只设 `proxy.url` 不设 `include`，
+   B 站和网易云也会绕代理（慢、多一跳、更容易触发风控）。所以 `exclude` 也要写。
+
+改完网络后 `docker compose up -d --force-recreate` 才生效。
+
 ## 镜像：为什么要自己 build
 
 官方镜像**装不了**飞书 SDK，必须用同目录的 Dockerfile 派生一层：
@@ -96,6 +117,7 @@ deepseek-v4-pro / deepseek-v4.1-flash / glm-5.3 / kimi-k3-1 / minimax-m3 / hy3 �
 - 不发布任何端口；飞书是出站长连接
 - Hermes 的 terminal 是 local 后端，能在容器里执行任意命令。容器里只挂了它需要的目录，没有 Docker socket
 - 白名单必须填
+- 代理只对中国大陆访问不到的域名启用；`proxy.exclude` 里保留 `bilibili.com,music.163.com`（它们对代理 IP 敏感）
 - `data/.env`、`astra/home/` 里有密钥和音源脚本，不要放进共享目录
 
 ## 部署时踩过的坑（2026-10-21）

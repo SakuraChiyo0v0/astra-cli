@@ -21,6 +21,7 @@ import { albumInfo, beijingDate, lyric, type AlbumInfo, type Track } from './net
 import { resolveUrl } from './resolve.ts'
 import { audioPayload, writeTags, type TagData } from './tags.ts'
 import { renderTemplate, resolveInside } from './paths.ts'
+import { albumArtistsFor, isCompilation, primaryArtist } from './album-artist.ts'
 import { kugouWordLyric, toEnhancedLrc } from './kugou-lyric.ts'
 import { findTrack, findByFingerprint, saveTrack, trackFingerprint, type LibraryTrack } from './library.ts'
 
@@ -108,6 +109,20 @@ async function downloadTo(url: string, file: string, expectedBytes: number | nul
   throw new AstraError('DOWNLOAD_FAILED', '音频下载多次中断', { exitCode: 5, retryable: true })
 }
 
+/**
+ * 实际用的落盘模板。
+ *
+ * 合辑换成 `<合辑目录>/{album}/<文件名段>`：目录前缀不看用户模板，因为模板可能是
+ * `{artist}/…`，那样合辑里每个歌手各起一个目录，等于没归到一起。文件名那一段照用
+ * 用户的模板，不擅自改他的命名习惯。
+ */
+export function templateFor(options: { template: string; compilationDir: string; compilation: boolean }): string {
+  if (!options.compilation) return options.template
+  const segments = options.template.split(/[\\/]+/).filter(Boolean)
+  const file = segments[segments.length - 1] ?? '{title}.{ext}'
+  return `${options.compilationDir}/{album}/${file}`
+}
+
 function lyricText(lrc: string): string {
   return lrc
     .split(/\r?\n/)
@@ -167,19 +182,25 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
   }
 
   const root = musicRoot()
-  const albumArtists = album?.artists.length ? album.artists : track.artists.slice(0, 1)
+  const albumScope = { albumArtists: album?.artists ?? null, albumId: track.albumId }
+  const albumArtists = albumArtistsFor({ ...albumScope, trackArtists: track.artists })
   const date = beijingDate(track.publishTime ?? album?.publishTime ?? null)
   const ext = extensionFor(resolved.probe.format)
-  const relative = renderTemplate(getConfig('music.template'), {
+  const vars = {
     artist: track.artists.join(', '),
     albumartist: albumArtists.join(', '),
+    primary_artist: primaryArtist(track.artists),
     album: track.album ?? '未知专辑',
     title: track.title,
     year: date?.slice(0, 4) ?? '',
     track: track.trackNo ? String(track.trackNo) : '',
     disc: track.discNo ? String(Number.parseInt(track.discNo, 10) || '') : '',
     ext,
-  })
+  }
+  const relative = renderTemplate(
+    templateFor({ template: getConfig('music.template'), compilationDir: getConfig('music.compilation-dir'), compilation: isCompilation(albumScope) }),
+    vars,
+  )
   const target = resolveInside(root, relative)
   await mkdir(path.dirname(target), { recursive: true })
   const tmp = `${target}.part-${process.pid}`

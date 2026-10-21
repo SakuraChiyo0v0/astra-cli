@@ -155,12 +155,13 @@ interface RawAppDetails {
 /**
  * 批量取商店详情。`store.steampowered.com` **必须走代理**（NAS 上直连超时）。
  *
- * 一次最多查 50 个（Steam 会截断），超出内部自动分批。
+ * **一次只能查一个 appid**：实测传 `appids=4000,287980` 会返回 400 Bad Request，
+ * 所以这里逐个请求、并发 4 条。传多少个都行，内部自己排队，没有"最多 50 个"的限制。
+ * 单个 appid 失败（下架、地区不可售）会被跳过，不中断整批 —— 返回的 Map 里没有它而已。
  */
 export async function appDetails(appIds: string[], countryCode = 'cn', language = 'schinese', signal?: AbortSignal): Promise<Map<string, AppDetail>> {
   const out = new Map<string, AppDetail>()
-  // **一次只能查一个 appid**：实测传 `appids=4000,287980` 会返回 400 Bad Request。
-  // 所以逐个请求；并发 4 条，兼顾速度和别把上游打急。
+  // 并发 4 条，兼顾速度和别把上游打急。
   const CONCURRENCY = 4
   let cursor = 0
   const worker = async (): Promise<void> => {

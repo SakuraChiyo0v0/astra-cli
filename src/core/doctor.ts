@@ -20,7 +20,7 @@ import { listSources } from '../lx/store.ts'
 import { loadSession } from '../music/auth.ts'
 import { loadBiliSession } from '../bili/auth.ts'
 import { runBinary, ffmpegPath } from '../media/run.ts'
-import { maybeProxiedGet, proxyConfig } from './proxy.ts'
+import { maybeProxiedRequest, proxyConfig } from './proxy.ts'
 import { dirUsage } from './disk.ts'
 
 export type CheckKind = 'required' | 'domain' | 'optional'
@@ -172,7 +172,7 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
     // 连通性：拿一个走代理的域名试一下
     const probeHost = proxy.include[0] ?? 'steampowered.com'
     try {
-      const result = await maybeProxiedGet(`https://${probeHost}/`, { timeoutMs: 10_000 })
+      const result = await maybeProxiedRequest(`https://${probeHost}/`, { timeoutMs: 10_000 })
       add({
         name: 'proxy_reachable',
         kind: 'domain',
