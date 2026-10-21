@@ -1,0 +1,50 @@
+# 类型检查 + 测试 + 打包。
+#
+# 这个仓库有多个会话并行改，冲突和回归只能靠自动跑发现 —— 本地 `npm run check`
+# 依赖每个人记得跑，实际不会每次都跑。
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 只测 24 和 26：package.json 的 engines 要求 >=24（用到 node:sqlite），
+        # 22 上 node:sqlite 还是实验性且行为不同，放进来只会制造假失败。
+        # 26 是 Hermes 官方镜像自带的版本，必须覆盖。
+        node: [24, 26]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+
+      # 媒体处理与 B 站合并依赖 ffmpeg；少了它那部分测试会被跳过而不是失败
+      - name: 安装 ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 测试
+        run: npm test
+
+      - name: 打包
+        run: npm run build
+
+      # 打包产物要能真的跑起来 —— 光"编译成功"不算
+      - name: 冒烟：打包产物能执行
+        run: |
+          node dist/astra.mjs version
+          node dist/astra.mjs help | head -c 200
