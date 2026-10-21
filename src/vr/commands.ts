@@ -664,6 +664,114 @@ const permissionsCmd: Command = {
   },
 }
 
+// ---------- 群组详情 / 成员 / 角色 / 权限 / 公告 ----------
+
+const groupInfoCmd: Command = {
+  name: 'vr groups info',
+  summary: '群组详情、成员、角色、启用权限与公告（一次拿全）',
+  usage: 'astra vr groups info <grp_xxx> [--members 50] [--no-roles]',
+  notes: [
+    '群组权限（这个群开了哪些）和 `vr permissions`（平台定义了哪些）**不是一回事**，别混着说',
+    '公告只读；发布公告不在这里',
+  ],
+  options: {
+    members: { type: 'string', short: 'n', description: '列多少个成员，0 表示不列，默认 50', valueName: 'n' },
+    'no-roles': { type: 'boolean', description: '不查角色列表' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const id = positionals[0]!
+    const memberLimit = intOf(values.members, 50, 0, 100, 'members')
+    const [detail, permissions, announcement] = await Promise.all([
+      api.group(id, signal),
+      api.groupPermissions(id, signal).catch(() => [] as string[]),
+      api.groupAnnouncement(id, signal).catch(() => null),
+    ])
+    const data: Record<string, unknown> = {
+      group: detail,
+      permissions: { count: permissions.length, items: permissions },
+      announcement,
+    }
+    if (memberLimit > 0) data.members = await groupMembersView(id, memberLimit, signal)
+    if (values['no-roles'] !== true) {
+      data.roles = (await api.groupRoles(id, signal).catch(() => [])).map((r) => ({ id: r.id, name: r.name, isDefault: r.isDefault, permissions: r.permissions.length, order: r.order }))
+    }
+    return { data }
+  },
+}
+
+async function groupMembersView(groupId: string, limit: number, signal: AbortSignal): Promise<Record<string, unknown>> {
+  const list = await api.groupMembers(groupId, { limit, signal }).catch(() => [])
+  return {
+    count: list.length,
+    items: list.map((m) => ({ userId: m.userId, displayName: m.displayName, joinedAt: m.joinedAt, isRepresentation: m.isRepresentation })),
+    truncated: list.length >= limit,
+  }
+}
+
+const groupMemberCmd: Command = {
+  name: 'vr groups member',
+  summary: '查某人在这个群里的身份（不在群里返回 inGroup: false）',
+  usage: 'astra vr groups member <grp_xxx> <usr_xxx>',
+  minArgs: 2,
+  maxArgs: 2,
+  async run({ positionals, signal }) {
+    const [groupId, userId] = positionals as [string, string]
+    const member = await api.groupMember(groupId, userId, signal)
+    return { data: member === null ? { inGroup: false, groupId, userId } : { inGroup: true, ...member } }
+  },
+}
+
+// ---------- 群组写操作 ----------
+
+const groupJoinCmd = writeCommand({
+  name: 'vr groups join',
+  summary: '加入群组（需要确认；需审批的群只会变成"申请中"）',
+  usage: 'astra vr groups join <grp_xxx> [--confirm <token>]',
+  action: 'groups.join',
+  minArgs: 1,
+  maxArgs: 1,
+  async prepare({ positionals, signal }) {
+    const groupId = positionals[0]!
+    const g = await api.group(groupId, signal)
+    if (g.isMember) throw new AstraError('ALREADY_MEMBER', `你已经是「${g.name}」的成员了`, { exitCode: 2 })
+    return {
+      params: { groupId },
+      preview: { groupId, name: g.name, memberCount: g.memberCount, shortCode: g.shortCode },
+      instruction: `告诉用户要加入群组「${g.name}」（${g.memberCount ?? '?'} 人），确认后执行 \`astra vr groups join ${groupId} --confirm <token>\`。注意有些群需要审批，加入后只是"申请中"，要用 \`vr groups member\` 再确认。`,
+    }
+  },
+  toExecute: (p) => ({ groupId: String(p.groupId) }),
+  async execute(p, signal) {
+    return actions.joinGroup(String(p.groupId), signal)
+  },
+})
+
+const groupLeaveCmd = writeCommand({
+  name: 'vr groups leave',
+  summary: '退出群组（需要确认）',
+  usage: 'astra vr groups leave <grp_xxx> [--confirm <token>]',
+  action: 'groups.leave',
+  minArgs: 1,
+  maxArgs: 1,
+  async prepare({ positionals, signal }) {
+    const groupId = positionals[0]!
+    // 只允许退自己真的在的群
+    const g = await api.group(groupId, signal)
+    if (!g.isMember) throw new AstraError('NOT_A_MEMBER', `你不在「${g.name}」里`, { exitCode: 4 })
+    return {
+      params: { groupId },
+      preview: { groupId, name: g.name, memberCount: g.memberCount },
+      instruction: `告诉用户要退出群组「${g.name}」，确认后执行 \`astra vr groups leave ${groupId} --confirm <token>\`。`,
+    }
+  },
+  toExecute: (p) => ({ groupId: String(p.groupId) }),
+  async execute(p, signal) {
+    return actions.leaveGroup(String(p.groupId), signal)
+  },
+})
+
 export const vrCommands: Command[] = [
   loginCmd, accountCmd, logoutCmd, doctorCmd,
   friendsCmd, friendRequestCmd, friendRemoveCmd,
@@ -675,4 +783,5 @@ export const vrCommands: Command[] = [
   favoriteGroupCreateCmd, favoriteGroupDeleteCmd,
   avatarSelectCmd, avatarFallbackCmd,
   systemCmd, permissionsCmd,
+  groupInfoCmd, groupMemberCmd, groupJoinCmd, groupLeaveCmd,
 ]

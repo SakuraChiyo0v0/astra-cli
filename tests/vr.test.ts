@@ -118,3 +118,19 @@ test('权限位归一化：只留用得上的字段', () => {
   const p = data.permissionFrom({ id: 'perm_1', name: 'Permissions.Users.Edit', ownerId: 'usr_1', displayName: 'Edit User', description: 'desc' })
   assert.deepEqual(p, { id: 'perm_1', name: 'Permissions.Users.Edit', ownerId: 'usr_1', displayName: 'Edit User', description: 'desc' })
 })
+
+test('群组成员归一化：displayName 可能在外层也可能嵌在 user 里', () => {
+  const a = data.toGroupMember({ userId: 'usr_1', user: { displayName: 'A' }, roleIds: ['role_1'], joinedAt: '2026-01-01' })
+  assert.equal(a.displayName, 'A')
+  assert.deepEqual(a.roleIds, ['role_1'])
+  const b = data.toGroupMember({ userId: 'usr_2', displayName: 'B' })
+  assert.equal(b.displayName, 'B')
+  assert.deepEqual(b.roleIds, [], '没有 roleIds 时给空数组，不是 undefined')
+})
+
+test('群组角色归一化：isDefault 只在真的是 true 时为真', () => {
+  const r = data.toGroupRole({ id: 'role_1', name: 'Member', isDefault: true, permissions: ['p1', 'p2'], order: 3 })
+  assert.equal(r.isDefault, true)
+  assert.equal(r.permissions.length, 2)
+  assert.equal(data.toGroupRole({ id: 'r2', name: 'X' }).isDefault, false, '缺字段时不能当默认角色')
+})

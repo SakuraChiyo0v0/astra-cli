@@ -1,7 +1,7 @@
 ---
 name: astra-vrchat
 description: Check VRChat friends, worlds and notifications.
-version: 0.8.4
+version: 0.8.5
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -49,6 +49,8 @@ stdout 只有一个 JSON，`ok: false` 时看 `error.code` / `error.hint`。
 | 搜世界 | `astra vr worlds search <关键词>` |
 | 实例里有谁 | `astra vr instance <wrld_xxx:instance>` |
 | 我的群组 | `astra vr groups`；搜群组 `astra vr groups search <词>` |
+| 群组详情 | `astra vr groups info <grp_xxx>`（成员/角色/启用权限/公告） |
+| 某人在群里吗 | `astra vr groups member <grp_xxx> <usr_xxx>` |
 | 头像 | `astra vr avatars` |
 | 收藏 | `astra vr favorites [--type world\|avatar\|friend]` |
 | 余额 / 订阅 / 收藏上限 | `astra vr economy` |
@@ -82,6 +84,8 @@ stdout 只有一个 JSON，`ok: false` 时看 `error.code` / `error.hint`。
 | 删收藏分组 | `astra vr favorites groups delete <分组名>`（会先说有里面有几个收藏） |
 | 换头像 | `astra vr avatars select <avtr_xxx>` |
 | 设回退头像 | `astra vr avatars fallback <avtr_xxx>` |
+| 加群 | `astra vr groups join <grp_xxx>` |
+| 退群 | `astra vr groups leave <grp_xxx>` |
 
 ## Pitfalls
 
@@ -94,6 +98,8 @@ stdout 只有一个 JSON，`ok: false` 时看 `error.code` / `error.hint`。
 - `vr permissions` 返回的是**平台定义了哪些权限**，不是"我这个账号有哪些权限"。别把它当后者转述。
 - 删收藏分组会连带删掉分组里的收藏，预览里会给出数量，务必转告用户。
 - 换头像能不能成功由上游判定（没买、私有、平台不匹配都会失败），失败时如实转告原因。
+- **进群 ≠ 已是成员**：需要审批的群，`groups join` 后只是「申请中」。要确认是否真进了，用 `groups member` 再查一次。
+- 群组权限（这个群开了哪些）和 `vr permissions`（平台定义了哪些）不是一回事，别混着说。
 
 ## Verification
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.5 — 2026-10-21
+
+- VRChat 补群组：`vr groups info`（详情 + 成员 + 角色 + 启用权限 + 公告）、`vr groups member`、
+  `vr groups join` / `vr groups leave`（写操作，走确认）
+- 加入需审批的群只会变成「申请中」，命令说明里提醒用 `groups member` 再确认
+
+
 ## 0.8.4 — 2026-10-21
 
 - VRChat 补经济类：余额改用正确的 `GET /user/<built-in function id>/balance`（原先是 `/user/subscription`），

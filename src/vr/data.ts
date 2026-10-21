@@ -555,3 +555,130 @@ export async function permission(id: string, signal?: AbortSignal): Promise<VrPe
   if (!found) throw new AstraError('VRCHAT_PERMISSION_NOT_FOUND', `没有 id 为 ${id} 的权限位`, { exitCode: 4 })
   return found
 }
+
+// ---------- 群组成员 / 角色 / 权限 / 公告 ----------
+
+export interface VrGroupMember {
+  userId: string
+  displayName: string | null
+  roleIds: string[]
+  joinedAt: string | null
+  /** 在群组里的可见性：public / private 等。 */
+  visibility: string | null
+  isRepresentation: boolean
+}
+
+interface RawGroupMember {
+  userId?: string
+  user?: { displayName?: string }
+  displayName?: string
+  roleIds?: string[]
+  joinedAt?: string
+  visibility?: string
+  isRepresentation?: boolean
+}
+
+export function toGroupMember(raw: RawGroupMember): VrGroupMember {
+  return {
+    userId: raw.userId ?? '',
+    displayName: raw.user?.displayName ?? raw.displayName ?? null,
+    roleIds: Array.isArray(raw.roleIds) ? raw.roleIds : [],
+    joinedAt: raw.joinedAt ?? null,
+    visibility: raw.visibility ?? null,
+    isRepresentation: raw.isRepresentation === true,
+  }
+}
+
+export async function groupMembers(groupId: string, options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<VrGroupMember[]> {
+  const session = needSession()
+  const raw = await getJson<RawGroupMember[]>(`/groups/${encodeURIComponent(groupId)}/members`, {
+    cookie: cookieOf(session),
+    query: { n: options.limit ?? 50, offset: options.offset ?? 0 },
+    ...(options.signal ? { signal: options.signal } : {}),
+  })
+  return (Array.isArray(raw) ? raw : []).map(toGroupMember)
+}
+
+/**
+ * 查某个成员在群组里的身份。
+ * 上游 404 = 这个人不在群里（不是错误），返回 null。
+ */
+export async function groupMember(groupId: string, userId: string, signal?: AbortSignal): Promise<VrGroupMember | null> {
+  const session = needSession()
+  try {
+    const raw = await getJson<RawGroupMember>(`/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`, {
+      cookie: cookieOf(session),
+      ...(signal ? { signal } : {}),
+    })
+    return toGroupMember(raw)
+  } catch (err) {
+    if (err instanceof AstraError && err.code === 'VRCHAT_NOT_FOUND') return null
+    throw err
+  }
+}
+
+export interface VrGroupRole {
+  id: string
+  name: string
+  description: string | null
+  /** 角色带哪些权限（字符串列表）。 */
+  permissions: string[]
+  /** 默认角色（新人自动获得）。 */
+  isDefault: boolean
+  /** 这个角色在群组里的排序位。 */
+  order: number | null
+}
+
+interface RawGroupRole {
+  id?: string
+  name?: string
+  description?: string
+  permissions?: string[]
+  isDefault?: boolean
+  order?: number
+}
+
+export function toGroupRole(raw: RawGroupRole): VrGroupRole {
+  return {
+    id: raw.id ?? '',
+    name: raw.name ?? '',
+    description: raw.description ?? null,
+    permissions: Array.isArray(raw.permissions) ? raw.permissions : [],
+    isDefault: raw.isDefault === true,
+    order: typeof raw.order === 'number' ? raw.order : null,
+  }
+}
+
+export async function groupRoles(groupId: string, signal?: AbortSignal): Promise<VrGroupRole[]> {
+  const session = needSession()
+  const raw = await getJson<RawGroupRole[]>(`/groups/${encodeURIComponent(groupId)}/roles`, { cookie: cookieOf(session), ...(signal ? { signal } : {}) })
+  return (Array.isArray(raw) ? raw : []).map(toGroupRole)
+}
+
+/**
+ * 群组自身的权限字符串（`GET /groups/{id}/permissions`）。
+ *
+ * **和 `vr permissions` 不是一回事**：那个是平台定义的全部权限位，
+ * 这个是**这个群组启用了哪些**。不要混着说。
+ */
+export async function groupPermissions(groupId: string, signal?: AbortSignal): Promise<string[]> {
+  const session = needSession()
+  const raw = await getJson<string[]>(`/groups/${encodeURIComponent(groupId)}/permissions`, { cookie: cookieOf(session), ...(signal ? { signal } : {}) })
+  return (Array.isArray(raw) ? raw : []).filter((x): x is string => typeof x === 'string')
+}
+
+export interface VrGroupAnnouncement {
+  title: string | null
+  text: string | null
+  createdAt: string | null
+  authorId: string | null
+}
+
+export async function groupAnnouncement(groupId: string, signal?: AbortSignal): Promise<VrGroupAnnouncement> {
+  const session = needSession()
+  const raw = await getJson<{ title?: string; text?: string; createdAt?: string; authorId?: string }>(`/groups/${encodeURIComponent(groupId)}/announcement`, {
+    cookie: cookieOf(session),
+    ...(signal ? { signal } : {}),
+  })
+  return { title: raw.title ?? null, text: raw.text ?? null, createdAt: raw.createdAt ?? null, authorId: raw.authorId ?? null }
+}

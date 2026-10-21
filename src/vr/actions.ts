@@ -128,3 +128,20 @@ export async function selectAvatar(avatarId: string, signal?: AbortSignal): Prom
 export async function selectFallbackAvatar(avatarId: string, signal?: AbortSignal): Promise<ActionResult> {
   return send('PUT', '/avatars/' + encodeURIComponent(avatarId) + '/selectFallback', undefined, signal)
 }
+
+// ---------- 群组 ----------
+
+/**
+ * 加入群组。
+ *
+ * **"申请被接受"不等于"已是成员"**：需要审批的群组会先落到申请状态，
+ * 返回的群组对象只反映当时状态。要确认是否真的进了，用 `vr groups member` 再看一次。
+ */
+export async function joinGroup(groupId: string, signal?: AbortSignal): Promise<ActionResult> {
+  return send('PUT', '/groups/' + encodeURIComponent(groupId) + '/join', undefined, signal)
+}
+
+/** 离开群组。退出与被移出/申请被拒不是一回事，这里只转述上游结果。 */
+export async function leaveGroup(groupId: string, signal?: AbortSignal): Promise<ActionResult> {
+  return send('PUT', '/groups/' + encodeURIComponent(groupId) + '/leave', undefined, signal)
+}
