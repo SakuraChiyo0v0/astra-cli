@@ -124,7 +124,7 @@ npm run check      # 类型检查 + 测试 + 打包
 
 打包产物 `dist/astra.mjs` 是单文件（约 240KB），进容器只要一个 Node。
 
-部署见 [deploy/README.md](deploy/README.md)；
+部署见 [部署手册](deploy/部署手册.md)（照着做）与 [架构说明](deploy/README.md)；
 Hermes 用的 skill 在 [skills/music/SKILL.md](skills/music/SKILL.md)、[skills/bili/SKILL.md](skills/bili/SKILL.md)、
 [skills/steam/SKILL.md](skills/steam/SKILL.md) 和 [skills/vrchat/SKILL.md](skills/vrchat/SKILL.md)。
 
