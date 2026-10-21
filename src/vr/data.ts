@@ -423,3 +423,69 @@ export async function probeApi(signal?: AbortSignal): Promise<{ reachable: boole
     return { reachable: false, detail: (err as Error).message }
   }
 }
+
+// ---------- 系统与权限 ----------
+
+/** 在线人数（`GET /visits` 免认证，上游直接返回一个数字）。 */
+export async function onlineUsers(signal?: AbortSignal): Promise<number> {
+  const raw = await getJson<number>('/visits', { ...(signal ? { signal } : {}) })
+  return typeof raw === 'number' ? raw : 0
+}
+
+/**
+ * 上游时间（`GET /time` 免认证）。
+ *
+ * 实测 2026-10-21 返回标准 ISO `2026-10-21T10:23:31+00:00`；
+ * astrahub 在 2026-09 记录的是 `09/23/2026 20:35:32` —— 上游改过格式。
+ * 所以这里**原样返回字符串**，不解析、不换算时区。
+ */
+export async function serverTime(signal?: AbortSignal): Promise<string> {
+  const raw = await getJson<string>('/time', { ...(signal ? { signal } : {}) })
+  return typeof raw === 'string' ? raw : String(raw)
+}
+
+export interface VrPermission {
+  id: string
+  name: string
+  /** 权限所属的域，例如 friends / worlds。 */
+  ownerId: string | null
+  displayName: string | null
+  description: string | null
+}
+
+interface RawPermission {
+  id?: string
+  name?: string
+  ownerId?: string
+  displayName?: string
+  description?: string
+}
+
+/**
+ * 平台的权限位清单（`GET /permissions`，**需要登录**）。
+ *
+ * 注意这是"VRChat 定义了哪些权限"，**不是"我这个账号有哪些权限"** —— 别把它当成后者转述。
+ */
+export function permissionFrom(raw: RawPermission): VrPermission {
+  return {
+    id: raw.id ?? '',
+    name: raw.name ?? '',
+    ownerId: raw.ownerId ?? null,
+    displayName: raw.displayName ?? null,
+    description: raw.description ?? null,
+  }
+}
+
+export async function permissions(signal?: AbortSignal): Promise<VrPermission[]> {
+  const session = needSession()
+  const raw = await getJson<RawPermission[]>('/permissions', { cookie: cookieOf(session), ...(signal ? { signal } : {}) })
+  return (Array.isArray(raw) ? raw : []).map(permissionFrom)
+}
+
+/** 单个权限位。 */
+export async function permission(id: string, signal?: AbortSignal): Promise<VrPermission> {
+  const all = await permissions(signal)
+  const found = all.find((p) => p.id === id)
+  if (!found) throw new AstraError('VRCHAT_PERMISSION_NOT_FOUND', `没有 id 为 ${id} 的权限位`, { exitCode: 4 })
+  return found
+}

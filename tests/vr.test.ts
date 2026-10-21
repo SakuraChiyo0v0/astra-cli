@@ -113,3 +113,8 @@ test('不同用途的待办互不覆盖', () => {
   confirm.clearPending('vr-a')
   confirm.clearPending('vr-b')
 })
+
+test('权限位归一化：只留用得上的字段', () => {
+  const p = data.permissionFrom({ id: 'perm_1', name: 'Permissions.Users.Edit', ownerId: 'usr_1', displayName: 'Edit User', description: 'desc' })
+  assert.deepEqual(p, { id: 'perm_1', name: 'Permissions.Users.Edit', ownerId: 'usr_1', displayName: 'Edit User', description: 'desc' })
+})

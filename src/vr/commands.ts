@@ -485,6 +485,156 @@ const notifyReadCmd = writeCommand({
   },
 })
 
+// ---------- 收藏分组管理 ----------
+
+const favoriteGroupCreateCmd = writeCommand({
+  name: 'vr favorites groups create',
+  summary: '创建收藏分组（需要确认）',
+  usage: 'astra vr favorites groups create <分组名> [--type world|avatar|friend] [--private] [--confirm <token>]',
+  action: 'favorites.groups.create',
+  minArgs: 1,
+  maxArgs: 1,
+  options: {
+    type: { type: 'string', description: 'world（默认）/ avatar / friend', valueName: 'type' },
+    private: { type: 'boolean', description: '只有自己可见' },
+  },
+  async prepare({ positionals, values, signal }) {
+    const name = positionals[0]!
+    const type = ((values.type as string | undefined) ?? 'world') as actions.FavoriteType
+    if (!['world', 'avatar', 'friend'].includes(type)) throw invalidInput('--type 只能是 world / avatar / friend')
+    // 同名分组已存在就不必再建
+    const groups = await api.favoriteGroups({ type, signal })
+    if (groups.some((g) => g.name === name)) {
+      throw new AstraError('GROUP_EXISTS', `已经有叫「${name}」的 ${type} 分组了`, { exitCode: 2, hint: '换个名字，或直接用现有分组' })
+    }
+    const visible = values.private !== true
+    return {
+      params: { type, name, visible },
+      preview: { type, name, visible, existingGroups: groups.map((g) => g.name) },
+      instruction: `告诉用户要新建 ${type} 分组「${name}」（${visible ? '公开' : '仅自己可见'}），确认后执行 \`astra vr favorites groups create "${name}" --type ${type}${visible ? '' : ' --private'} --confirm <token>\`。`,
+    }
+  },
+  toExecute: (p) => ({ type: String(p.type), name: String(p.name), visible: p.visible === true }),
+  async execute(p, signal) {
+    return actions.createFavoriteGroup({ type: p.type as actions.FavoriteType, name: String(p.name), visible: p.visible === true }, signal)
+  },
+})
+
+const favoriteGroupDeleteCmd = writeCommand({
+  name: 'vr favorites groups delete',
+  summary: '删除收藏分组（需要确认；分组里的收藏会一起没）',
+  usage: 'astra vr favorites groups delete <分组名> [--type world|avatar|friend] [--confirm <token>]',
+  action: 'favorites.groups.delete',
+  minArgs: 1,
+  maxArgs: 1,
+  options: { type: { type: 'string', description: 'world（默认）/ avatar / friend', valueName: 'type' } },
+  async prepare({ positionals, values, signal }) {
+    const name = positionals[0]!
+    const type = ((values.type as string | undefined) ?? 'world') as actions.FavoriteType
+    const groups = await api.favoriteGroups({ type, signal })
+    const target = groups.find((g) => g.name === name)
+    if (!target) throw new AstraError('GROUP_NOT_FOUND', `没有叫「${name}」的 ${type} 分组`, { exitCode: 4, hint: `现有分组：${groups.map((g) => g.name).join(', ') || '（无）'}` })
+    return {
+      params: { type, name },
+      preview: { type, name, count: target.count, displayName: target.displayName },
+      instruction: `**提醒用户这个分组里有 ${target.count} 个收藏，删分组会一起删掉**。确认后执行 \`astra vr favorites groups delete "${name}" --type ${type} --confirm <token>\`。`,
+    }
+  },
+  toExecute: (p) => ({ type: String(p.type), name: String(p.name) }),
+  async execute(p, signal) {
+    // 上游删除按分组名
+    return actions.deleteFavoriteGroup(String(p.name), signal)
+  },
+})
+
+// ---------- 头像选择 ----------
+
+const avatarSelectCmd = writeCommand({
+  name: 'vr avatars select',
+  summary: '切换当前头像（需要确认）',
+  usage: 'astra vr avatars select <avtr_xxx> [--confirm <token>]',
+  action: 'avatars.select',
+  minArgs: 1,
+  maxArgs: 1,
+  async prepare({ positionals, signal }) {
+    const id = positionals[0]!
+    if (!/^avtr_[0-9a-f-]+$/i.test(id)) throw invalidInput(`「${id}」不像头像 id`, '形如 avtr_xxxxxxxx-xxxx-...；用 `astra vr avatars` 看自己的头像 id')
+    // 先确认这个头像在自己名下，避免 AI 拿错 id
+    const mine = await api.myAvatars({ limit: 100, signal })
+    const target = mine.find((a) => a.id === id)
+    const current = await api.currentAvatar(signal)
+    return {
+      params: { avatarId: id },
+      preview: {
+        avatarId: id,
+        name: target?.name ?? null,
+        owned: target !== undefined,
+        current: current ? { id: current.id, name: current.name } : null,
+        note: target === undefined ? '这个 id 不在你自己的头像列表里，上游可能会拒绝' : null,
+      },
+      instruction: `告诉用户要从「${current?.name ?? '当前头像'}」换成「${target?.name ?? id}」，确认后执行 \`astra vr avatars select ${id} --confirm <token>\`。`,
+    }
+  },
+  toExecute: (p) => ({ avatarId: String(p.avatarId) }),
+  async execute(p, signal) {
+    return actions.selectAvatar(String(p.avatarId), signal)
+  },
+})
+
+const avatarFallbackCmd = writeCommand({
+  name: 'vr avatars fallback',
+  summary: '设置回退头像（掉线时用，需要确认）',
+  usage: 'astra vr avatars fallback <avtr_xxx> [--confirm <token>]',
+  action: 'avatars.fallback',
+  minArgs: 1,
+  maxArgs: 1,
+  async prepare({ positionals, signal }) {
+    const id = positionals[0]!
+    if (!/^avtr_[0-9a-f-]+$/i.test(id)) throw invalidInput(`「${id}」不像头像 id`, '用 `astra vr avatars` 看自己的头像 id')
+    const mine = await api.myAvatars({ limit: 100, signal })
+    const target = mine.find((a) => a.id === id)
+    return {
+      params: { avatarId: id },
+      preview: { avatarId: id, name: target?.name ?? null, owned: target !== undefined },
+      instruction: `确认后执行 \`astra vr avatars fallback ${id} --confirm <token>\`。`,
+    }
+  },
+  toExecute: (p) => ({ avatarId: String(p.avatarId) }),
+  async execute(p, signal) {
+    return actions.selectFallbackAvatar(String(p.avatarId), signal)
+  },
+})
+
+// ---------- 系统 ----------
+
+const systemCmd: Command = {
+  name: 'vr system',
+  summary: 'VRChat 平台信息：在线人数、上游时间（都不用登录）',
+  usage: 'astra vr system',
+  maxArgs: 0,
+  async run({ signal }) {
+    const [users, time] = await Promise.all([api.onlineUsers(signal), api.serverTime(signal)])
+    return { data: { onlineUsers: users, serverTime: time } }
+  },
+}
+
+const permissionsCmd: Command = {
+  name: 'vr permissions',
+  summary: '平台的权限位清单（需要登录）',
+  usage: 'astra vr permissions [--id <权限id>]',
+  notes: [
+    '这是 **VRChat 定义了哪些权限**，不是"我这个账号有哪些权限"',
+    '--id 按 id 精确取一条',
+  ],
+  options: { id: { type: 'string', description: '按 id 取单个', valueName: 'id' } },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    if (typeof values.id === 'string') return { data: await api.permission(values.id, signal) }
+    const list = await api.permissions(signal)
+    return { data: { total: list.length, permissions: list } }
+  },
+}
+
 export const vrCommands: Command[] = [
   loginCmd, accountCmd, logoutCmd, doctorCmd,
   friendsCmd, friendRequestCmd, friendRemoveCmd,
@@ -493,4 +643,7 @@ export const vrCommands: Command[] = [
   groupsCmd, searchGroupsCmd,
   avatarsCmd, favoritesCmd, favoriteAddCmd, favoriteRemoveCmd,
   economyCmd, statusCmd, inviteCmd,
+  favoriteGroupCreateCmd, favoriteGroupDeleteCmd,
+  avatarSelectCmd, avatarFallbackCmd,
+  systemCmd, permissionsCmd,
 ]

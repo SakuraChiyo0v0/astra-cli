@@ -1,7 +1,7 @@
 ---
 name: astra-vrchat
 description: Check VRChat friends, worlds and notifications.
-version: 0.8.1
+version: 0.8.3
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -52,6 +52,8 @@ stdout 只有一个 JSON，`ok: false` 时看 `error.code` / `error.hint`。
 | 头像 | `astra vr avatars` |
 | 收藏 | `astra vr favorites [--type world\|avatar\|friend]` |
 | 余额 / 订阅 | `astra vr economy` |
+| 在线人数 / 上游时间 | `astra vr system`（不用登录） |
+| 平台权限位清单 | `astra vr permissions [--id <id>]` |
 | 自检 | `astra vr doctor` |
 
 ## 写操作：必须先预览再确认
@@ -75,6 +77,10 @@ stdout 只有一个 JSON，`ok: false` 时看 `error.code` / `error.hint`。
 | 邀请好友 | `astra vr invites send <usr_xxx> <wrld_xxx:instance>` |
 | 改状态 | `astra vr status set "<offline\|active\|busy\|join me\|ask me>" [--description 文字]` |
 | 通知已读 | `astra vr notifications read <通知id>` 或 `--all` |
+| 建收藏分组 | `astra vr favorites groups create <分组名> [--type world] [--private]` |
+| 删收藏分组 | `astra vr favorites groups delete <分组名>`（会先说有里面有几个收藏） |
+| 换头像 | `astra vr avatars select <avtr_xxx>` |
+| 设回退头像 | `astra vr avatars fallback <avtr_xxx>` |
 
 ## Pitfalls
 
@@ -84,6 +90,9 @@ stdout 只有一个 JSON，`ok: false` 时看 `error.code` / `error.hint`。
 - 未登录时大部分查询会报 `VRCHAT_NOT_LOGGED_IN`；只有 `vr doctor` 的 API 探活和登录本身能跑。
 - 429 是限流，等一会儿再试，不要连续重试。
 - 令牌过期（5 分钟）要重新生成预览，不要试图复用或用旧的。
+- `vr permissions` 返回的是**平台定义了哪些权限**，不是"我这个账号有哪些权限"。别把它当后者转述。
+- 删收藏分组会连带删掉分组里的收藏，预览里会给出数量，务必转告用户。
+- 换头像能不能成功由上游判定（没买、私有、平台不匹配都会失败），失败时如实转告原因。
 
 ## Verification
 

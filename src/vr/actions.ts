@@ -96,3 +96,35 @@ export async function markNotificationRead(notificationId: string, signal?: Abor
 export async function clearNotifications(signal?: AbortSignal): Promise<ActionResult> {
   return send('PUT', '/auth/user/notifications/clear', undefined, signal)
 }
+
+// ---------- 收藏分组 ----------
+
+/** 创建收藏分组。`visible` 控制别人能不能看到这个分组。 */
+export async function createFavoriteGroup(input: { type: FavoriteType; name: string; visible?: boolean; ownerOnly?: boolean }, signal?: AbortSignal): Promise<ActionResult> {
+  const body: Record<string, unknown> = { type: input.type, name: input.name }
+  if (input.visible !== undefined) body.visible = input.visible
+  if (input.ownerOnly !== undefined) body.ownerOnly = input.ownerOnly
+  return send('POST', '/favorite/groups', body, signal)
+}
+
+/**
+ * 删除收藏分组。
+ *
+ * 上游的 groupId 是 `fvgrp_xxx` 还是"类型_分组名"取决于版本，这里**原样透传用户给的值**，
+ * 不猜、不拼。删除前由命令层用列表核对。
+ */
+export async function deleteFavoriteGroup(groupId: string, signal?: AbortSignal): Promise<ActionResult> {
+  return send('DELETE', '/favorite/groups/' + encodeURIComponent(groupId), undefined, signal)
+}
+
+// ---------- 头像 ----------
+
+/** 切换当前头像。能不能用这个头像由上游判定（没买、私有、平台不匹配都会失败）。 */
+export async function selectAvatar(avatarId: string, signal?: AbortSignal): Promise<ActionResult> {
+  return send('PUT', '/avatars/' + encodeURIComponent(avatarId) + '/select', undefined, signal)
+}
+
+/** 设置"掉线后回退到哪个头像"。 */
+export async function selectFallbackAvatar(avatarId: string, signal?: AbortSignal): Promise<ActionResult> {
+  return send('PUT', '/avatars/' + encodeURIComponent(avatarId) + '/selectFallback', undefined, signal)
+}
