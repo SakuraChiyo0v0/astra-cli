@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.5 — 2026-10-21
+
+- 修：`astra audit` 的 usage 里写了 `--domain / --failed / --since / --limit`，但这四个选项一个都没声明，
+  照着用法敲会报 "Unknown option"。已补上声明
+- 新增命令一致性测试：所有命令的 usage 提到的 `--选项` 必须在 options 里声明过，
+  并检查命令名唯一、usage/summary 齐全
+- 部署侧：清掉 NAS 上重复的旧 skill 目录（`vrchat` 与 `astra-vrchat` name 相同）、
+  把 `bili` 统一成 `astra-bili`，三个 skill 的目录名现在与 frontmatter 的 name 一致
+
+
 ## 0.10.4 — 2026-10-21
 
 **UP 主全量投稿做成了。**

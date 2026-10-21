@@ -293,6 +293,13 @@ const auditCmd: Command = {
     '不记 cookie，也不记完整上游响应；只记动作、对象名字、结果',
     '`audit prune` 只保留最近 1000 条',
   ],
+  // 这些选项之前只写在 usage 里没真声明，导致 `--limit` 直接报 Unknown option
+  options: {
+    domain: { type: 'string', description: '只看某个域：music / bili / vr', valueName: 'name' },
+    failed: { type: 'boolean', description: '只看失败的' },
+    since: { type: 'string', description: '只看这个时间之后的（ISO 日期，如 2026-10-01）', valueName: 'date' },
+    limit: { type: 'string', short: 'n', description: '默认 50，最多 500', valueName: 'n' },
+  },
   maxArgs: 1,
   async run({ positionals, values }) {
     if (positionals[0] === 'prune') {
