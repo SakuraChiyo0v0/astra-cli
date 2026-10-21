@@ -1,0 +1,21 @@
+# 测试夹具必须按原样保留字节。
+#
+# KRC 解密测试比较的是"解密结果 === 夹具文本"。KRC 里的换行是 \r\n，
+# 如果 git 在 checkout 时把它转成 \n，这个测试在 Linux CI 上就会红 ——
+# 而 Windows 本地因为 core.autocrlf 看不出问题。
+tests/fixtures/** -text
+
+# 音视频夹具是二进制，永远不要动
+*.flac binary
+*.mp3 binary
+*.png binary
+*.m4a binary
+*.mp4 binary
+
+# 源码保持 LF
+*.ts text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
