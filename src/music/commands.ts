@@ -17,6 +17,10 @@ import { cancelJob, createJob, getJob, listJobs, qualitySummary, resumeJob, runW
 import { addSource, listSources, loadEnabledSources, orphanScripts, removeSource, setSourceEnabled } from '../lx/store.ts'
 import { musicInfoOf } from './resolve.ts'
 import { probeUrl } from './audio.ts'
+import { accountStatus, beginLogin, logout as logoutSession, pollLogin, waitLogin } from './login.ts'
+import { loadSession, myPlaylists } from './auth.ts'
+import { likedIds, likedStatus, recommendDaily, requireSession, weapiPost } from './account-api.ts'
+import { toTrack } from './netease.ts'
 
 function qualityOf(value: unknown): Quality {
   const q = typeof value === 'string' && value ? value : getConfig('music.quality')
@@ -429,8 +433,198 @@ const sourceTest: Command = {
   },
 }
 
+const loginStart: Command = {
+  name: 'music login start',
+  summary: '开始网易云扫码登录：返回二维码（终端可直接显示）和后续轮询方法',
+  usage: 'astra music login start',
+  notes: [
+    '命令立刻返回，不会等扫码。data.qrArt 是二维码文本，原样发给用户（等宽代码块），data.qrContent 是它编码的内容',
+    '拿到后每隔 2~3 秒调一次 `astra music login poll`，直到 status 变成 done / expired',
+    '二维码 5 分钟内有效；过期就重新 start',
+  ],
+  maxArgs: 0,
+  async run({ signal }) {
+    return { data: await beginLogin(signal) }
+  },
+}
+
+const loginPoll: Command = {
+  name: 'music login poll',
+  summary: '查一次扫码状态（不阻塞）',
+  usage: 'astra music login poll',
+  notes: ['status: pending（继续等）/ done（成功，已在 data.account）/ expired（二维码过期，重新 start）'],
+  maxArgs: 0,
+  async run({ signal }) {
+    const view = await pollLogin(signal)
+    return { data: view }
+  },
+}
+
+const loginWait: Command = {
+  name: 'music login wait',
+  summary: '阻塞等待扫码完成（给人用，最多 3 分钟）',
+  usage: 'astra music login wait [--timeout 180]',
+  options: { timeout: { type: 'string', description: '最多等多少秒，默认 180，最大 600', valueName: 's' } },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const seconds = intOf(values.timeout, 180, 5, 600, 'timeout')
+    return { data: await waitLogin(seconds, signal) }
+  },
+}
+
+const loginPlain: Command = {
+  name: 'music login',
+  summary: '扫码登录（等同 `login start`）',
+  usage: 'astra music login',
+  maxArgs: 0,
+  async run({ signal }) {
+    return { data: await beginLogin(signal) }
+  },
+}
+
+const account: Command = {
+  name: 'music account',
+  summary: '看登录状态：账号、会员、会话是否还有效',
+  usage: 'astra music account',
+  maxArgs: 0,
+  async run({ signal }) {
+    return { data: await accountStatus(signal) }
+  },
+}
+
+const logout: Command = {
+  name: 'music logout',
+  summary: '清除本地会话（不影响网易云账号本身）',
+  usage: 'astra music logout',
+  maxArgs: 0,
+  async run() {
+    return { data: { loggedOut: logoutSession() } }
+  },
+}
+
+const playlists: Command = {
+  name: 'music playlists',
+  summary: '我的歌单（含收藏的），需要登录',
+  usage: 'astra music playlists [--limit 50]',
+  notes: ['每项带 ref（playlist:<id>），可以直接 `astra music info <ref>` 看曲目或 `astra music get <ref>` 下载'],
+  options: { limit: { type: 'string', short: 'n', description: '默认 50', valueName: 'n' } },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const session = loadSession()
+    if (!session) throw new AstraError('NOT_LOGGED_IN', '还没登录网易云', { exitCode: 3, hint: '先 `astra music login start`，让用户扫码' })
+    const status = await accountStatus(signal)
+    if (!status.userId) {
+      throw new AstraError('NO_USER_ID', '拿不到账号 id，会话可能失效了', { exitCode: 3, hint: '`astra music login start` 重新扫码' })
+    }
+    const list = await myPlaylists(session, status.userId, signal)
+    const limit = intOf(values.limit, 50, 1, 500, 'limit')
+    return {
+      data: {
+        account: { userId: status.userId, nickname: status.nickname, vip: status.vip },
+        total: list.length,
+        playlists: list.slice(0, limit).map((p) => ({
+          ref: `playlist:${p.id}`,
+          name: p.name,
+          trackCount: p.trackCount,
+          kind: p.subscribed ? '收藏' : '自建',
+          creator: p.creator,
+          updatedAt: p.updatedAt ? new Date(p.updatedAt).toISOString().slice(0, 10) : null,
+        })),
+        truncated: list.length > limit,
+      },
+    }
+  },
+}
+
+const daily: Command = {
+  name: 'music daily',
+  summary: '每日推荐（需要登录）：直接列出今天推给你的歌',
+  usage: 'astra music daily [--limit 33] [--download]',
+  notes: [
+    '不带 --download 只列出来；带 --download 会开一个后台任务把这些歌下下来',
+    '推荐每天都会变；数据来自网易云自己的推荐，不是我们算的',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '最多显示几首，默认全部', valueName: 'n' },
+    download: { type: 'boolean', description: '顺手把今天的推荐开成下载任务' },
+    quality: { type: 'string', short: 'q', description: '配合 --download 的请求音质', valueName: 'q' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const status = await accountStatus(signal)
+    const { session, userId } = requireSession(status.userId, signal)
+    const { tracks, reasons } = await recommendDaily(session, signal)
+    const limit = intOf(values.limit, tracks.length, 1, 300, 'limit')
+    const mapped = tracks.map(toTrack)
+    const view = mapped.slice(0, limit).map((t, i) => ({ ...trackView(t), reason: reasons[i] ?? null, inLibrary: findTrack('wy', t.id) !== null }))
+    if (values.download === true) {
+      const quality = qualityOf(values.quality)
+      const started = startBatch('daily', `每日推荐 ${new Date().toISOString().slice(0, 10)}`, quality, mapped)
+      return { data: { ...started.data, date: new Date().toISOString().slice(0, 10), today: view }, warnings: started.warnings }
+    }
+    return {
+      data: {
+        date: new Date().toISOString().slice(0, 10),
+        total: mapped.length,
+        inLibrary: mapped.filter((t) => findTrack('wy', t.id) !== null).length,
+        tracks: view,
+        truncated: mapped.length > limit,
+      },
+    }
+  },
+}
+
+const liked: Command = {
+  name: 'music liked',
+  summary: '我喜欢的音乐（需要登录）：列出或一键下载',
+  usage: 'astra music liked [--limit 50] [--download] [--check <ref>...]',
+  notes: [
+    '不带 --check 时列出红心歌单；--check 用来看某几首是否已红心（不传 --check 时那份列表才是全量）',
+    '--download 把红心歌单开成后台任务',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '显示几首，默认 50；0 表示不列曲目', valueName: 'n' },
+    download: { type: 'boolean', description: '把喜欢的歌开成下载任务' },
+    quality: { type: 'string', short: 'q', description: '配合 --download 的请求音质', valueName: 'q' },
+    check: { type: 'boolean', description: '把位置参数当作歌曲 ref，查它们是否已红心' },
+  },
+  async run({ positionals, values, signal }) {
+    const status = await accountStatus(signal)
+    const { session, userId } = requireSession(status.userId, signal)
+    if (values.check === true) {
+      if (positionals.length === 0) throw invalidInput('--check 需要至少一个 ref', '例如：astra music liked --check wy:186016')
+      const ids: string[] = []
+      for (const p of positionals) {
+        const t = await resolveTarget(p)
+        if (t.kind !== 'song') throw invalidInput(`「${p}」不是一首歌的 ref`)
+        ids.push(t.id)
+      }
+      const map = await likedStatus(session, ids, signal)
+      return { data: { checked: ids.map((id) => ({ ref: `wy:${id}`, liked: map.get(id) === true })) } }
+    }
+    const ids = await likedIds(session, userId, signal)
+    const limit = intOf(values.limit, 50, 0, 2000, 'limit')
+    if (values.download === true) {
+      const quality = qualityOf(values.quality)
+      const tracks = await songDetails(ids, signal)
+      const started = startBatch('liked', '我喜欢的音乐', quality, tracks)
+      return { data: { ...started.data, total: ids.length }, warnings: started.warnings }
+    }
+    const tracks = limit > 0 ? await songDetails(ids.slice(0, limit), signal) : []
+    return {
+      data: {
+        total: ids.length,
+        inLibrary: ids.length > 0 ? tracks.filter((t) => findTrack('wy', t.id) !== null).length : 0,
+        tracks: tracks.map((t) => ({ ...trackView(t), inLibrary: findTrack('wy', t.id) !== null })),
+        truncated: ids.length > limit && limit > 0,
+      },
+    }
+  },
+}
+
 export const musicCommands: Command[] = [
   get, search, info, batch, have, forget,
   job, jobs, jobCancel, jobResume, worker,
+  loginPlain, loginStart, loginPoll, loginWait, account, logout, playlists, daily, liked,
   sourceList, sourceAdd, sourceRemove, sourceToggle(true), sourceToggle(false), sourceTest,
 ]

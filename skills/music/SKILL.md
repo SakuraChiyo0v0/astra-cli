@@ -1,7 +1,7 @@
 ---
 name: astra-music
 description: Download songs, albums and playlists to the NAS.
-version: 0.1.3
+version: 0.2.0
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -31,6 +31,25 @@ required_environment_variables:
 - 用户说"下载 / 下一首 / 帮我存 / 我要听 xxx（想保存下来）"
 - 用户发来网易云的歌曲、专辑、歌单、歌手链接（包括 163cn.tv 短链和分享文案）
 - 用户问"我有没有 xxx"、"最近下了什么"、"上次那个歌单下完了吗"
+- 用户说"登录网易云 / 看我的歌单 / 我收藏了什么"
+
+## 登录网易云（扫码）
+
+登录只是为了**看见**私人歌单、每日推荐；它不保证音质更高（取链仍靠洛雪音源）。
+
+1. `astra music login start` —— 立刻返回，不阻塞。
+2. 回复里带上图片标记让它真的发出去：`MEDIA:<data.qrImage>`
+   （`data.qrImage` 是 PNG 的绝对路径；**不要**把 base64 打印到对话里，也不要把二维码打成代码块 ——
+   终端字符在聊天窗口里扫不出来）。发不了图时再用 `data.qrText` 的等宽代码块兜底。
+3. 每隔 2~3 秒 `astra music login poll`，直到 `status` 是 `done` 或 `expired`。
+   - `pending`：继续等，别催用户
+   - `expired`：重新 `login start`，把新图再发一次
+   - `done`：告诉用户登录成功、昵称是什么
+4. 登录后可以：
+   - `astra music playlists` —— 我的歌单（自建 + 收藏），每项带 `playlist:<id>`
+   - `astra music daily` —— 每日推荐，带"为什么推给你"；加 `--download` 直接开下载任务
+   - `astra music liked` —— 我喜欢的音乐；`--check wy:xxx` 查某几首有没有红心
+   看曲目 `astra music info playlist:<id>`，整张下载 `astra music get playlist:<id>`。
 
 ## Prerequisites
 
@@ -60,7 +79,6 @@ stderr 是进度日志，不用管。
 | 取消 / 继续任务 | `astra music job cancel <id>` / `astra music job resume <id>` |
 
 ## Procedure
-
 1. 用户给关键词时，原样交给 `astra music get`，例如 `astra music get 晴天 周杰伦`。
    不要自己先 search 再挑。
 2. 根据 `data.status` 回复：

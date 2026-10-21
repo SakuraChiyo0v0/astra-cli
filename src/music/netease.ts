@@ -11,13 +11,24 @@
  */
 import { AstraError } from '../core/errors.ts'
 import { httpJson } from '../core/http.ts'
+import { cookieHeader, loadSession, type Session } from './auth.ts'
 
 const BASE = 'https://music.163.com'
-const HEADERS: Record<string, string> = {
+const BASE_HEADERS: Record<string, string> = {
   Referer: 'https://music.163.com/',
-  Cookie: 'appver=2.0.2',
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
 }
+
+/**
+ * 带会话的请求头。
+ *
+ * 匿名也能查公开内容，但**私人歌单、每日推荐、账号维度的曲目**只有带 MUSIC_U 才看得到。
+ * 会话文件不存在时退回匿名（`appver=2.0.2` 是匿名请求一直用的 cookie）。
+ */
+export function headers(session: Session | null = loadSession()): Record<string, string> {
+  return { ...BASE_HEADERS, Cookie: cookieHeader(session) }
+}
+
 
 export interface Track {
   id: string
@@ -52,7 +63,7 @@ export interface AlbumInfo {
 
 interface RawArtist { id?: number; name?: string }
 interface RawAlbum { id?: number; name?: string; picUrl?: string }
-interface RawSong {
+export interface RawSong {
   id: number
   name: string
   ar?: RawArtist[]
@@ -113,7 +124,7 @@ function checkCode(body: CodeBody, what: string): void {
 }
 
 async function get<T extends CodeBody>(pathAndQuery: string, what: string, signal?: AbortSignal): Promise<T> {
-  const options: Parameters<typeof httpJson>[1] = { headers: HEADERS, retries: 2 }
+  const options: Parameters<typeof httpJson>[1] = { headers: headers(), retries: 2 }
   if (signal) options.signal = signal
   const body = await httpJson<T>(BASE + pathAndQuery, options)
   checkCode(body, what)

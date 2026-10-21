@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 — 2026-10-21
+
+- 新增网易云扫码登录：`music login start / poll / wait / account / logout`。二维码出 PNG 文件（自带编码器，零依赖），交给 Hermes 用 `MEDIA:` 发图
+- 新增 `music playlists`（我的歌单，自建 + 收藏）、`music daily`（每日推荐，可 `--download` 直接开任务）、`music liked`（我喜欢的音乐 / `--check` 批量查红心）
+- 所有网易云请求带上会话 cookie：私人歌单、日推这类账号内容现在可见
+- 加密模块 `crypto.ts`（weapi / eapi），补了确定性测试
+
 ## 0.1.3 — 2026-10-21
 
 - deploy/hermes 增加派生镜像 Dockerfile：官方镜像运行期装不了飞书 SDK，必须预装 lark-oapi
