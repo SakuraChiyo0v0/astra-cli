@@ -13,7 +13,7 @@ model:
   # 换模型时若上下文超过这个数会先警告（飞书里回 /approve 或 /cancel）；0 关掉。
   # 实测这个键从 model 段读，不是独立的 model_switch_guard 段。
   # 留着是好事：换模型会让 prompt cache 整份失效，提醒一下值得
-  switch_context_confirm_tokens: 100000
+  switch_context_confirm_tokens: 400000
 
 terminal:
   backend: local
@@ -40,14 +40,16 @@ security:
   allow_lazy_installs: true
 
 # ---- 上下文成本 ----
-# 飞书是常驻会话，聊久了历史会一直涨。实测一个会话能到 16 万 token，
-# 之后每句话都重新读一遍（第三方模型的 prompt cache 按模型 key，换模型就失效）。
-# 两道闸门：
-# - threshold_tokens：到 8 万就压缩，不等比例阈值（小窗口模型的下限太高）
-# - idle_compact_after_seconds：空闲半小时再回来时先压缩，别让旧历史重复计费
+# 飞书是常驻会话，历史会一直涨。但**不必为此早压缩**：
+# 实测 WorkBuddy2API 支持 prompt cache，第 2 次起命中 99.9%
+# （4422 token 的请求，hit 4416 / miss 6）。重读历史不等于付全价。
+#
+# 阈值定在 40 万（1M 窗口的 40%）：既留得下长历史，又给单轮对话留足余量。
+# 真正的成本尖峰只有换模型那一下 —— 缓存按模型 key，换了就整份失效。
 compression:
   enabled: true
   threshold: 0.50
-  threshold_tokens: 80000
+  # 40 万；不在这个数上卡死，"省 token"的收益远小于"丢掉有用历史"的损失
+  threshold_tokens: 400000
   target_ratio: 0.20
   # 压缩摘要由主模型做（glm-5.3-flash 够快），不单独配 auxiliary
