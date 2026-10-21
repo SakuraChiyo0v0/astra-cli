@@ -281,6 +281,11 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       bps: probe.bps,
       sourceId: resolved.sourceId === 'official' ? 'official' : `${resolved.sourceId}@${resolved.route}`,
       audioSha256,
+      // 母带规格：只有 FLAC 能从头部精确读出；MP3 无法从标签可靠拿到采样率，留 null
+      spec: { sampleRate: probe.flac?.sampleRate ?? null, bitsPerSample: probe.flac?.bitsPerSample ?? null, channels: probe.flac?.channels ?? null },
+      hasCover: cover !== null,
+      hasLyric: lyricBody !== null,
+      hasWordLyric: wordLyricFile !== null,
     })
 
     return {

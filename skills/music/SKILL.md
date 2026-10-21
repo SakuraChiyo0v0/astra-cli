@@ -1,7 +1,7 @@
 ---
 name: astra-music
 description: Download songs, albums and playlists to the NAS.
-version: 0.4.0
+version: 0.5.0
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -79,6 +79,9 @@ stderr 是进度日志，不用管。
 | 曲库里有没有 | `astra music have <关键词>`；不带关键词 = 最近下载 + 统计 |
 | 任务进度 | `astra music job <id> [--wait 60] [--failed]`；`astra music jobs --active` |
 | 取消 / 继续任务 | `astra music job cancel <id>` / `astra music job resume <id>` |
+| 订阅歌单 / 歌手 | `astra music subscribe add <链接>`；`subscribe list/run/set/remove` |
+| 哪些歌音质还能升 | `astra music have --low` |
+| 补齐曲库规格 | `astra music have --refresh` |
 
 ## Procedure
 1. 用户给关键词时，原样交给 `astra music get`，例如 `astra music get 晴天 周杰伦`。
@@ -93,6 +96,15 @@ stderr 是进度日志，不用管。
    - `job_started`：专辑 / 歌单 / 歌手在后台下载。告诉用户任务 id 和总数（`alreadyInLibrary` 首已经有了）。
      用户追问进度时用 `astra music job <id>`；想等结果就 `astra music job <id> --wait 120`。
 3. 用户说"第 2 个"、"要 Live 版"、"要原唱"时，从上一次的 `candidates` 里找对应的 `ref`，不要重新搜索。
+
+## 订阅（自动追更）
+
+用户说"盯着这个歌单/歌手，出新歌帮我下"时用：
+1. `astra music subscribe add <链接|ref> --every 24` —— 第一次**只记基线**，不会把已有的全下一遍。
+   用户要连已有的也下就加 `--download-existing`。
+2. 之后靠定时任务触发：`astra music subscribe run`（只跑"到点的"）。
+   如果 Hermes 有 cron 能力，配一条每小时执行的 `astra music subscribe run` 就够了。
+3. `astra music subscribe list --runs` 看历史和最近有没有新歌。
 
 ## Pitfalls
 

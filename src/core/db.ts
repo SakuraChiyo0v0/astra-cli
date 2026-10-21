@@ -55,6 +55,39 @@ const MIGRATIONS: string[] = [
      primary key (job_id, seq)
    )`,
   `create index tracks_title on tracks (title)`,
+  // 母带规格。之前只存了 quality（档位名），回答不了"这首到底是 16bit 还是 24bit"。
+  // 老记录这三列为 null，用 `music have --refresh` 回读文件补齐。
+  `alter table tracks add column sample_rate integer`,
+  `alter table tracks add column bits_per_sample integer`,
+  `alter table tracks add column channels integer`,
+  `alter table tracks add column has_cover integer`,
+  `alter table tracks add column has_lyric integer`,
+  `alter table tracks add column has_word_lyric integer`,
+  `create index tracks_spec on tracks (sample_rate, bits_per_sample)`,
+  // 订阅：定时盯一个歌单 / 专辑 / 歌手，出新歌自动下。last_seen 存上次见到的曲目 id（JSON 数组），
+  // 决定"哪些是新歌"。用集合差集而不是日期，因为平台的上架时间不可靠。
+  `create table subscriptions (
+     id text primary key,
+     kind text not null,
+     target_id text not null,
+     title text not null,
+     quality text,
+     every_hours integer not null,
+     enabled integer not null default 1,
+     last_checked_at text,
+     last_seen text,
+     last_job_id text,
+     created_at text not null,
+     unique (kind, target_id)
+   )`,
+  `create table subscription_runs (
+     subscription_id text not null,
+     ran_at text not null,
+     new_tracks integer not null,
+     job_id text,
+     note text,
+     primary key (subscription_id, ran_at)
+   )`,
 ]
 
 export function db(): DatabaseSync {

@@ -12,7 +12,12 @@ import { decide, scoreTrack, type Candidate } from './match.ts'
 import { artistTopTracks, albumInfo, playlistTracks, searchCollection, searchSongs, songDetail, songDetails, type Track } from './netease.ts'
 import { resolveTarget } from './target.ts'
 import { downloadTrack } from './download.ts'
-import { findTrack, forgetTrack, libraryStats, searchLibrary } from './library.ts'
+import { allTracks, findTrack, forgetTrack, libraryStats, searchLibrary, type LibraryTrack } from './library.ts'
+import { refreshLibrarySpecs } from './maintain.ts'
+import {
+  addSubscription, dueSubscriptions, fetchSubscriptionTracks, findSubscription, listSubscriptions,
+  recentRuns, removeSubscription, runSubscription, setSubscription, type SubscribeKind,
+} from './subscribe.ts'
 import { cancelJob, createJob, getJob, listJobs, qualitySummary, resumeJob, runWorker, spawnWorker, statusLabel } from './jobs.ts'
 import { addSource, listSources, loadEnabledSources, orphanScripts, removeSource, setSourceEnabled } from '../lx/store.ts'
 import { musicInfoOf } from './resolve.ts'
@@ -234,17 +239,55 @@ const batch: Command = {
   },
 }
 
+function trackViewOfLib(t: LibraryTrack) {
+  return {
+    ref: `wy:${t.id}`,
+    title: t.title,
+    artists: t.artists,
+    album: t.album,
+    quality: t.quality,
+    spec: t.spec.sampleRate ? `${Math.round((t.spec.sampleRate / 1000) * 10) / 10}kHz/${t.spec.bitsPerSample ?? '?'}bit` : null,
+    format: t.format,
+    bitrateKbps: t.bps ? Math.round(t.bps / 1000) : null,
+    sizeMB: t.bytes ? Math.round((t.bytes / 1048576) * 10) / 10 : null,
+    path: t.path,
+    missing: t.missing,
+    hasCover: t.hasCover,
+    hasWordLyric: t.hasWordLyric,
+    downloadedAt: t.createdAt,
+  }
+}
+
 const have: Command = {
   name: 'music have',
-  summary: '查曲库：有没有某首歌 / 最近下了什么 / 统计',
-  usage: 'astra music have [关键词] [--limit 20]',
-  notes: ['不带关键词时列出最近下载的歌和统计；missing=true 表示记录还在但文件已被删除或移动'],
-  options: { limit: { type: 'string', short: 'n', description: '默认 20', valueName: 'n' } },
+  summary: '查曲库：有没有某首歌 / 最近下了什么 / 统计 / 哪些还能升级',
+  usage: 'astra music have [关键词] [--limit 20] [--low] [--refresh]',
+  notes: [
+    '不带关键词时列出最近下载的歌和统计；missing=true 表示记录还在但文件已被删除或移动',
+    '--low 只列不是无损或低于 24bit 的（问"哪些还能升级"时用）',
+    '--refresh 重新读一遍文件头部，回填老记录缺的采样率 / 位深与配套文件状态',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '默认 20', valueName: 'n' },
+    low: { type: 'boolean', description: '只列有损或低于 24bit 的' },
+    refresh: { type: 'boolean', description: '回读文件补齐规格字段（会读文件头，几秒）' },
+  },
   async run({ positionals, values }) {
     const limit = intOf(values.limit, 20, 1, 500, 'limit')
+    if (values.refresh === true) {
+      const refreshed = await refreshLibrarySpecs()
+      return { data: { refreshed, stats: libraryStats() } }
+    }
+    if (values.low === true) {
+      const low = allTracks().filter((t) => !t.missing && (t.quality === '128k' || t.quality === '320k' || (t.spec.bitsPerSample !== null && t.spec.bitsPerSample <= 16)))
+      return { data: { total: low.length, tracks: low.slice(0, limit).map(trackViewOfLib), truncated: low.length > limit, hint: '这些可以用 `astra music get <ref> --force` 重下，官方通道常能拿到更高规格' } }
+    }
     const { total, tracks } = searchLibrary(positionals.join(' '), limit)
-    const view = tracks.map((t) => ({ ref: `wy:${t.id}`, title: t.title, artists: t.artists, album: t.album, quality: t.quality, format: t.format, path: t.path, missing: t.missing, downloadedAt: t.createdAt }))
-    return { data: positionals.length > 0 ? { keyword: positionals.join(' '), total, tracks: view } : { stats: libraryStats(), recent: view } }
+    return {
+      data: positionals.length > 0
+        ? { keyword: positionals.join(' '), total, tracks: tracks.map(trackViewOfLib) }
+        : { stats: libraryStats(), recent: tracks.map(trackViewOfLib) },
+    }
   },
 }
 
@@ -622,9 +665,153 @@ const liked: Command = {
   },
 }
 
+function subView(s: ReturnType<typeof listSubscriptions>[number]) {
+  return {
+    id: s.id,
+    ref: `${s.kind}:${s.targetId}`,
+    kind: s.kind,
+    title: s.title,
+    everyHours: s.everyHours,
+    quality: s.quality,
+    enabled: s.enabled,
+    lastCheckedAt: s.lastCheckedAt,
+    knownTracks: s.lastSeen?.length ?? null,
+    lastJobId: s.lastJobId,
+  }
+}
+
+/** 取订阅目标的真实名字与曲目数，确认它能读到。 */
+async function describeTarget(kind: SubscribeKind, id: string, signal?: AbortSignal): Promise<{ title: string; count: number }> {
+  if (kind === 'playlist') {
+    const p = await playlistTracks(id, signal)
+    return { title: `歌单《${p.name}》`, count: p.tracks.length }
+  }
+  if (kind === 'album') {
+    const a = await albumInfo(id, signal)
+    return { title: `专辑《${a.album.name}》- ${a.album.artists.join(' / ')}`, count: a.tracks.length }
+  }
+  const ar = await artistTopTracks(id, signal)
+  return { title: `${ar.name} 的热门歌曲`, count: ar.tracks.length }
+}
+
+const subscribeAdd: Command = {
+  name: 'music subscribe add',
+  summary: '订阅歌单 / 专辑 / 歌手：定时检查，出新歌自动下',
+  usage: 'astra music subscribe add <链接|ref> [--every 24] [--quality flac] [--download-existing]',
+  notes: [
+    '第一次只记当前曲目作为基线，**不会**把已有的全下一遍；要连已有的也下就加 --download-existing',
+    '之后每次检查只下"上次没见过的曲目"，已经在曲库里的跳过',
+    '实际执行靠定时任务调 `astra music subscribe run`，本工具不常驻',
+  ],
+  options: {
+    every: { type: 'string', description: '检查间隔小时数，1..720，默认 24', valueName: 'h' },
+    quality: { type: 'string', short: 'q', description: '新歌用哪个音质档位下载', valueName: 'q' },
+    'download-existing': { type: 'boolean', description: '第一次就把现有曲目也下了' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const target = await resolveTarget(positionals[0]!)
+    if (target.kind === 'song' || target.kind === 'keyword') throw invalidInput('订阅只能是歌单 / 专辑 / 歌手', '给它 playlist:/album:/artist: 的链接或 ref')
+    const kind = target.kind as SubscribeKind
+    const every = intOf(values.every, 24, 1, 720, 'every')
+    const quality = values.quality === undefined ? null : qualityOf(values.quality)
+    // 先读一次，确认目标存在并拿到它的真实名字（标题只用 id 的话列表里认不出是哪个）
+    const { title, count } = await describeTarget(kind, target.id, signal)
+    const sub = addSubscription({ kind, targetId: target.id, title, everyHours: every, quality })
+    const result = await runSubscription(sub, { baselineOnly: values['download-existing'] !== true, signal, force: true })
+    return { data: { subscription: subView(findSubscription(sub.id)), preview: { tracks: count }, baseline: result.baseline, note: result.note, jobId: result.jobId } }
+  },
+}
+
+const subscribeList: Command = {
+  name: 'music subscribe list',
+  summary: '列出订阅及其状态',
+  usage: 'astra music subscribe list [--runs]',
+  options: { runs: { type: 'boolean', description: '附上最近 5 次运行记录' } },
+  maxArgs: 0,
+  async run({ values }) {
+    const subs = listSubscriptions()
+    return {
+      data: {
+        subscriptions: subs.map((s) => ({ ...subView(s), ...(values.runs === true ? { runs: recentRuns(s.id, 5) } : {}) })),
+        due: dueSubscriptions().map((s) => s.id),
+      },
+    }
+  },
+}
+
+const subscribeSet: Command = {
+  name: 'music subscribe set',
+  summary: '改订阅：间隔 / 启停 / 音质',
+  usage: 'astra music subscribe set <id> [--every 24] [--enable] [--disable] [--quality flac]',
+  options: {
+    every: { type: 'string', description: '检查间隔小时数', valueName: 'h' },
+    enable: { type: 'boolean', description: '启用' },
+    disable: { type: 'boolean', description: '停用' },
+    quality: { type: 'string', short: 'q', description: '音质档位', valueName: 'q' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values }) {
+    if (values.enable === true && values.disable === true) throw invalidInput('--enable 与 --disable 不能同时给')
+    const patch: Parameters<typeof setSubscription>[1] = {}
+    if (values.every !== undefined) patch.everyHours = intOf(values.every, 24, 1, 720, 'every')
+    if (values.enable === true) patch.enabled = true
+    if (values.disable === true) patch.enabled = false
+    if (values.quality !== undefined) patch.quality = qualityOf(values.quality)
+    return { data: subView(setSubscription(positionals[0]!, patch)) }
+  },
+}
+
+const subscribeRemove: Command = {
+  name: 'music subscribe remove',
+  summary: '删除订阅（已下载的文件不动）',
+  usage: 'astra music subscribe remove <id>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    return { data: { removed: removeSubscription(positionals[0]!) } }
+  },
+}
+
+const subscribeRun: Command = {
+  name: 'music subscribe run',
+  summary: '检查到点的订阅并下载新歌（给定时任务调）',
+  usage: 'astra music subscribe run [--all] [--id <id>]',
+  notes: [
+    '不带参数时只处理"到点的"（上次检查超过间隔的）；--all 强制全部检查一遍',
+    '--id 只跑指定的一个（不看是否到点）',
+    '建议 cron 每小时调一次：`0 * * * * astra music subscribe run`',
+  ],
+  options: {
+    all: { type: 'boolean', description: '忽略间隔，全部检查一遍' },
+    id: { type: 'string', description: '只跑指定订阅', valueName: 'id' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const subs = values.id !== undefined
+      ? [findSubscription(String(values.id))]
+      : values.all === true
+        ? listSubscriptions().filter((s) => s.enabled)
+        : dueSubscriptions()
+    const results = []
+    for (const sub of subs) {
+      try {
+        results.push(await runSubscription(sub, { signal }))
+      } catch (err) {
+        results.push({ subscriptionId: sub.id, title: sub.title, error: (err as Error).message })
+      }
+    }
+    const jobs = results.filter((r) => 'jobId' in r && r.jobId).length
+    return { data: { checked: subs.length, jobsStarted: jobs, results } }
+  },
+}
+
 export const musicCommands: Command[] = [
   get, search, info, batch, have, forget,
   job, jobs, jobCancel, jobResume, worker,
   loginPlain, loginStart, loginPoll, loginWait, account, logout, playlists, daily, liked,
+  subscribeAdd, subscribeList, subscribeSet, subscribeRemove, subscribeRun,
   sourceList, sourceAdd, sourceRemove, sourceToggle(true), sourceToggle(false), sourceTest,
 ]
