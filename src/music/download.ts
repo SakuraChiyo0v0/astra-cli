@@ -260,7 +260,7 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       quality: probe.quality,
       bytes: size,
       bps: probe.bps,
-      sourceId: `${resolved.sourceId}@${resolved.route}`,
+      sourceId: resolved.sourceId === 'official' ? 'official' : `${resolved.sourceId}@${resolved.route}`,
       audioSha256,
     })
 
@@ -274,7 +274,7 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       downgraded: resolved.downgraded,
       bytes: size,
       bitrateKbps: probe.bps ? Math.round(probe.bps / 1000) : null,
-      source: `${resolved.sourceId}@${resolved.route}`,
+      source: resolved.sourceId === 'official' ? 'official' : `${resolved.sourceId}@${resolved.route}`,
       lyricFile,
       warnings,
     }

@@ -20,6 +20,7 @@ import { probeUrl, qualityRank, qualitySatisfied, type Probe, type Quality } fro
 import { findOnKuwo } from './kuwo.ts'
 import { normalize } from './match.ts'
 import type { Track } from './netease.ts'
+import { officialUrl } from './official.ts'
 
 export interface ResolvedUrl {
   url: string
@@ -29,6 +30,8 @@ export interface ResolvedUrl {
   requested: Quality
   probe: Probe
   downgraded: boolean
+  /** 官方取链时，官方声明的档位（可能比实测高）。 */
+  officialLevel?: Quality | null
 }
 
 /** 档位 → 各音源常见的写法。`24bit` 有的脚本叫 `flac24bit`。 */
@@ -177,16 +180,42 @@ async function tryRoute(
 }
 
 export async function resolveUrl(track: Track, requested: Quality, signal?: AbortSignal): Promise<ResolvedUrl> {
+  const attempts: string[] = []
+  const state: { best: ResolvedUrl | null } = { best: null }
+
+  // 1) 官方取链（用户自己的账号）。拿到就最干净，VIP 还能给无损
+  try {
+    const official = await officialUrl(track, requested, signal)
+    if ('skip' in official) {
+      attempts.push(`official: ${official.skip}`)
+    } else {
+      const candidate: ResolvedUrl = {
+        url: official.url,
+        // 标签里直接写清楚"这是官方给的"，用户在结果里一眼能看出来
+        sourceId: 'official',
+        route: 'wy',
+        requested,
+        probe: official.probe,
+        downgraded: !qualitySatisfied(requested, official.probe.quality),
+        officialLevel: official.level,
+      }
+      if (!candidate.downgraded) return candidate
+      state.best = candidate
+    }
+  } catch (err) {
+    attempts.push(`official: ${(err as Error).message.slice(0, 160)}`)
+  }
+
+  // 2) 洛雪音源：网易云路线，再酷我同曲路线
   const { loaded, failed } = await loadEnabledSources()
   if (loaded.length === 0) {
+    if (state.best) return state.best
     const why = failed.length > 0 ? `：${failed.map((f) => `${f.id} ${f.error}`).join('；')}` : ''
     throw new AstraError('NO_SOURCE', `没有可用的音源${why}`, {
       exitCode: 3,
-      hint: '让用户提供洛雪音源脚本（.js），用 `astra music source add <文件>` 导入',
+      hint: '让用户提供洛雪音源脚本（.js），用 `astra music source add <文件>` 导入；或在 `astra music login start` 登录后走官方通道',
     })
   }
-  const attempts: string[] = []
-  const state: { best: ResolvedUrl | null } = { best: null }
 
   const wy = await tryRoute({ platform: 'wy', info: musicInfoOf(track) }, loaded, requested, track, attempts, state, signal)
   if (wy) return wy
@@ -214,7 +243,7 @@ export async function resolveUrl(track: Track, requested: Quality, signal?: Abor
   throw new AstraError('NO_PLAYABLE_URL', `所有音源都没拿到「${track.title}」的可用音频`, {
     exitCode: 5,
     retryable: true,
-    hint: '可能是版权受限或音源接口失效。可以稍后重试、换一个版本（专辑 / 单曲），或导入别的音源',
+    hint: '官方账号和音源都给不出地址（版权下架 / 地区限制最常见）。可以稍后重试、换用同曲的其它专辑版本（get 结果里的 otherVersions），或导入别的音源',
     details: { attempts, failedSources: failed },
   })
 }

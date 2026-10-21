@@ -1,7 +1,7 @@
 ---
 name: astra-music
 description: Download songs, albums and playlists to the NAS.
-version: 0.2.0
+version: 0.3.0
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -35,7 +35,9 @@ required_environment_variables:
 
 ## 登录网易云（扫码）
 
-登录只是为了**看见**私人歌单、每日推荐；它不保证音质更高（取链仍靠洛雪音源）。
+登录做两件事：**看见**私人歌单 / 每日推荐 / 红心；以及**用你自己的账号取官方播放地址**。
+官方通道优先级最高：VIP 账号常能直接拿到无损甚至 Hi-Res（实测 `アイドル` 拿到 24bit FLAC）。
+官方拿不到时（下架、地区限制）才回落到洛雪音源。没登录也能下载，只是少这一条路。
 
 1. `astra music login start` —— 立刻返回，不阻塞。
 2. 回复里带上图片标记让它真的发出去：`MEDIA:<data.qrImage>`
@@ -96,6 +98,8 @@ stderr 是进度日志，不用管。
 
 - 关键词里歌名和歌手都写上，结果明显更准；只写歌名常会得到 `ambiguous`，这是正常的。
 - `quality` 是**下载后实测**的音质，以它为准，不要按请求的档位告诉用户。
+`source` 是音频从哪来的：`official` = 用户自己账号的官方地址（最好，VIP 能到无损/Hi-Res）；
+`qdy@wy` / `qdy@kw` = 经洛雪音源，分别走网易云和酷我同曲。用户问"是不是官方的"时按这个回答。
 - `NO_PLAYABLE_URL`：所有音源都拿不到这首（版权 / 音源失效）。可以建议用户换 `otherVersions` 里的版本，或者过一会儿重试。
 - `RATE_LIMITED` / `retryable: true`：等一两分钟再试，不要连续重试。
 - 任务 `status` 是 `interrupted`：进程意外退出（比如容器重启），执行 `astra music job resume <id>`。
