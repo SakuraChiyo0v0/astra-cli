@@ -1,0 +1,25 @@
+{
+  "name": "astra-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "给 AI 调用的个人能力 CLI：一条命令办完一件事，输出统一 JSON",
+  "type": "module",
+  "bin": {
+    "astra": "./dist/astra.mjs"
+  },
+  "engines": {
+    "node": ">=24.0"
+  },
+  "scripts": {
+    "astra": "node --disable-warning=ExperimentalWarning src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test \"tests/**/*.test.ts\"",
+    "build": "node scripts/build.mjs",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

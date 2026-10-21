@@ -1,0 +1,783 @@
+{
+ "keyword": "アイドル YOASOBI",
+ "capturedAt": "2026-10-21",
+ "body": {
+  "code": 200,
+  "result": {
+   "songCount": 163,
+   "songs": [
+    {
+     "id": 2034742057,
+     "name": "アイドル",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 162749810,
+      "name": "アイドル",
+      "picUrl": "http://p2.music.126.net/mLJ_pKshFVtboLyD-4nBdA==/109951168573694568.jpg"
+     },
+     "dt": 213233,
+     "alia": [
+      "TV动画《我推的孩子》片头曲"
+     ],
+     "tns": [
+      "偶像"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1681228800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2083870325,
+     "name": "アイドル",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 175201425,
+      "name": "THE BOOK 3",
+      "picUrl": "http://p2.music.126.net/t171kH8w5aujt6Pe8BUK7A==/109951168929389061.jpg"
+     },
+     "dt": 211733,
+     "alia": [
+      "TV动画《【我推的孩子】》片头曲"
+     ],
+     "tns": [
+      "偶像"
+     ],
+     "no": 7,
+     "cd": "01",
+     "publishTime": 1696348800000,
+     "pop": 90,
+     "fee": 1
+    },
+    {
+     "id": 1472480890,
+     "name": "群青",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 94214994,
+      "name": "群青",
+      "picUrl": "http://p2.music.126.net/sF9I_mKMVNtsCD-ZXzfV_A==/109951165251958014.jpg"
+     },
+     "dt": 248444,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1598889600000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 3442644155,
+     "name": "咲き誇れ",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 401337545,
+      "name": "咲き誇れ",
+      "picUrl": "http://p2.music.126.net/RUviFHoUtVbr759ywzRHNg==/109951174027643153.jpg"
+     },
+     "dt": 246850,
+     "alia": [],
+     "tns": [
+      "晨间剧《花朵盛开》主题曲"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1791907200000,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 2068136184,
+     "name": "アイドル (Piano Ver.)",
+     "ar": [
+      {
+       "id": 57663153,
+       "name": "Piano Echoes"
+      }
+     ],
+     "al": {
+      "id": 170728624,
+      "name": "YOASOBIに癒される〜リラクシング・ピアノ",
+      "picUrl": "http://p2.music.126.net/ZZoJaLCntIzUicvPtiVzlg==/109951168772481122.jpg"
+     },
+     "dt": 349840,
+     "alia": [
+      "アニメ「【推しの子】」OP"
+     ],
+     "no": 3,
+     "cd": "01",
+     "publishTime": 1690387200000,
+     "pop": 20,
+     "fee": 8
+    },
+    {
+     "id": 2059786617,
+     "name": "アイドル（七人合唱）",
+     "ar": [
+      {
+       "id": 12478040,
+       "name": "失心少年"
+      },
+      {
+       "id": 0,
+       "name": "YOASOBI."
+      },
+      {
+       "id": 0,
+       "name": "HIMEHINA"
+      },
+      {
+       "id": 0,
+       "name": "朔炭パリカ"
+      },
+      {
+       "id": 0,
+       "name": "セラフィー"
+      },
+      {
+       "id": 0,
+       "name": "春歌みこと"
+      },
+      {
+       "id": 0,
+       "name": "un:c"
+      }
+     ],
+     "al": {
+      "id": 168537116,
+      "name": "偶像（七人合唱）",
+      "picUrl": "http://p2.music.126.net/SoYDPZqxT6BEROlIaRjjJQ==/109951168705908212.jpg"
+     },
+     "dt": 211638,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 15,
+     "fee": 0
+    },
+    {
+     "id": 2599476826,
+     "name": "アイドル Yoasobi",
+     "ar": [
+      {
+       "id": 0,
+       "name": "Get A Better Beat"
+      }
+     ],
+     "al": {
+      "id": 239456895,
+      "name": "アイドル Yoasobi",
+      "picUrl": "http://p2.music.126.net/Px42iL-zGAA-9U10wb6ahg==/109951169694417524.jpg"
+     },
+     "dt": 170666,
+     "alia": [],
+     "tns": [
+      "偶像 Yoasobi"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1717084800000,
+     "pop": 5,
+     "fee": 1
+    },
+    {
+     "id": 1803908863,
+     "name": "怪物",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 120375092,
+      "name": "怪物",
+      "picUrl": "http://p2.music.126.net/M9FA7rm098sFErf-B7QWOw==/109951165536665031.jpg"
+     },
+     "dt": 206000,
+     "alia": [
+      "TV动画《BEASTARS》第二季片头曲",
+      "かいぶつ",
+      "アニメ「BEASTARS」OP 2"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1609862400000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2083182016,
+     "name": "勇者",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 175012713,
+      "name": "勇者",
+      "picUrl": "http://p2.music.126.net/9mBj0oY95FqKkVWzMeoxog==/109951168924619987.jpg"
+     },
+     "dt": 194164,
+     "alia": [
+      "TV动画《葬送的芙莉莲》片头曲"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1695916800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1459343252,
+     "name": "たぶん",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 91768071,
+      "name": "たぶん",
+      "picUrl": "http://p2.music.126.net/l-oheMQzLncYGGv3E7Wn9A==/109951165101444453.jpg"
+     },
+     "dt": 258666,
+     "alia": [],
+     "tns": [
+      "大概"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1595174400000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2049587772,
+     "name": "アイドル (偶像)",
+     "ar": [
+      {
+       "id": 30784633,
+       "name": "Cherry酱"
+      }
+     ],
+     "al": {
+      "id": 166150105,
+      "name": "アイドル (偶像) - YOASOBI",
+      "picUrl": "http://p2.music.126.net/TgG3ss2d7-4eO5U0T105mg==/109951168631496741.jpg"
+     },
+     "dt": 213233,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 2048692332,
+     "name": "アイドル(Cover YOASOBI)",
+     "ar": [
+      {
+       "id": 30958853,
+       "name": "YuuKA柚小圆"
+      }
+     ],
+     "al": {
+      "id": 157186244,
+      "name": "圆子唱的歌(2023)",
+      "picUrl": "http://p2.music.126.net/fUCT5DS_0cQhrv23Et3I9Q==/109951168193866051.jpg"
+     },
+     "dt": 213937,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 5,
+     "fee": 0
+    },
+    {
+     "id": 1409311773,
+     "name": "夜に駆ける",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 84072830,
+      "name": "夜に駆ける",
+      "picUrl": "http://p2.music.126.net/3xWlqwYmfwRFebeiONUpGg==/109951164546210608.jpg"
+     },
+     "dt": 261013,
+     "alia": [],
+     "tns": [
+      "向夜晚奔去"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1576339200000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1500152660,
+     "name": "たぶん",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 99079344,
+      "name": "THE BOOK",
+      "picUrl": "http://p2.music.126.net/r3HQ2Na5Z-CvnDGHmcl9-A==/109951165515346936.jpg"
+     },
+     "dt": 258666,
+     "alia": [],
+     "tns": [
+      "大概"
+     ],
+     "no": 5,
+     "cd": "01",
+     "publishTime": 1609862400000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1417236632,
+     "name": "あの夢をなぞって",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 85040420,
+      "name": "あの夢をなぞって",
+      "picUrl": "http://p2.music.126.net/lX06lnoMCH8x18XqC4j5yg==/109951164632728541.jpg"
+     },
+     "dt": 242666,
+     "alia": [],
+     "tns": [
+      "描绘着那场梦"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1579276800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2696333150,
+     "name": "YOASOBI「アイドル」from『剧场版YOASOBI 5th ANNIVERSARY DOME LIVE 2024 \"超现实\"』-TV动画「我推的孩子」OP",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p2.music.126.net/0ju8ET1ApZSXfWacc4w49w==/109951169484091680.jpg"
+     },
+     "dt": 335640,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1740067200000,
+     "pop": 15,
+     "fee": 0
+    },
+    {
+     "id": 2041800151,
+     "name": "偶像(アイドル)【Cvoer：YOASOBI】",
+     "ar": [
+      {
+       "id": 46424022,
+       "name": "兰音Reine"
+      }
+     ],
+     "al": {
+      "id": 164234598,
+      "name": "（我推的孩子）アイドル偶像",
+      "picUrl": "http://p2.music.126.net/rpKLBx_3RayHfocgLcTeGg==/109951168565365287.jpg"
+     },
+     "dt": 215421,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 70,
+     "fee": 0
+    },
+    {
+     "id": 1983292457,
+     "name": "祝福",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 151974372,
+      "name": "祝福",
+      "picUrl": "http://p1.music.126.net/PhuYCfPgOIObvWsLy5Aznw==/109951167902770123.jpg"
+     },
+     "dt": 196235,
+     "alia": [
+      "TV动画《机动战士高达：水星的魔女》片头曲"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1664553600000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1809741562,
+     "name": "優しい彗星",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 121242784,
+      "name": "優しい彗星",
+      "picUrl": "http://p1.music.126.net/_lmpEeZLeJH-qsmcKjqHqg==/109951165609070788.jpg"
+     },
+     "dt": 215333,
+     "alia": [
+      "TV动画《BEASTARS》第二季片尾曲"
+     ],
+     "tns": [
+      "温柔的彗星"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1611072000000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1444071945,
+     "name": "ハルジオン",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 88653008,
+      "name": "ハルジオン",
+      "picUrl": "http://p1.music.126.net/_xZS7ETwZ-EK71Yvr-MFcQ==/109951164945006694.jpg"
+     },
+     "dt": 198000,
+     "alia": [
+      "Halzion",
+      "Harujion"
+     ],
+     "tns": [
+      "春紫菀"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1589126400000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2048049634,
+     "name": "YOASOBI - アイドル（YunFuCola remix）",
+     "ar": [
+      {
+       "id": 55516822,
+       "name": "YunFu"
+      }
+     ],
+     "al": {
+      "id": 165636109,
+      "name": "Remix系列",
+      "picUrl": "http://p1.music.126.net/-7o_Q6ic9Gj3E2QOrsX4sQ==/109951168613281777.jpg"
+     },
+     "dt": 213241,
+     "alia": [
+      "アニメ「【推しの子】」OP"
+     ],
+     "tns": [
+      "偶像"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 45,
+     "fee": 0
+    },
+    {
+     "id": 2737229008,
+     "name": "アイドル (cover YOASOBI)",
+     "ar": [
+      {
+       "id": 51763039,
+       "name": "春桥澈Lior"
+      },
+      {
+       "id": 97322830,
+       "name": "雅尼凛"
+      },
+      {
+       "id": 97874133,
+       "name": "云落出听"
+      }
+     ],
+     "al": {
+      "id": 272742481,
+      "name": "甜椒翻唱的中文歌",
+      "picUrl": "http://p1.music.126.net/Rcb8lBJxviV2cMm359UJvw==/109951171012604611.jpg"
+     },
+     "dt": 213227,
+     "alia": [],
+     "no": 2,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 5,
+     "fee": 0
+    },
+    {
+     "id": 2020918656,
+     "name": "アドベンチャー",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 159712078,
+      "name": "アドベンチャー",
+      "picUrl": "http://p1.music.126.net/eKVGZxXPqfHoq1su7ig6tw==/109951168295122895.jpg"
+     },
+     "dt": 199964,
+     "alia": [
+      "USJ学生应援企画「ユニ春」广告曲"
+     ],
+     "tns": [
+      "冒险"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1676390400000,
+     "pop": 95,
+     "fee": 1
+    },
+    {
+     "id": 1893592988,
+     "name": "もしも命が描けたら",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 135888000,
+      "name": "THE BOOK 2",
+      "picUrl": "http://p1.music.126.net/Nwwpjbdyj6qM66WGwKBM_Q==/109951166603574539.jpg"
+     },
+     "dt": 201626,
+     "alia": [
+      "舞台剧《若能描绘生命》主题曲"
+     ],
+     "tns": [
+      "若能描绘生命"
+     ],
+     "no": 7,
+     "cd": "01",
+     "publishTime": 1638288000000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1500152567,
+     "name": "ハルカ",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 99080009,
+      "name": "ハルカ",
+      "picUrl": "http://p1.music.126.net/KX7-Ty46vm62LCok2ogcCQ==/109951165515356576.jpg"
+     },
+     "dt": 243613,
+     "alia": [
+      "Haruka"
+     ],
+     "tns": [
+      "遥"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1608220800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2146098594,
+     "name": "アイドル:cover-YOASOBI",
+     "ar": [
+      {
+       "id": 59368231,
+       "name": "wachikiちゃん"
+      }
+     ],
+     "al": {
+      "id": 192294329,
+      "name": "我试歌唱Å",
+      "picUrl": "http://p1.music.126.net/aBEhspRQ7inP_ldEPXWNhQ==/109951169499651768.jpg"
+     },
+     "dt": 214704,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 2161604127,
+     "name": "アイドル（Cover YOASOBI）",
+     "ar": [
+      {
+       "id": 61747960,
+       "name": "楼下小黑"
+      }
+     ],
+     "al": {
+      "id": 195134520,
+      "name": "二次元翻唱库",
+      "picUrl": "http://p1.music.126.net/dqmqNHeuPF1vo7-GRebHmw==/109951169574570458.jpg"
+     },
+     "dt": 213288,
+     "alia": [],
+     "no": 23,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 5,
+     "fee": 0
+    },
+    {
+     "id": 1500151579,
+     "name": "アンコール",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 99079344,
+      "name": "THE BOOK",
+      "picUrl": "http://p1.music.126.net/r3HQ2Na5Z-CvnDGHmcl9-A==/109951165515346936.jpg"
+     },
+     "dt": 271440,
+     "alia": [
+      " 谷歌手机Pixel 5日本区广告歌"
+     ],
+     "tns": [
+      "安可"
+     ],
+     "no": 2,
+     "cd": "01",
+     "publishTime": 1609862400000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1500151581,
+     "name": "群青",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 99079344,
+      "name": "THE BOOK",
+      "picUrl": "http://p1.music.126.net/r3HQ2Na5Z-CvnDGHmcl9-A==/109951165515346936.jpg"
+     },
+     "dt": 248444,
+     "alia": [],
+     "no": 6,
+     "cd": "01",
+     "publishTime": 1609862400000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1840862630,
+     "name": "もう少しだけ",
+     "ar": [
+      {
+       "id": 33927412,
+       "name": "YOASOBI"
+      }
+     ],
+     "al": {
+      "id": 126662089,
+      "name": "もう少しだけ",
+      "picUrl": "http://p1.music.126.net/seyhDwTzRNqFvYAw9FtJnw==/109951165930283941.jpg"
+     },
+     "dt": 218853,
+     "alia": [
+      "晨间新闻节目「闹钟电视」春季主题曲"
+     ],
+     "tns": [
+      "再多一点"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1620576000000,
+     "pop": 100,
+     "fee": 1
+    }
+   ]
+  }
+ }
+}

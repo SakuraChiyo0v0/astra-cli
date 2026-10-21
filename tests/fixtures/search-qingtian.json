@@ -1,0 +1,731 @@
+{
+ "keyword": "晴天 周杰伦",
+ "capturedAt": "2026-10-21",
+ "body": {
+  "code": 200,
+  "result": {
+   "songCount": 250,
+   "songs": [
+    {
+     "id": 2652820720,
+     "name": "晴天(深情版)",
+     "ar": [
+      {
+       "id": 96154669,
+       "name": "Lucky小爱"
+      }
+     ],
+     "al": {
+      "id": 255723258,
+      "name": "晴天(深情版)",
+      "picUrl": "http://p1.music.126.net/F0fTkmBTVykCa2o7Vgu1rQ==/109951173569626660.jpg"
+     },
+     "dt": 278961,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1733068800000,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 3440441479,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 122200643,
+       "name": "Jay"
+      }
+     ],
+     "al": {
+      "id": 400164559,
+      "name": "晴天",
+      "picUrl": "http://p1.music.126.net/gRjIWVVpJu_ogi5hsqotXw==/109951172952456016.jpg"
+     },
+     "dt": 112373,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 85,
+     "fee": 8
+    },
+    {
+     "id": 2668397359,
+     "name": "晴天 (原唱 周杰伦)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "RyaVocal"
+      }
+     ],
+     "al": {
+      "id": 260499608,
+      "name": "晴天",
+      "picUrl": "http://p1.music.126.net/-NVLOT5vt9I91LRiZV1TCQ==/109951170413587092.jpg"
+     },
+     "dt": 270738,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1738684800000,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 1945894789,
+     "name": "晴天 (钢琴版) [原唱: 周杰伦]",
+     "ar": [
+      {
+       "id": 52587505,
+       "name": "纪钧瀚 (Bryan Chi)"
+      }
+     ],
+     "al": {
+      "id": 144681328,
+      "name": "钢琴放松轻听 流行轻音乐 华语经典",
+      "picUrl": "http://p1.music.126.net/1Bvyzvt4qnU_8cf4Gf3xlQ==/109951167394412301.jpg"
+     },
+     "dt": 238098,
+     "alia": [],
+     "no": 4,
+     "cd": "01",
+     "publishTime": 1652198400000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2653714443,
+     "name": "晴天 (女声版))",
+     "ar": [
+      {
+       "id": 50759987,
+       "name": "GYBeat"
+      }
+     ],
+     "al": {
+      "id": 256036533,
+      "name": "晴天 (女声版)",
+      "picUrl": "http://p1.music.126.net/umcqPPGdBpDVT8jHzHydJg==/109951173212027336.jpg"
+     },
+     "dt": 268750,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1733328000000,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 3391116218,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 123533149,
+       "name": "梦里啥都有"
+      }
+     ],
+     "al": {
+      "id": 380541053,
+      "name": "晴天",
+      "picUrl": "http://p1.music.126.net/qsx-FdpFhW8veNlse8ecGA==/109951173348863096.jpg"
+     },
+     "dt": 228545,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 80,
+     "fee": 8
+    },
+    {
+     "id": 2757922584,
+     "name": "晴天 (吉他版) (原唱：周杰伦)",
+     "ar": [
+      {
+       "id": 96143877,
+       "name": "郭衡 (Guo Heng)"
+      }
+     ],
+     "al": {
+      "id": 289282739,
+      "name": "轻音乐咖啡 放松治愈的吉他BGM 华语流行与古典的专注纯音乐",
+      "picUrl": "http://p1.music.126.net/kvevWMPhOa7F_KHpHyV-wg==/109951172181929999.jpg"
+     },
+     "dt": 186306,
+     "alia": [],
+     "no": 7,
+     "cd": "01",
+     "publishTime": 1761667200000,
+     "pop": 70,
+     "fee": 1
+    },
+    {
+     "id": 3379716579,
+     "name": "晴天 (R&B版)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "屿间凉音"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/5Yv1ecWyUATA-Hz9VzViqw==/109951173190775822.jpg"
+     },
+     "dt": 258540,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1777939202000,
+     "pop": 25,
+     "fee": 0
+    },
+    {
+     "id": 1412022124,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 30000975,
+       "name": "空匪"
+      }
+     ],
+     "al": {
+      "id": 84358777,
+      "name": "winter",
+      "picUrl": "http://p1.music.126.net/DpAuXTXlirLKXawYxJo70g==/109951164579389026.jpg"
+     },
+     "dt": 202000,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 95,
+     "fee": 8
+    },
+    {
+     "id": 3405047412,
+     "name": "周杰伦“晴天”PopxTrap Beat",
+     "ar": [
+      {
+       "id": 98544638,
+       "name": "NYONTHEBEAT"
+      }
+     ],
+     "al": {
+      "id": 386346934,
+      "name": "周杰伦“晴天”PopxTrap Beat",
+      "picUrl": "http://p1.music.126.net/O48Vm0238dw4n19IysEkkQ==/109951173538991116.jpg"
+     },
+     "dt": 172224,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 65,
+     "fee": 0
+    },
+    {
+     "id": 2731596660,
+     "name": "周杰伦-晴天 (DJ苏天伦版)",
+     "ar": [
+      {
+       "id": 47058525,
+       "name": "苏天伦"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/0ju8ET1ApZSXfWacc4w49w==/109951169484091680.jpg"
+     },
+     "dt": 385462,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 50,
+     "fee": 0
+    },
+    {
+     "id": 108914,
+     "name": "江南",
+     "ar": [
+      {
+       "id": 3684,
+       "name": "林俊杰"
+      }
+     ],
+     "al": {
+      "id": 10804,
+      "name": "第二天堂",
+      "picUrl": "http://p1.music.126.net/Gk4t93WwafRZtt9nTS77Iw==/109951171891430447.jpg"
+     },
+     "dt": 267946,
+     "alia": [],
+     "tns": [
+      "River South"
+     ],
+     "no": 6,
+     "cd": "01",
+     "publishTime": 1086278400000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2064191772,
+     "name": "晴天周杰伦(从前从前有个人爱你很久)",
+     "ar": [
+      {
+       "id": 56023906,
+       "name": "沈幼楚"
+      }
+     ],
+     "al": {
+      "id": 169672097,
+      "name": "不要你离开距离隔不开思念变成海",
+      "picUrl": "http://p1.music.126.net/l-QtkjYRjnVDD1OBxMdheQ==/109951168740647118.jpg"
+     },
+     "dt": 30974,
+     "alia": [],
+     "no": 2,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 25,
+     "fee": 8
+    },
+    {
+     "id": 3443412579,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 95010354,
+       "name": "舟子"
+      }
+     ],
+     "al": {
+      "id": 401726934,
+      "name": "晴天",
+      "picUrl": "http://p1.music.126.net/zaNwH72abhQkMgBhvuawDA==/109951174041028100.jpg"
+     },
+     "dt": 252760,
+     "alia": [
+      "故事的小黄花"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 25,
+     "fee": 8
+    },
+    {
+     "id": 2150768502,
+     "name": "晴天(钢琴曲)(原唱：周杰伦)",
+     "ar": [
+      {
+       "id": 60969269,
+       "name": "酷客音乐"
+      }
+     ],
+     "al": {
+      "id": 194020071,
+      "name": "睡前古典乐与华语流行合辑",
+      "picUrl": "http://p1.music.126.net/KyYDs9WJBuFTTzrHIoSOJQ==/109951169543736649.jpg"
+     },
+     "dt": 250000,
+     "alia": [
+      "Sunny Day(Piano Instrumental)(Originally Performed By Jay Chou)"
+     ],
+     "no": 3,
+     "cd": "01",
+     "publishTime": 1714492800000,
+     "pop": 80,
+     "fee": 8
+    },
+    {
+     "id": 2730151393,
+     "name": "晴天(DJ版)",
+     "ar": [
+      {
+       "id": 98666443,
+       "name": "DJ阿罗"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/hdL7IIrFEURoiy83XU-tVw==/109951171524923600.jpg"
+     },
+     "dt": 118047,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 90,
+     "fee": 0
+    },
+    {
+     "id": 196917,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 6522,
+       "name": "朱孝天"
+      }
+     ],
+     "al": {
+      "id": 19793,
+      "name": "Getting Real 新歌 + 精选",
+      "picUrl": "http://p1.music.126.net/8zUqXah3M7hOoHGc32eMdQ==/38482906988948.jpg"
+     },
+     "dt": 277706,
+     "alia": [],
+     "no": 21,
+     "cd": "1",
+     "publishTime": 1231430400000,
+     "pop": 15,
+     "fee": 8
+    },
+    {
+     "id": 525239280,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 5944,
+       "name": "夏天Alex"
+      }
+     ],
+     "al": {
+      "id": 2532326,
+      "name": "夏天Alex作品集",
+      "picUrl": "http://p1.music.126.net/vWqMLsKB921vJomWjn6DdA==/4454121604133156.jpg"
+     },
+     "dt": 203885,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1373385600007,
+     "pop": 55,
+     "fee": 8
+    },
+    {
+     "id": 3387884162,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 123843855,
+       "name": "DJ阿哲"
+      }
+     ],
+     "al": {
+      "id": 379081367,
+      "name": "晴天",
+      "picUrl": "http://p1.music.126.net/ZaL6d5oKqEn7yWfAqpRRIA==/109951173301745531.jpg"
+     },
+     "dt": 289044,
+     "alia": [
+      "DJ版"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 55,
+     "fee": 8
+    },
+    {
+     "id": 2731597267,
+     "name": "周杰伦-晴天 (DJ苏天伦版)",
+     "ar": [
+      {
+       "id": 47058525,
+       "name": "苏天伦"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/0ju8ET1ApZSXfWacc4w49w==/109951169484091680.jpg"
+     },
+     "dt": 168045,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 3334653818,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 122235907,
+       "name": "Asasblue"
+      }
+     ],
+     "al": {
+      "id": 356710068,
+      "name": "晴天",
+      "picUrl": "http://p1.music.126.net/g5lQgcmD4EFPkr6rsoGCnw==/109951172501913537.jpg"
+     },
+     "dt": 119146,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 65,
+     "fee": 8
+    },
+    {
+     "id": 28757205,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 958026,
+       "name": "贵族乐团"
+      }
+     ],
+     "al": {
+      "id": 2348312,
+      "name": "宫崎骏 映画音乐",
+      "picUrl": "http://p1.music.126.net/jFAFsLCuaYXEr3vVgLUImw==/6046214441780539.jpg"
+     },
+     "dt": 143773,
+     "alia": [],
+     "no": 7,
+     "cd": "1",
+     "publishTime": 1285776000007,
+     "pop": 45,
+     "fee": 8
+    },
+    {
+     "id": 454828887,
+     "name": "遇见",
+     "ar": [
+      {
+       "id": 9272,
+       "name": "孙燕姿"
+      }
+     ],
+     "al": {
+      "id": 35140205,
+      "name": "白羽毛之恋 华语典藏情歌 Vol.2",
+      "picUrl": "http://p1.music.126.net/KZ0VfIoFYsxpjz9sTQuLVQ==/17687843556430013.jpg"
+     },
+     "dt": 209760,
+     "alia": [
+      "电影《向左走向右走》主题曲"
+     ],
+     "no": 2,
+     "cd": "1",
+     "publishTime": 1061481600000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 386538,
+     "name": "温柔",
+     "ar": [
+      {
+       "id": 13193,
+       "name": "五月天"
+      }
+     ],
+     "al": {
+      "id": 38285,
+      "name": "我们是五月天",
+      "picUrl": "http://p1.music.126.net/-Md-YgTBiVsbpmVXIZz00w==/109951170702056876.jpg"
+     },
+     "dt": 269800,
+     "alia": [],
+     "no": 2,
+     "cd": "1",
+     "publishTime": 1049126400000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2163853163,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 58773072,
+       "name": "杨乐"
+      }
+     ],
+     "al": {
+      "id": 197481973,
+      "name": "晴天",
+      "picUrl": "http://p1.music.126.net/HmwGgQe0g2U_w-r1NviXZQ==/109951169676366415.jpg"
+     },
+     "dt": 162925,
+     "alia": [],
+     "no": 2,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 60,
+     "fee": 8
+    },
+    {
+     "id": 3327653118,
+     "name": "周杰伦“晴天“pop beat",
+     "ar": [
+      {
+       "id": 35724784,
+       "name": "WEICHENG-BEAT"
+      }
+     ],
+     "al": {
+      "id": 354229087,
+      "name": "周杰伦“晴天“pop beat",
+      "picUrl": "http://p1.music.126.net/7e9on3SKAG-KJfQ3pOqEGQ==/109951172415545171.jpg"
+     },
+     "dt": 205008,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 5,
+     "fee": 0
+    },
+    {
+     "id": 2076488356,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 129428606,
+       "name": "短音"
+      },
+      {
+       "id": 125166093,
+       "name": "居里"
+      },
+      {
+       "id": 122292586,
+       "name": "qazw"
+      },
+      {
+       "id": 55949173,
+       "name": "程程"
+      },
+      {
+       "id": 98490600,
+       "name": "汪的一声嗷"
+      },
+      {
+       "id": 126218933,
+       "name": "三好"
+      },
+      {
+       "id": 54688500,
+       "name": "筱峰"
+      },
+      {
+       "id": 99355459,
+       "name": "一只柒"
+      },
+      {
+       "id": 99173443,
+       "name": "六十七"
+      },
+      {
+       "id": 99309636,
+       "name": "早点睡觉"
+      },
+      {
+       "id": 52313812,
+       "name": "Nice我在原地"
+      },
+      {
+       "id": 57950146,
+       "name": "Заря"
+      },
+      {
+       "id": 48200341,
+       "name": "WEIZ.XT"
+      }
+     ],
+     "al": {
+      "id": 172920277,
+      "name": "杂集",
+      "picUrl": "http://p1.music.126.net/vtM87Ayayng8NUrWM1Izbw==/109951168855944759.jpg"
+     },
+     "dt": 44341,
+     "alia": [],
+     "no": 2,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 85,
+     "fee": 0
+    },
+    {
+     "id": 3339230677,
+     "name": "晴天",
+     "ar": [
+      {
+       "id": 98615668,
+       "name": "A-LNK"
+      }
+     ],
+     "al": {
+      "id": 358214126,
+      "name": "不散",
+      "picUrl": "http://p1.music.126.net/rM6PP_YrU0HjFes4jggIOw==/109951172445882513.jpg"
+     },
+     "dt": 182890,
+     "alia": [],
+     "no": 5,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 65,
+     "fee": 8
+    },
+    {
+     "id": 66842,
+     "name": "十年",
+     "ar": [
+      {
+       "id": 2116,
+       "name": "陈奕迅"
+      }
+     ],
+     "al": {
+      "id": 6548,
+      "name": "黑白灰",
+      "picUrl": "http://p1.music.126.net/wECqsELfPFdVNLpW0QWhmA==/109951171836564936.jpg"
+     },
+     "dt": 205423,
+     "alia": [],
+     "no": 4,
+     "cd": "1",
+     "publishTime": 1050336000000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 3402740110,
+     "name": "周杰伦“晴天”Pop Rap Type Beat",
+     "ar": [
+      {
+       "id": 99045894,
+       "name": "JJBaby Beats"
+      }
+     ],
+     "al": {
+      "id": 385660334,
+      "name": "周杰伦“晴天”Pop Rap Type Beat",
+      "picUrl": "http://p1.music.126.net/hhkgMBLH8kvsz_uZW-Rbmg==/109951173519290543.jpg"
+     },
+     "dt": 214824,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 10,
+     "fee": 0
+    }
+   ]
+  }
+ }
+}

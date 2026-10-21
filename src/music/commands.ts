@@ -1,0 +1,428 @@
+/**
+ * `astra music ...` 命令。
+ *
+ * 设计取向：一条命令办完一件事。`get` 是主入口 —— 给关键词 / 链接 / id 都行，
+ * 拿得准就直接下完返回结果，拿不准就返回候选让 AI 回去问用户。
+ */
+import { AstraError, invalidInput } from '../core/errors.ts'
+import { getConfig } from '../core/config.ts'
+import type { Command } from '../core/command.ts'
+import { isQuality, type Quality } from './audio.ts'
+import { decide, scoreTrack, type Candidate } from './match.ts'
+import { artistTopTracks, albumInfo, playlistTracks, searchCollection, searchSongs, songDetail, songDetails, type Track } from './netease.ts'
+import { resolveTarget } from './target.ts'
+import { downloadTrack } from './download.ts'
+import { findTrack, forgetTrack, libraryStats, searchLibrary } from './library.ts'
+import { cancelJob, createJob, getJob, listJobs, resumeJob, runWorker, spawnWorker, statusLabel } from './jobs.ts'
+import { addSource, listSources, loadEnabledSources, orphanScripts, removeSource, setSourceEnabled } from '../lx/store.ts'
+import { musicInfoOf } from './resolve.ts'
+import { probeUrl } from './audio.ts'
+
+function qualityOf(value: unknown): Quality {
+  const q = typeof value === 'string' && value ? value : getConfig('music.quality')
+  if (!isQuality(q)) throw invalidInput(`音质 ${q} 不合法`, '可选：128k / 320k / flac / 24bit')
+  return q
+}
+
+function intOf(value: unknown, fallback: number, min: number, max: number, name: string): number {
+  if (value === undefined) return fallback
+  const n = Number(value)
+  if (!Number.isInteger(n) || n < min || n > max) throw invalidInput(`--${name} 必须是 ${min}..${max} 的整数`)
+  return n
+}
+
+function formatDuration(ms: number | null): string | null {
+  if (!ms) return null
+  const s = Math.round(ms / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** 给 AI 看的候选：带 ref（下一步直接 `music get <ref>`）和版本标记。 */
+function candidateView(c: Candidate, index: number) {
+  const t = c.track
+  return {
+    index: index + 1,
+    ref: `wy:${t.id}`,
+    title: t.title,
+    artists: t.artists,
+    album: t.album,
+    duration: formatDuration(t.durationMs),
+    year: t.publishTime ? new Date(t.publishTime + 8 * 3600_000).getUTCFullYear() : null,
+    note: [...t.aliases, ...t.translations].join(' / ') || null,
+    flags: c.flags,
+    inLibrary: findTrack('wy', t.id) !== null,
+  }
+}
+
+function trackView(t: Track) {
+  return {
+    ref: `wy:${t.id}`,
+    title: t.title,
+    artists: t.artists,
+    album: t.album,
+    duration: formatDuration(t.durationMs),
+    note: [...t.aliases, ...t.translations].join(' / ') || null,
+  }
+}
+
+async function collectionTracks(kind: 'album' | 'playlist' | 'artist', id: string, signal: AbortSignal): Promise<{ title: string; tracks: Track[] }> {
+  if (kind === 'album') {
+    const r = await albumInfo(id, signal)
+    return { title: `专辑《${r.album.name}》- ${r.album.artists.join(' / ')}`, tracks: r.tracks }
+  }
+  if (kind === 'playlist') {
+    const r = await playlistTracks(id, signal)
+    return { title: `歌单《${r.name}》`, tracks: r.tracks }
+  }
+  const r = await artistTopTracks(id, signal)
+  return { title: `${r.name} 热门歌曲`, tracks: r.tracks }
+}
+
+function startBatch(kind: string, title: string, quality: Quality, tracks: Track[]) {
+  if (tracks.length === 0) throw new AstraError('EMPTY', `${title} 里没有歌曲`, { exitCode: 4 })
+  const job = createJob(kind, title, quality, tracks)
+  spawnWorker(job.id)
+  const inLibrary = tracks.filter((t) => findTrack('wy', t.id) !== null).length
+  return {
+    data: {
+      status: 'job_started',
+      job: { id: job.id, title, total: tracks.length, alreadyInLibrary: inLibrary },
+      preview: tracks.slice(0, 5).map(trackView),
+    },
+    warnings: [] as string[],
+  }
+}
+
+const get: Command = {
+  name: 'music get',
+  summary: '下载一首歌（或一整张专辑 / 歌单）：给关键词、网易云链接或 ref 都行',
+  usage: 'astra music get <关键词|链接|ref> [--quality flac] [--force]',
+  notes: [
+    '结果 data.status：downloaded（下好了）/ already_have（曲库里已有，没重复下）/ ambiguous（拿不准，需要用户选）/ job_started（批量任务已在后台开始）',
+    'ambiguous 时把 candidates 列给用户（标题、歌手、专辑、时长、flags），用户选定后用该项的 ref 再调一次 get；不要自己替用户挑',
+    'downloaded 时如果 downgraded=true，要告诉用户实际音质（比如请求无损只拿到 128k）',
+    '链接是专辑 / 歌单 / 歌手时会直接开后台任务，用 `astra music job <id>` 查进度',
+  ],
+  options: {
+    quality: { type: 'string', short: 'q', description: '请求音质：128k / 320k / flac / 24bit（默认取配置 music.quality）', valueName: 'q' },
+    force: { type: 'boolean', description: '曲库里已有也重新下载' },
+    limit: { type: 'string', description: '候选数量上限，默认 5', valueName: 'n' },
+  },
+  minArgs: 1,
+  async run({ positionals, values, signal }) {
+    const input = positionals.join(' ')
+    const quality = qualityOf(values.quality)
+    const target = await resolveTarget(input)
+    if (target.kind === 'album' || target.kind === 'playlist' || target.kind === 'artist') {
+      const { title, tracks } = await collectionTracks(target.kind, target.id, signal)
+      return startBatch(target.kind, title, quality, tracks)
+    }
+    let track: Track
+    let alternatives: Candidate[] = []
+    if (target.kind === 'song') {
+      track = await songDetail(target.id, signal)
+    } else {
+      const { tracks } = await searchSongs(target.keyword, 30, 0, signal)
+      const decision = decide(target.keyword, tracks, intOf(values.limit, 5, 1, 20, 'limit'))
+      if (!decision.pick) {
+        if (decision.candidates.length === 0) {
+          throw new AstraError('NOT_FOUND', `网易云搜不到「${target.keyword}」`, { exitCode: 4, hint: '换个写法再搜，比如只写歌名，或歌名加歌手' })
+        }
+        return {
+          data: {
+            status: 'ambiguous',
+            reason: decision.reason,
+            keyword: target.keyword,
+            candidates: decision.candidates.map(candidateView),
+            next: '让用户从 candidates 里选一个，然后执行 `astra music get <ref>`',
+          },
+        }
+      }
+      track = decision.pick.track
+      alternatives = decision.alternatives
+    }
+    const result = await downloadTrack(track, { quality, force: values.force === true, signal })
+    const data: Record<string, unknown> = { ...result }
+    delete data.warnings
+    if (alternatives.length > 0) data.otherVersions = alternatives.slice(0, 3).map(candidateView)
+    return { data, warnings: result.warnings }
+  },
+}
+
+const search: Command = {
+  name: 'music search',
+  summary: '只搜索不下载：歌曲（默认）/ 专辑 / 歌单 / 歌手',
+  usage: 'astra music search <关键词> [--type song|album|playlist|artist] [--limit 10]',
+  notes: ['每项都带 ref，可以直接交给 `astra music get <ref>`'],
+  options: {
+    type: { type: 'string', short: 't', description: 'song（默认）/ album / playlist / artist', valueName: 'type' },
+    limit: { type: 'string', short: 'n', description: '1..30，默认 10', valueName: 'n' },
+    page: { type: 'string', description: '页码，默认 1', valueName: 'n' },
+  },
+  minArgs: 1,
+  async run({ positionals, values, signal }) {
+    const keyword = positionals.join(' ')
+    const limit = intOf(values.limit, 10, 1, 30, 'limit')
+    const page = intOf(values.page, 1, 1, 50, 'page')
+    const type = (values.type as string | undefined) ?? 'song'
+    if (type === 'song') {
+      const { total, tracks } = await searchSongs(keyword, limit, (page - 1) * limit, signal)
+      return { data: { type, keyword, total, page, items: tracks.map((t, i) => candidateView(scoreTrack(keyword, t), i)) } }
+    }
+    if (type !== 'album' && type !== 'playlist' && type !== 'artist') throw invalidInput(`--type ${type} 不合法`, '可选：song / album / playlist / artist')
+    const items = await searchCollection(type, keyword, limit, signal)
+    const prefix = type === 'album' ? 'album' : type === 'playlist' ? 'playlist' : 'artist'
+    return { data: { type, keyword, items: items.map((x, i) => ({ index: i + 1, ref: `${prefix}:${x.id}`, ...x, id: undefined })) } }
+  },
+}
+
+const info: Command = {
+  name: 'music info',
+  summary: '查看歌曲 / 专辑 / 歌单 / 歌手的曲目，不下载',
+  usage: 'astra music info <链接|ref>',
+  options: { limit: { type: 'string', short: 'n', description: '列表最多显示几首，默认 50', valueName: 'n' } },
+  minArgs: 1,
+  async run({ positionals, values, signal }) {
+    const target = await resolveTarget(positionals.join(' '))
+    const limit = intOf(values.limit, 50, 1, 1000, 'limit')
+    if (target.kind === 'keyword') throw invalidInput('info 需要链接或 ref', '先用 `astra music search` 找到 ref')
+    if (target.kind === 'song') {
+      const t = await songDetail(target.id, signal)
+      const lib = findTrack('wy', t.id)
+      return { data: { ...trackView(t), inLibrary: lib ? { path: lib.path, quality: lib.quality, missing: lib.missing } : null } }
+    }
+    const { title, tracks } = await collectionTracks(target.kind, target.id, signal)
+    return {
+      data: {
+        title,
+        total: tracks.length,
+        inLibrary: tracks.filter((t) => findTrack('wy', t.id) !== null).length,
+        tracks: tracks.slice(0, limit).map(trackView),
+        truncated: tracks.length > limit,
+      },
+    }
+  },
+}
+
+const batch: Command = {
+  name: 'music batch',
+  summary: '一次下载多首指定的歌（后台任务）',
+  usage: 'astra music batch <ref> [ref...] [--quality flac]',
+  notes: ['只接受明确的 ref / 歌曲链接；关键词要先用 get 或 search 确认版本'],
+  options: {
+    quality: { type: 'string', short: 'q', description: '请求音质', valueName: 'q' },
+    title: { type: 'string', description: '任务名，默认"N 首歌"', valueName: 'text' },
+  },
+  minArgs: 1,
+  async run({ positionals, values, signal }) {
+    const quality = qualityOf(values.quality)
+    const ids: string[] = []
+    for (const p of positionals) {
+      const t = await resolveTarget(p)
+      if (t.kind !== 'song') throw invalidInput(`「${p}」不是一首歌的 ref 或链接`)
+      if (!ids.includes(t.id)) ids.push(t.id)
+    }
+    const tracks = await songDetails(ids, signal)
+    const missing = ids.filter((id) => !tracks.some((t) => t.id === id))
+    const started = startBatch('songs', (values.title as string | undefined) ?? `${tracks.length} 首歌`, quality, tracks)
+    if (missing.length > 0) started.warnings.push(`网易云查不到：${missing.join(', ')}`)
+    return started
+  },
+}
+
+const have: Command = {
+  name: 'music have',
+  summary: '查曲库：有没有某首歌 / 最近下了什么 / 统计',
+  usage: 'astra music have [关键词] [--limit 20]',
+  notes: ['不带关键词时列出最近下载的歌和统计；missing=true 表示记录还在但文件已被删除或移动'],
+  options: { limit: { type: 'string', short: 'n', description: '默认 20', valueName: 'n' } },
+  async run({ positionals, values }) {
+    const limit = intOf(values.limit, 20, 1, 500, 'limit')
+    const { total, tracks } = searchLibrary(positionals.join(' '), limit)
+    const view = tracks.map((t) => ({ ref: `wy:${t.id}`, title: t.title, artists: t.artists, album: t.album, quality: t.quality, format: t.format, path: t.path, missing: t.missing, downloadedAt: t.createdAt }))
+    return { data: positionals.length > 0 ? { keyword: positionals.join(' '), total, tracks: view } : { stats: libraryStats(), recent: view } }
+  },
+}
+
+const forget: Command = {
+  name: 'music forget',
+  summary: '从曲库记录里移除一首歌（不删文件），之后 get 会重新下载',
+  usage: 'astra music forget <ref>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    const t = await resolveTarget(positionals[0]!)
+    if (t.kind !== 'song') throw invalidInput('需要一首歌的 ref')
+    return { data: { removed: forgetTrack('wy', t.id), ref: `wy:${t.id}` } }
+  },
+}
+
+const job: Command = {
+  name: 'music job',
+  summary: '查看后台任务进度（可只写 id 前几位）',
+  usage: 'astra music job <id> [--items] [--wait 60]',
+  notes: ['--wait 会阻塞最多 N 秒直到任务结束；status 为 interrupted 表示进程意外退出，可 `astra music job resume <id>`'],
+  options: {
+    items: { type: 'boolean', description: '列出每一首的状态' },
+    failed: { type: 'boolean', description: '只列失败的' },
+    wait: { type: 'string', description: '最多等待秒数（≤600）', valueName: 's' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const id = positionals[0]!
+    const waitSeconds = intOf(values.wait, 0, 0, 600, 'wait')
+    const deadline = Date.now() + waitSeconds * 1000
+    let snapshot = getJob(id, false)
+    while (waitSeconds > 0 && Date.now() < deadline && !signal.aborted && ['queued', 'running'].includes(snapshot.job.status)) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      snapshot = getJob(id, false)
+    }
+    const full = getJob(id, values.items === true || values.failed === true)
+    const items = values.failed === true ? full.items?.filter((i) => i.status === 'failed') : full.items
+    return { data: { ...full.job, statusLabel: statusLabel(full.job.status), ...(items ? { items } : {}) } }
+  },
+}
+
+const jobs: Command = {
+  name: 'music jobs',
+  summary: '最近的后台任务',
+  usage: 'astra music jobs [--active] [--limit 10]',
+  options: {
+    active: { type: 'boolean', description: '只看进行中的' },
+    limit: { type: 'string', short: 'n', description: '默认 10', valueName: 'n' },
+  },
+  maxArgs: 0,
+  async run({ values }) {
+    return { data: { jobs: listJobs(intOf(values.limit, 10, 1, 100, 'limit'), values.active === true).map((j) => ({ ...j, statusLabel: statusLabel(j.status) })) } }
+  },
+}
+
+const jobCancel: Command = {
+  name: 'music job cancel',
+  summary: '取消后台任务（已下好的保留）',
+  usage: 'astra music job cancel <id>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    const j = cancelJob(positionals[0]!)
+    return { data: { ...j, statusLabel: statusLabel(j.status) } }
+  },
+}
+
+const jobResume: Command = {
+  name: 'music job resume',
+  summary: '继续 / 重试一个中断、取消或部分失败的任务',
+  usage: 'astra music job resume <id>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    const j = resumeJob(positionals[0]!)
+    return { data: { ...j, statusLabel: statusLabel(j.status) } }
+  },
+}
+
+const worker: Command = {
+  name: 'music _worker',
+  summary: '（内部）后台任务执行体',
+  usage: 'astra music _worker <id>',
+  hidden: true,
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    await runWorker(positionals[0]!)
+    return { data: getJob(positionals[0]!, false).job }
+  },
+}
+
+const sourceList: Command = {
+  name: 'music source list',
+  summary: '列出已导入的洛雪音源',
+  usage: 'astra music source list',
+  maxArgs: 0,
+  async run() {
+    const orphans = orphanScripts()
+    return {
+      data: { sources: listSources().map(({ sha256, file, ...rest }) => ({ ...rest, sha256: sha256.slice(0, 12) })) },
+      warnings: orphans.length > 0 ? [`音源目录里有未登记的脚本：${orphans.join(', ')}，用 source add 导入才会生效`] : [],
+    }
+  },
+}
+
+const sourceAdd: Command = {
+  name: 'music source add',
+  summary: '导入洛雪自定义音源脚本（.js），导入前会试加载',
+  usage: 'astra music source add <文件> [--id 名字]',
+  options: { id: { type: 'string', description: '自定义 id，默认取文件名', valueName: 'id' } },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values }) {
+    const r = await addSource(positionals[0]!, values.id as string | undefined)
+    const warnings = r.platforms.includes('wy') ? [] : ['这个音源没有声明网易云（wy），对当前下载没用']
+    return { data: { ...r.record, sha256: r.record.sha256.slice(0, 12), platforms: r.platforms }, warnings }
+  },
+}
+
+const sourceRemove: Command = {
+  name: 'music source remove',
+  summary: '删除一个已导入的音源',
+  usage: 'astra music source remove <id>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    return { data: { removed: removeSource(positionals[0]!).id } }
+  },
+}
+
+const sourceToggle = (enabled: boolean): Command => ({
+  name: `music source ${enabled ? 'enable' : 'disable'}`,
+  summary: enabled ? '启用音源' : '停用音源（不删除）',
+  usage: `astra music source ${enabled ? 'enable' : 'disable'} <id>`,
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    return { data: setSourceEnabled(positionals[0]!, enabled) }
+  },
+})
+
+const sourceTest: Command = {
+  name: 'music source test',
+  summary: '用一首歌测试每个音源能不能出直链、实际音质是多少',
+  usage: 'astra music source test [ref] [--quality flac]',
+  options: { quality: { type: 'string', short: 'q', description: '请求音质', valueName: 'q' } },
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const target = await resolveTarget(positionals[0] ?? 'wy:1472480890')
+    if (target.kind !== 'song') throw invalidInput('需要一首歌的 ref')
+    const track = await songDetail(target.id, signal)
+    const quality = qualityOf(values.quality)
+    const { loaded, failed } = await loadEnabledSources()
+    const results: Record<string, unknown>[] = failed.map((f) => ({ source: f.id, ok: false, error: `加载失败：${f.error}` }))
+    for (const { record, source } of loaded) {
+      const started = Date.now()
+      try {
+        const url = await source.musicUrl('wy', quality, musicInfoOf(track), 30_000)
+        const probe = await probeUrl(url, track.durationMs, signal)
+        results.push({
+          source: record.id,
+          ok: probe.problem === null,
+          format: probe.format,
+          quality: probe.quality,
+          bitrateKbps: probe.bps ? Math.round(probe.bps / 1000) : null,
+          bytes: probe.bytes,
+          ms: Date.now() - started,
+          ...(probe.problem ? { error: probe.problem } : {}),
+        })
+      } catch (err) {
+        results.push({ source: record.id, ok: false, error: (err as Error).message.slice(0, 200), ms: Date.now() - started })
+      }
+    }
+    return { data: { track: trackView(track), requested: quality, results } }
+  },
+}
+
+export const musicCommands: Command[] = [
+  get, search, info, batch, have, forget,
+  job, jobs, jobCancel, jobResume, worker,
+  sourceList, sourceAdd, sourceRemove, sourceToggle(true), sourceToggle(false), sourceTest,
+]

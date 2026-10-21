@@ -1,0 +1,697 @@
+{
+ "keyword": "光年之外 邓紫棋",
+ "capturedAt": "2026-10-21",
+ "body": {
+  "code": 200,
+  "result": {
+   "songCount": 198,
+   "songs": [
+    {
+     "id": 449818741,
+     "name": "光年之外",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 35093341,
+      "name": "光年之外",
+      "picUrl": "http://p2.music.126.net/fkqFqMaEt0CzxYS-0NpCog==/18587244069235039.jpg"
+     },
+     "dt": 235505,
+     "alia": [
+      "电影《太空旅客》中文主题曲"
+     ],
+     "no": 0,
+     "cd": "1",
+     "publishTime": 1483027200007,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1332424898,
+     "name": "光年之外 (热爱版)",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      },
+      {
+       "id": 1203045,
+       "name": "艾热 AIR"
+      }
+     ],
+     "al": {
+      "id": 74826488,
+      "name": "光年之外 (热爱版)",
+      "picUrl": "http://p2.music.126.net/-tBRFXYkEoT73fFAgQcg5w==/109951163717782652.jpg"
+     },
+     "dt": 217488,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 552458417,
+     "name": "光年之外 (Live)",
+     "ar": [
+      {
+       "id": 861777,
+       "name": "华晨宇"
+      },
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 38299217,
+      "name": "歌手2018 歌王之战",
+      "picUrl": "http://p2.music.126.net/khwJrW3pB1PdakOUiqH0TA==/109951166557924010.jpg"
+     },
+     "dt": 277098,
+     "alia": [],
+     "no": 7,
+     "cd": "1",
+     "publishTime": 1523548800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2714278528,
+     "name": "光年之外 (G.E.M.重生版)",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 274821019,
+      "name": "I AM GLORIA",
+      "picUrl": "http://p2.music.126.net/Dmg-cQJctLB_4ID4WRytIw==/109951171291365368.jpg"
+     },
+     "dt": 234951,
+     "alia": [],
+     "no": 8,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 486194122,
+     "name": "光年之外",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      },
+      {
+       "id": 12474635,
+       "name": "余赛亚"
+      }
+     ],
+     "al": {
+      "id": 35661178,
+      "name": "我想和你唱 第二季 第9期",
+      "picUrl": "http://p2.music.126.net/DSGvdBaVhj1gwgh18Z9d3Q==/18812643953229012.jpg"
+     },
+     "dt": 182177,
+     "alia": [],
+     "no": 6,
+     "cd": "1",
+     "publishTime": 1498233600007,
+     "pop": 95,
+     "fee": 1
+    },
+    {
+     "id": 3390917271,
+     "name": "光年之外 (Cover G.E.M. 邓紫棋)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "大安许"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/j-YnFhKe_h_BT3z2cDL77w==/109951173345190824.jpg"
+     },
+     "dt": 235496,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1780531202000,
+     "pop": 95,
+     "fee": 0
+    },
+    {
+     "id": 1999626505,
+     "name": "光年之外  伴奏（唯美钢琴）",
+     "ar": [
+      {
+       "id": 31010281,
+       "name": "一宁"
+      }
+     ],
+     "al": {
+      "id": 155178525,
+      "name": "邓紫棋合集",
+      "picUrl": "http://p1.music.126.net/n1AtpVA2DB2V021L4EIoeA==/109951168070719247.jpg"
+     },
+     "dt": 231320,
+     "alia": [],
+     "no": 11,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 55,
+     "fee": 0
+    },
+    {
+     "id": 457264737,
+     "name": "光年之外(翻自 G.E.M.鄧紫棋）",
+     "ar": [
+      {
+       "id": 12282238,
+       "name": "韩茹1204"
+      }
+     ],
+     "al": {
+      "id": 35163028,
+      "name": "是邓紫棋啊",
+      "picUrl": "http://p1.music.126.net/5ary6aUA53zKJSmGxn4QaA==/109951162853285457.jpg"
+     },
+     "dt": 235676,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1485946061600,
+     "pop": 70,
+     "fee": 0
+    },
+    {
+     "id": 3436855494,
+     "name": "自由的你",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 398617121,
+      "name": "自由的你",
+      "picUrl": "http://p1.music.126.net/G4Vtk4Je9Sj8zB4KGlxprw==/109951174017350276.jpg"
+     },
+     "dt": 296900,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1791216000000,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 3434041127,
+     "name": "光年之外 (DJ版)",
+     "ar": [
+      {
+       "id": 98526031,
+       "name": "斩红郎"
+      }
+     ],
+     "al": {
+      "id": 397393098,
+      "name": "蝶梦今生",
+      "picUrl": "http://p1.music.126.net/RuTIEYI30B4dEvd_XSaBEA==/109951173911430803.jpg"
+     },
+     "dt": 112149,
+     "alia": [],
+     "no": 16,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 3371328593,
+     "name": "光年之外  (如何瞬间冻结时间) (Cover G.E.M. 邓紫棋)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "图钉姐"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/D1bsXNJnTzzHcXg_EwuCcQ==/109951173074582519.jpg"
+     },
+     "dt": 214946,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1765324802000,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 3346971504,
+     "name": "光年之外（Cover G.E.M. 邓紫棋）",
+     "ar": [
+      {
+       "id": 0,
+       "name": "小哼"
+      }
+     ],
+     "al": {
+      "id": 361057080,
+      "name": "光年之外",
+      "picUrl": "http://p1.music.126.net/jKqtwuNNvB4vwC1apjosVw==/109951172698952091.jpg"
+     },
+     "dt": 231270,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1770048000000,
+     "pop": 15,
+     "fee": 8
+    },
+    {
+     "id": 234015,
+     "name": "A.I.N.Y. 爱你",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 23505,
+      "name": "18",
+      "picUrl": "http://p1.music.126.net/dXDhqpTwGojlB6GOmmjtNw==/109951172128634262.jpg"
+     },
+     "dt": 226800,
+     "alia": [],
+     "no": 2,
+     "cd": "1",
+     "publishTime": 1273766400000,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 3443120771,
+     "name": "光年之外 (DJ版)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "Roling7"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/m2AWAhG7KZt3MQxJUEuSGA==/109951174035173632.jpg"
+     },
+     "dt": 225393,
+     "alia": [],
+     "tns": [
+      "光年之外 （DJ高燃版）"
+     ],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1790640000000,
+     "pop": 70,
+     "fee": 0
+    },
+    {
+     "id": 3445535362,
+     "name": "光年之外(DJ版)",
+     "ar": [
+      {
+       "id": 123840011,
+       "name": "曲无忆"
+      }
+     ],
+     "al": {
+      "id": 402599365,
+      "name": "未知-曲无忆",
+      "picUrl": "http://p1.music.126.net/pHldkqpN8h95ir--mEu36g==/109951174072972061.jpg"
+     },
+     "dt": 229224,
+     "alia": [],
+     "no": 3,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 90,
+     "fee": 0
+    },
+    {
+     "id": 3427186492,
+     "name": "光年之外",
+     "ar": [
+      {
+       "id": 60001092,
+       "name": "陈予恩"
+      }
+     ],
+     "al": {
+      "id": 395064593,
+      "name": "光年之外",
+      "picUrl": "http://p1.music.126.net/3DVuHkeabiHkSc1IaeOAyQ==/109951173841646860.jpg"
+     },
+     "dt": 243487,
+     "alia": [
+      "我没想到为了你我能疯狂到"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 20,
+     "fee": 8
+    },
+    {
+     "id": 3372567459,
+     "name": "光年之外 (Cover G.E.M. 邓紫棋)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "元元"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/7vsOa5I2JMOprU_qUOBhTg==/109951173095165293.jpg"
+     },
+     "dt": 233639,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1760140802000,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 30612793,
+     "name": "多远都要在一起",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 3189002,
+      "name": "新的心跳",
+      "picUrl": "http://p1.music.126.net/kVwk6b8Qdya8oDyGDcyAVA==/1364493930777368.jpg"
+     },
+     "dt": 216880,
+     "alia": [],
+     "no": 1,
+     "cd": "1",
+     "publishTime": 1446739200000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 26154890,
+     "name": "A.I.N.Y.",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 2400479,
+      "name": "18 Plus",
+      "picUrl": "http://p1.music.126.net/Ucjk_bkpGOHX1lYnezd4qw==/109951172128640538.jpg"
+     },
+     "dt": 224506,
+     "alia": [],
+     "no": 4,
+     "cd": "01",
+     "publishTime": 1256572800007,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 234064,
+     "name": "Where Did U Go",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 23509,
+      "name": "G.E.M.",
+      "picUrl": "http://p1.music.126.net/SRSzJNkVegFlCJVc49VvxQ==/109951163069324876.jpg"
+     },
+     "dt": 235800,
+     "alia": [],
+     "no": 2,
+     "cd": "1",
+     "publishTime": 1224000000000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 3382255329,
+     "name": "光年之外 (Cover邓紫棋)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "李饱饱"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/5YE6G1vcRiIwR0LEBLOm1g==/109951173223880730.jpg"
+     },
+     "dt": 224908,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1778457602000,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 3372571802,
+     "name": "光年之外 (Cover G.E.M. 邓紫棋)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "可乐不加冰"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/zJrDCnVcS2GmLFXBuDcMyQ==/109951173095086252.jpg"
+     },
+     "dt": 209536,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1773273602000,
+     "pop": 5,
+     "fee": 0
+    },
+    {
+     "id": 2083785152,
+     "name": "唯一",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 174925713,
+      "name": "T.I.M.E.",
+      "picUrl": "http://p1.music.126.net/aJWtwvdYRXvKUpAE2C6NoA==/109951168919708423.jpg"
+     },
+     "dt": 253735,
+     "alia": [],
+     "no": 2,
+     "cd": "01",
+     "publishTime": 1695484800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 36270426,
+     "name": "来自天堂的魔鬼",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 3189002,
+      "name": "新的心跳",
+      "picUrl": "http://p1.music.126.net/kVwk6b8Qdya8oDyGDcyAVA==/1364493930777368.jpg"
+     },
+     "dt": 245493,
+     "alia": [],
+     "no": 4,
+     "cd": "1",
+     "publishTime": 1446739200000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1299550532,
+     "name": "倒数",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 72709830,
+      "name": "另一个童话",
+      "picUrl": "http://p1.music.126.net/tXCIFsVDK6IKcQ9YWxwOEg==/109951163523944497.jpg"
+     },
+     "dt": 229333,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1534348800007,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 3372615988,
+     "name": "光年之外 (Cover G.E.M. 邓紫棋)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "郑王聪"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/5VsEs2pU7M6ZhcWhT0qfCQ==/109951173095622331.jpg"
+     },
+     "dt": 244435,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1773014402000,
+     "pop": 5,
+     "fee": 0
+    },
+    {
+     "id": 3382857726,
+     "name": "光年之外 (Cover G.E.M. 邓紫棋)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "娘们吖"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p1.music.126.net/iSQPrdbOVmQh5FxcE-LJkA==/109951173233803486.jpg"
+     },
+     "dt": 278546,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1768953602000,
+     "pop": 5,
+     "fee": 0
+    },
+    {
+     "id": 1412263970,
+     "name": "很久以后",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 84391762,
+      "name": "摩天动物园",
+      "picUrl": "http://p1.music.126.net/KTo5oSxH3CPA5PBTeFKDyA==/109951164581432409.jpg"
+     },
+     "dt": 290264,
+     "alia": [],
+     "tns": [
+      "Long After"
+     ],
+     "no": 4,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 36024806,
+     "name": "再见（good bye）",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 3189002,
+      "name": "新的心跳",
+      "picUrl": "http://p1.music.126.net/kVwk6b8Qdya8oDyGDcyAVA==/1364493930777368.jpg"
+     },
+     "dt": 206053,
+     "alia": [],
+     "no": 2,
+     "cd": "1",
+     "publishTime": 1446739200000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 26117675,
+     "name": "我的秘密",
+     "ar": [
+      {
+       "id": 7763,
+       "name": "G.E.M.邓紫棋"
+      }
+     ],
+     "al": {
+      "id": 2391062,
+      "name": "My Secret",
+      "picUrl": "http://p1.music.126.net/Q6ROCCNP2qtqmDzp4uswgA==/109951163069327659.jpg"
+     },
+     "dt": 252120,
+     "alia": [],
+     "tns": [
+      "My Secret"
+     ],
+     "no": 7,
+     "cd": "1",
+     "publishTime": 1288281600007,
+     "pop": 100,
+     "fee": 1
+    }
+   ]
+  }
+ }
+}

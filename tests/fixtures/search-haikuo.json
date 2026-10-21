@@ -1,0 +1,726 @@
+{
+ "keyword": "海阔天空 Beyond",
+ "capturedAt": "2026-10-21",
+ "body": {
+  "code": 200,
+  "result": {
+   "songCount": 172,
+   "songs": [
+    {
+     "id": 1357375695,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 78372827,
+      "name": "华纳廿三周年纪念精选系列 - B﻿eyond",
+      "picUrl": "http://p2.music.126.net/q6cm6Pk70YArijk1_QDoEg==/109951163984013003.jpg"
+     },
+     "dt": 239560,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 737308800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1357374736,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 78372154,
+      "name": "华纳超极品音色系列",
+      "picUrl": "http://p2.music.126.net/qnQ93WnZHACVvIM14c4sAQ==/109951163984007061.jpg"
+     },
+     "dt": 239560,
+     "alia": [],
+     "no": 6,
+     "cd": "01",
+     "publishTime": 712512000000,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 347230,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34209,
+      "name": "海阔天空",
+      "picUrl": "http://p2.music.126.net/iAwVf8ag_45csIUuh1wSZg==/109951168912558470.jpg"
+     },
+     "dt": 326000,
+     "alia": [],
+     "tns": [
+      "Boundless Oceans, Vast Skies"
+     ],
+     "no": 1,
+     "cd": "1",
+     "publishTime": 747504000000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 28875146,
+     "name": "海阔天空 (Live)",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 2921018,
+      "name": "Beyond The Story Live 2005",
+      "picUrl": "http://p2.music.126.net/0a2NayHgHaf5WQTEYoHahg==/109951163972046213.jpg"
+     },
+     "dt": 369400,
+     "alia": [],
+     "no": 13,
+     "cd": "1",
+     "publishTime": 1112284800007,
+     "pop": 95,
+     "fee": 8
+    },
+    {
+     "id": 22831981,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 2078316,
+      "name": "Beyond 20th Anniversary",
+      "picUrl": "http://p2.music.126.net/oauvOyQDA4HICYAL8rc4fQ==/588238720882448.jpg"
+     },
+     "dt": 323693,
+     "alia": [],
+     "tns": [
+      "Boundless Oceans, Vast Skies"
+     ],
+     "no": 6,
+     "cd": "1",
+     "publishTime": 1041350400000,
+     "pop": 75,
+     "fee": 1
+    },
+    {
+     "id": 347033,
+     "name": "海阔天空(live 1996)",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34181,
+      "name": "Beyond的精彩 Live & Basic",
+      "picUrl": "http://p2.music.126.net/7OxCIXE2ej_RBdR8-sSZ_g==/109951170522743713.jpg"
+     },
+     "dt": 497159,
+     "alia": [
+      "sea & sky"
+     ],
+     "no": 27,
+     "cd": "1",
+     "publishTime": 830880000000,
+     "pop": 85,
+     "fee": 1
+    },
+    {
+     "id": 347319,
+     "name": "海阔天空 (大马版28/05/93) (Live)",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34218,
+      "name": "Words & Music: Final Live With 家驹",
+      "picUrl": "http://p2.music.126.net/ZmEz6MfFT4Xk2q7JT5i2MQ==/109951167634794453.jpg"
+     },
+     "dt": 375666,
+     "alia": [],
+     "no": 7,
+     "cd": "01",
+     "publishTime": 712512000000,
+     "pop": 80,
+     "fee": 1
+    },
+    {
+     "id": 406017706,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34541955,
+      "name": "华纳极品音色系列 (特别版)",
+      "picUrl": "http://p2.music.126.net/woKrVfAIoA4ltd5sMQ0rUw==/109951168663490285.jpg"
+     },
+     "dt": 239506,
+     "alia": [],
+     "no": 16,
+     "cd": "1",
+     "publishTime": 863625600000,
+     "pop": 40,
+     "fee": 1
+    },
+    {
+     "id": 347351,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34222,
+      "name": "乐与怒",
+      "picUrl": "http://p2.music.126.net/XMvz3wqB6ZD3EEB6Ua4N7Q==/109951171491843479.jpg"
+     },
+     "dt": 324825,
+     "alia": [],
+     "tns": [
+      "Boundless Oceans, Vast Skies"
+     ],
+     "no": 6,
+     "cd": "1",
+     "publishTime": 738777600000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 346013,
+     "name": "海阔天空(Live)",
+     "ar": [
+      {
+       "id": 3080,
+       "name": "黄贯中"
+      },
+      {
+       "id": 6094,
+       "name": "叶世荣"
+      },
+      {
+       "id": 3116,
+       "name": "黄家强"
+      }
+     ],
+     "al": {
+      "id": 34106,
+      "name": "别了家驹十五载 海阔天空音乐会",
+      "picUrl": "http://p2.music.126.net/RrI92ZaMpIo8mehY4s9maw==/109951166293212371.jpg"
+     },
+     "dt": 366973,
+     "alia": [],
+     "no": 27,
+     "cd": "01",
+     "publishTime": 1218556800000,
+     "pop": 95,
+     "fee": 8
+    },
+    {
+     "id": 346576,
+     "name": "光辉岁月",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34147,
+      "name": "光辉岁月十五年",
+      "picUrl": "http://p2.music.126.net/JOJvZc_7SqQjKf8TktQ_bw==/29686813951246.jpg"
+     },
+     "dt": 298560,
+     "alia": [],
+     "tns": [
+      "Glorious Years"
+     ],
+     "no": 6,
+     "cd": "1",
+     "publishTime": 646758000000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 347321,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34218,
+      "name": "Words & Music: Final Live With 家驹",
+      "picUrl": "http://p2.music.126.net/ZmEz6MfFT4Xk2q7JT5i2MQ==/109951167634794453.jpg"
+     },
+     "dt": 239560,
+     "alia": [],
+     "no": 8,
+     "cd": "01",
+     "publishTime": 712512000000,
+     "pop": 85,
+     "fee": 1
+    },
+    {
+     "id": 5255728,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 512090,
+      "name": "乐坛班霸",
+      "picUrl": "http://p2.music.126.net/bpZ3z7IHanV1aKVc_RU3oQ==/109951165816561425.jpg"
+     },
+     "dt": 323693,
+     "alia": [],
+     "tns": [
+      "Boundless Oceans, Vast Skies"
+     ],
+     "no": 47,
+     "cd": "1",
+     "publishTime": 1183910400000,
+     "pop": 75,
+     "fee": 1
+    },
+    {
+     "id": 3384061818,
+     "name": "海阔天空dj (Cover Beyond)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "孙双财没有肌肉"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p2.music.126.net/tK6i1KP6Liqv9QG1M2YzmA==/109951173249603819.jpg"
+     },
+     "dt": 228065,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1777334402000,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 3346117076,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 33211729,
+       "name": "Kag Chuu"
+      }
+     ],
+     "al": {
+      "id": 360741756,
+      "name": "海阔天空",
+      "picUrl": "http://p2.music.126.net/L0iCU3deUHP8eYqPt-x-5w==/109951172687383271.jpg"
+     },
+     "dt": 263664,
+     "alia": [
+      "R&B版"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 30,
+     "fee": 8
+    },
+    {
+     "id": 347236,
+     "name": "和平与爱",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34209,
+      "name": "海阔天空",
+      "picUrl": "http://p2.music.126.net/iAwVf8ag_45csIUuh1wSZg==/109951168912558470.jpg"
+     },
+     "dt": 206493,
+     "alia": [],
+     "no": 4,
+     "cd": "1",
+     "publishTime": 746812800000,
+     "pop": 25,
+     "fee": 1
+    },
+    {
+     "id": 5265262,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 512660,
+      "name": "组·Band岁月 Vol.2",
+      "picUrl": "http://p2.music.126.net/O8C1re28oTCr4kZ794Tm4Q==/109951163955615173.jpg"
+     },
+     "dt": 323893,
+     "alia": [],
+     "no": 17,
+     "cd": "1",
+     "publishTime": 1102089600000,
+     "pop": 85,
+     "fee": 1
+    },
+    {
+     "id": 3322369034,
+     "name": "夢ノ結唱 ROSE海阔天空-Beyond",
+     "ar": [
+      {
+       "id": 121755092,
+       "name": "卡哇伊的光酱"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p2.music.126.net/w6Fj5oVLZR8_k_4-1kbPdw==/109951172350441804.jpg"
+     },
+     "dt": 319445,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1753200000000,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 346071,
+     "name": "冲开一切",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34110,
+      "name": "Beyond 25th Anniversary",
+      "picUrl": "http://p2.music.126.net/zZtUDuWk6qIe3ezMt4UMjg==/109951165796417308.jpg"
+     },
+     "dt": 239387,
+     "alia": [],
+     "no": 6,
+     "cd": "02",
+     "publishTime": 1205164800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 346075,
+     "name": "真的爱你",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34110,
+      "name": "Beyond 25th Anniversary",
+      "picUrl": "http://p2.music.126.net/zZtUDuWk6qIe3ezMt4UMjg==/109951165796417308.jpg"
+     },
+     "dt": 275342,
+     "alia": [
+      "电影《开心鬼救开心鬼》插曲"
+     ],
+     "tns": [
+      "Truly Love You"
+     ],
+     "no": 10,
+     "cd": "02",
+     "publishTime": 1205164800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 406243282,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34545841,
+      "name": "华纳我爱经典系列 Beyond",
+      "picUrl": "http://p2.music.126.net/snl9Q5IvxMc0Y45rP45dDQ==/109951171875203535.jpg"
+     },
+     "dt": 320507,
+     "alia": [],
+     "tns": [
+      "Boundless Oceans, Vast Skies"
+     ],
+     "no": 4,
+     "cd": "01",
+     "publishTime": 712512000000,
+     "pop": 75,
+     "fee": 1
+    },
+    {
+     "id": 347247,
+     "name": "遥かなる梦に〜Far away〜 (OT：海阔天空)",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34209,
+      "name": "海阔天空",
+      "picUrl": "http://p2.music.126.net/iAwVf8ag_45csIUuh1wSZg==/109951168912558470.jpg"
+     },
+     "dt": 322320,
+     "alia": [
+      "原曲:海阔天空"
+     ],
+     "tns": [
+      "遥远的梦"
+     ],
+     "no": 10,
+     "cd": "1",
+     "publishTime": 746812800000,
+     "pop": 95,
+     "fee": 1
+    },
+    {
+     "id": 347241,
+     "name": "情人",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34209,
+      "name": "海阔天空",
+      "picUrl": "http://p2.music.126.net/iAwVf8ag_45csIUuh1wSZg==/109951168912558470.jpg"
+     },
+     "dt": 318226,
+     "alia": [],
+     "tns": [
+      "The Lover"
+     ],
+     "no": 7,
+     "cd": "1",
+     "publishTime": 746812800000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1913185567,
+     "name": "海阔天空尾奏96live版",
+     "ar": [
+      {
+       "id": 49194744,
+       "name": "GeKin"
+      }
+     ],
+     "al": {
+      "id": 136072943,
+      "name": "Best for Beyond",
+      "picUrl": "http://p2.music.126.net/KWLbaQNBkc4aqOLwrkuLyQ==/109951166614822435.jpg"
+     },
+     "dt": 132224,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 25,
+     "fee": 8
+    },
+    {
+     "id": 469391964,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 35336928,
+      "name": "超越BEYOND精选",
+      "picUrl": "http://p2.music.126.net/8OnQEurR2R2cApyYu7FBhQ==/109951169261306287.jpg"
+     },
+     "dt": 323693,
+     "alia": [],
+     "tns": [
+      "Boundless Oceans, Vast Skies"
+     ],
+     "no": 2,
+     "cd": "2",
+     "publishTime": 744134400000,
+     "pop": 90,
+     "fee": 1
+    },
+    {
+     "id": 22832002,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 2078316,
+      "name": "Beyond 20th Anniversary",
+      "picUrl": "http://p2.music.126.net/oauvOyQDA4HICYAL8rc4fQ==/588238720882448.jpg"
+     },
+     "dt": 323693,
+     "alia": [],
+     "tns": [
+      "Boundless Oceans, Vast Skies"
+     ],
+     "no": 5,
+     "cd": "1",
+     "publishTime": 1041350400004,
+     "pop": 85,
+     "fee": 1
+    },
+    {
+     "id": 1921443013,
+     "name": "海阔天空",
+     "ar": [
+      {
+       "id": 46279495,
+       "name": "鹏Peng"
+      }
+     ],
+     "al": {
+      "id": 140601329,
+      "name": "翻唱BEYOND歌曲(作品合集)",
+      "picUrl": "http://p2.music.126.net/k_XsHDZidl4yvmRZo2LUuA==/109951172622413611.jpg"
+     },
+     "dt": 318928,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 32701152,
+     "name": "灰色轨迹",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 3170026,
+      "name": "Beyond 24K Gold 金碟至尊精选",
+      "picUrl": "http://p2.music.126.net/K_p-jhEvCpP7I4Sqd_QfFw==/7954966627607511.jpg"
+     },
+     "dt": 324986,
+     "alia": [
+      "电影《天若有情》插曲"
+     ],
+     "no": 5,
+     "cd": "1",
+     "publishTime": 644079600000,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 3388582601,
+     "name": "海阔天空 (Cover Beyond)",
+     "ar": [
+      {
+       "id": 0,
+       "name": "大头针e"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p2.music.126.net/BBRI_QYL8kcxgxWhhRJALQ==/109951173312737550.jpg"
+     },
+     "dt": 334840,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 1779235202000,
+     "pop": 10,
+     "fee": 0
+    },
+    {
+     "id": 347239,
+     "name": "全是爱",
+     "ar": [
+      {
+       "id": 11127,
+       "name": "Beyond"
+      }
+     ],
+     "al": {
+      "id": 34209,
+      "name": "海阔天空",
+      "picUrl": "http://p2.music.126.net/iAwVf8ag_45csIUuh1wSZg==/109951168912558470.jpg"
+     },
+     "dt": 280000,
+     "alia": [],
+     "tns": [
+      "This Is Love"
+     ],
+     "no": 6,
+     "cd": "1",
+     "publishTime": 746812800000,
+     "pop": 65,
+     "fee": 1
+    }
+   ]
+  }
+ }
+}

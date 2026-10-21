@@ -1,0 +1,779 @@
+{
+ "keyword": "起风了",
+ "capturedAt": "2026-10-21",
+ "body": {
+  "code": 200,
+  "result": {
+   "songCount": 329,
+   "songs": [
+    {
+     "id": 1330348068,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 12085562,
+       "name": "冯沁苑(买辣椒也用券)"
+      }
+     ],
+     "al": {
+      "id": 74715426,
+      "name": "起风了",
+      "picUrl": "http://p2.music.126.net/diGAyEmpymX8G7JcnElncQ==/109951163699673355.jpg"
+     },
+     "dt": 325868,
+     "alia": [
+      "原曲：《ヤキモチ》—高桥优"
+     ],
+     "no": 1,
+     "cd": "1",
+     "publishTime": 1543766400000,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 1475596788,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 1030001,
+       "name": "周深"
+      }
+     ],
+     "al": {
+      "id": 94765283,
+      "name": "起风了",
+      "picUrl": "http://p2.music.126.net/xBerbUwQazr8aj7fnvva5A==/109951172355875734.jpg"
+     },
+     "dt": 311485,
+     "alia": [
+      "BILIBILI 11周年演讲"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 2636494144,
+     "name": "起风了(林俊杰)",
+     "ar": [
+      {
+       "id": 47611127,
+       "name": "8Y1ar"
+      }
+     ],
+     "al": {
+      "id": 153389812,
+      "name": "宣泄力",
+      "picUrl": "http://p2.music.126.net/f7wiHSPvn1__HRyi4cM1eg==/109951167976855462.jpg"
+     },
+     "dt": 285024,
+     "alia": [],
+     "no": 3,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 100,
+     "fee": 0
+    },
+    {
+     "id": 2636637034,
+     "name": "起风了(DJ版)",
+     "ar": [
+      {
+       "id": 58149097,
+       "name": "DJ阿智"
+      }
+     ],
+     "al": {
+      "id": 250740875,
+      "name": "起风了(DJ阿智Remix)",
+      "picUrl": "http://p2.music.126.net/GM0MTcooRaAjmPPT74y1ew==/109951170045400090.jpg"
+     },
+     "dt": 332163,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 1906484775,
+     "name": "起风了 (抖音热搜版)",
+     "ar": [
+      {
+       "id": 50630913,
+       "name": "织雾"
+      }
+     ],
+     "al": {
+      "id": 137679937,
+      "name": "L",
+      "picUrl": "http://p2.music.126.net/visgJeIPE9q9mj7O6V-kRA==/109951166743520378.jpg"
+     },
+     "dt": 72097,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 85,
+     "fee": 0
+    },
+    {
+     "id": 1330346841,
+     "name": "起风了 (伴奏)",
+     "ar": [
+      {
+       "id": 12085562,
+       "name": "冯沁苑(买辣椒也用券)"
+      }
+     ],
+     "al": {
+      "id": 74715426,
+      "name": "起风了",
+      "picUrl": "http://p2.music.126.net/diGAyEmpymX8G7JcnElncQ==/109951163699673355.jpg"
+     },
+     "dt": 325868,
+     "alia": [],
+     "no": 3,
+     "cd": "1",
+     "publishTime": 1543766400000,
+     "pop": 95,
+     "fee": 8
+    },
+    {
+     "id": 2612243508,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 94495836,
+       "name": "星野念_Hoshi"
+      }
+     ],
+     "al": {
+      "id": 243412326,
+      "name": "起风了（毕业季特别版）",
+      "picUrl": "http://p2.music.126.net/_EdpDaIbs5bTqLFHvi8IOA==/109951169825167275.jpg"
+     },
+     "dt": 326217,
+     "alia": [
+      "毕业季特别版"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 50,
+     "fee": 0
+    },
+    {
+     "id": 1845698007,
+     "name": "起风了(纯钢琴版)",
+     "ar": [
+      {
+       "id": 47704157,
+       "name": "苏冷末"
+      },
+      {
+       "id": 121366994,
+       "name": "柳州DJ斯斯Mix"
+      },
+      {
+       "id": 55379271,
+       "name": "赛文音乐"
+      }
+     ],
+     "al": {
+      "id": 127545837,
+      "name": "贩卖日落（钢琴曲）",
+      "picUrl": "http://p2.music.126.net/Bkv66gk-NCARtz-kJj8IAA==/109951165987211689.jpg"
+     },
+     "dt": 244010,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 95,
+     "fee": 0
+    },
+    {
+     "id": 1330346904,
+     "name": "起风了 (Acoustic)",
+     "ar": [
+      {
+       "id": 12085562,
+       "name": "冯沁苑(买辣椒也用券)"
+      }
+     ],
+     "al": {
+      "id": 74715426,
+      "name": "起风了",
+      "picUrl": "http://p2.music.126.net/diGAyEmpymX8G7JcnElncQ==/109951163699673355.jpg"
+     },
+     "dt": 321592,
+     "alia": [],
+     "no": 2,
+     "cd": "1",
+     "publishTime": 0,
+     "pop": 95,
+     "fee": 8
+    },
+    {
+     "id": 1385227380,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 187229,
+       "name": "吴青峰"
+      }
+     ],
+     "al": {
+      "id": 81034994,
+      "name": "加油，你是最棒的 电视原声带",
+      "picUrl": "http://p2.music.126.net/t9FzacVQw6CC-P1-X5Pquw==/109951164308230490.jpg"
+     },
+     "dt": 313565,
+     "alia": [
+      "电视剧《加油，你是最棒的》主题曲"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 100,
+     "fee": 1
+    },
+    {
+     "id": 1976062011,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 48139267,
+       "name": "听风说"
+      }
+     ],
+     "al": {
+      "id": 130420615,
+      "name": "李鑫ya",
+      "picUrl": "http://p2.music.126.net/7aYhH4M-hsP47A0x7i_BvQ==/109951166181633752.jpg"
+     },
+     "dt": 22058,
+     "alia": [],
+     "no": 9,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 65,
+     "fee": 8
+    },
+    {
+     "id": 1939685534,
+     "name": "起风了（0.89x）降调版",
+     "ar": [
+      {
+       "id": 50932345,
+       "name": "田杰"
+      }
+     ],
+     "al": {
+      "id": 143407313,
+      "name": "0",
+      "picUrl": "http://p2.music.126.net/cbrYrp7tCpytnrJnd7HrRg==/109951167326600243.jpg"
+     },
+     "dt": 133398,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 1649779200000,
+     "pop": 95,
+     "fee": 0
+    },
+    {
+     "id": 2735874218,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 96878839,
+       "name": "李鑫ya"
+      }
+     ],
+     "al": {
+      "id": 0,
+      "name": "",
+      "picUrl": "http://p2.music.126.net/dwmrTBndu06WtHDyrrQ5Ww==/109951171854557746.jpg"
+     },
+     "dt": 22035,
+     "alia": [],
+     "no": 0,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 80,
+     "fee": 0
+    },
+    {
+     "id": 2092814044,
+     "name": "起风了(落魄谷中寒风吹)",
+     "ar": [
+      {
+       "id": 57598316,
+       "name": "小天"
+      }
+     ],
+     "al": {
+      "id": 177256860,
+      "name": "真的起风了",
+      "picUrl": "http://p2.music.126.net/MVcllIcvV-vgwlt2-GqNCw==/109951168998742700.jpg"
+     },
+     "dt": 88536,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 85,
+     "fee": 0
+    },
+    {
+     "id": 1961298104,
+     "name": "起风了（抖音完整版）伴奏",
+     "ar": [
+      {
+       "id": 49292401,
+       "name": "糖醋李脊"
+      }
+     ],
+     "al": {
+      "id": 147600816,
+      "name": "释怀",
+      "picUrl": "http://p2.music.126.net/6te9LV0ft8FbNZGGjqjGIQ==/109951167624205117.jpg"
+     },
+     "dt": 307992,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 55,
+     "fee": 0
+    },
+    {
+     "id": 1958856851,
+     "name": "起风了（间奏0.8x）",
+     "ar": [
+      {
+       "id": 51578992,
+       "name": "十一"
+      },
+      {
+       "id": 95221715,
+       "name": "薄冰哥"
+      }
+     ],
+     "al": {
+      "id": 146994710,
+      "name": "降调集",
+      "picUrl": "http://p2.music.126.net/QmDhJTtNGqHYRlDT27PrQQ==/109951167582719050.jpg"
+     },
+     "dt": 29419,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 90,
+     "fee": 8
+    },
+    {
+     "id": 1985944292,
+     "name": "起风了(校园版)",
+     "ar": [
+      {
+       "id": 51706258,
+       "name": "逸清"
+      }
+     ],
+     "al": {
+      "id": 150501623,
+      "name": "千本樱",
+      "picUrl": "http://p2.music.126.net/Rk4qbV16ufo1ASJljjkV-A==/109951167821788389.jpg"
+     },
+     "dt": 109557,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 25,
+     "fee": 0
+    },
+    {
+     "id": 1340175443,
+     "name": "起风了(原始版)",
+     "ar": [
+      {
+       "id": 12038016,
+       "name": "李瑨瑶"
+      }
+     ],
+     "al": {
+      "id": 38537920,
+      "name": "纸短情长（抖音）",
+      "picUrl": "http://p2.music.126.net/3r8LGN3D7IEDduqZezQb2g==/109951163280459263.jpg"
+     },
+     "dt": 328210,
+     "alia": [],
+     "no": 5,
+     "cd": "01",
+     "publishTime": 1525276800000,
+     "pop": 85,
+     "fee": 0
+    },
+    {
+     "id": 2616997997,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 94606720,
+       "name": "失恋收音机"
+      }
+     ],
+     "al": {
+      "id": 244933269,
+      "name": "起风了",
+      "picUrl": "http://p2.music.126.net/9w6AzDvIS26f3WSn4GlJog==/109951169869462062.jpg"
+     },
+     "dt": 197224,
+     "alia": [],
+     "tns": [
+      "热播版"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 25,
+     "fee": 8
+    },
+    {
+     "id": 3349252778,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 62020225,
+       "name": "DJ小小智"
+      }
+     ],
+     "al": {
+      "id": 361908185,
+      "name": "起风了",
+      "picUrl": "http://p2.music.126.net/oOWDjCA4AiIDrjV6SV8y9Q==/109951172736094168.jpg"
+     },
+     "dt": 135439,
+     "alia": [
+      "旋律DJ"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 100,
+     "fee": 8
+    },
+    {
+     "id": 1856928339,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 12127825,
+       "name": "真栗"
+      }
+     ],
+     "al": {
+      "id": 129615556,
+      "name": "起风了",
+      "picUrl": "http://p2.music.126.net/YEiNcqCkokG6YMhuhDT1Gg==/109951166128153358.jpg"
+     },
+     "dt": 325903,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 30,
+     "fee": 0
+    },
+    {
+     "id": 1891196429,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 33342036,
+       "name": "徐涛"
+      }
+     ],
+     "al": {
+      "id": 135489482,
+      "name": "起风了",
+      "picUrl": "http://p2.music.126.net/bpeo1tVbrfQaowaOtSPbZQ==/109951166574625579.jpg"
+     },
+     "dt": 320352,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 70,
+     "fee": 0
+    },
+    {
+     "id": 1946803091,
+     "name": "起风了（伴奏间奏）",
+     "ar": [
+      {
+       "id": 47914862,
+       "name": "弎江"
+      }
+     ],
+     "al": {
+      "id": 129476243,
+      "name": "love",
+      "picUrl": "http://p2.music.126.net/GcBgoHGbgQo7Il2WRKN08w==/109951166592278955.jpg"
+     },
+     "dt": 138572,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 85,
+     "fee": 0
+    },
+    {
+     "id": 2648238873,
+     "name": "起风了 (抖音热门DJ版)",
+     "ar": [
+      {
+       "id": 54476360,
+       "name": "朴彩英Ryla"
+      }
+     ],
+     "al": {
+      "id": 254198029,
+      "name": "优美旋律",
+      "picUrl": "http://p2.music.126.net/zi_nwuWCwyo5BcAbPjkM7A==/109951170169729292.jpg"
+     },
+     "dt": 356989,
+     "alia": [],
+     "no": 5,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 65,
+     "fee": 0
+    },
+    {
+     "id": 2007676699,
+     "name": "起风了（温柔女生版）",
+     "ar": [
+      {
+       "id": 50271712,
+       "name": "被爱日记ᜊ"
+      }
+     ],
+     "al": {
+      "id": 156737698,
+      "name": "起风了",
+      "picUrl": "http://p2.music.126.net/aGMfGkyJh6ICFTpsqxBJrg==/109951168155981587.jpg"
+     },
+     "dt": 314164,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 25,
+     "fee": 0
+    },
+    {
+     "id": 2003128868,
+     "name": "起风了",
+     "ar": [
+      {
+       "id": 53361945,
+       "name": "今天的心属于芽衣"
+      }
+     ],
+     "al": {
+      "id": 155786745,
+      "name": "哈哈",
+      "picUrl": "http://p2.music.126.net/Wb6qhEfOiXgMzeG8CfejeA==/109951168106792115.jpg"
+     },
+     "dt": 315584,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 80,
+     "fee": 0
+    },
+    {
+     "id": 2735938814,
+     "name": "起风了 (0.8x)",
+     "ar": [
+      {
+       "id": 50941207,
+       "name": "cici_"
+      }
+     ],
+     "al": {
+      "id": 281428167,
+      "name": "起风了 (伤感版)",
+      "picUrl": "http://p2.music.126.net/wZc90O7lDZslpuf5cPdNrQ==/109951171855765628.jpg"
+     },
+     "dt": 323012,
+     "alia": [],
+     "no": 3,
+     "cd": "01",
+     "publishTime": 1688918400000,
+     "pop": 25,
+     "fee": 0
+    },
+    {
+     "id": 1963798796,
+     "name": "起风了（cover买辣椒也用卷）",
+     "ar": [
+      {
+       "id": 52637668,
+       "name": "香蕉但不是姐姐"
+      }
+     ],
+     "al": {
+      "id": 148064255,
+      "name": "翻",
+      "picUrl": "http://p2.music.126.net/wLzBKFMiysINRfjueofthQ==/109951167667064416.jpg"
+     },
+     "dt": 321536,
+     "alia": [],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 45,
+     "fee": 0
+    },
+    {
+     "id": 2639669078,
+     "name": "起风了 (完整版）",
+     "ar": [
+      {
+       "id": 97382046,
+       "name": "袁勇"
+      },
+      {
+       "id": 59944301,
+       "name": "Dinasour"
+      },
+      {
+       "id": 98573621,
+       "name": "十二噜噜噜"
+      },
+      {
+       "id": 36286256,
+       "name": "奶芙小杨."
+      },
+      {
+       "id": 98633648,
+       "name": "憨憨喊"
+      },
+      {
+       "id": 59020207,
+       "name": "iamzzzoi"
+      },
+      {
+       "id": 94040339,
+       "name": "Beredy"
+      },
+      {
+       "id": 53946606,
+       "name": "滑板车"
+      },
+      {
+       "id": 52540360,
+       "name": "梁桁"
+      },
+      {
+       "id": 122200665,
+       "name": "清风兮兮"
+      },
+      {
+       "id": 121954171,
+       "name": "."
+      },
+      {
+       "id": 122177246,
+       "name": "你也是非常的可爱"
+      },
+      {
+       "id": 52235646,
+       "name": "鲍鲍"
+      },
+      {
+       "id": 122196275,
+       "name": "So0kie"
+      },
+      {
+       "id": 122177239,
+       "name": "杰jie洁"
+      },
+      {
+       "id": 52314947,
+       "name": "称心"
+      },
+      {
+       "id": 0,
+       "name": "一剑霜寒"
+      },
+      {
+       "id": 122218019,
+       "name": "zyblal"
+      },
+      {
+       "id": 122214755,
+       "name": "椰子"
+      },
+      {
+       "id": 58732045,
+       "name": "A墨"
+      }
+     ],
+     "al": {
+      "id": 251671354,
+      "name": "起风了 (DJ完整版）",
+      "picUrl": "http://p2.music.126.net/BQvI6QRp4DYHxv-Z27VB9Q==/109951170070560600.jpg"
+     },
+     "dt": 300094,
+     "alia": [
+      "DJ版"
+     ],
+     "no": 1,
+     "cd": "01",
+     "publishTime": 0,
+     "pop": 95,
+     "fee": 0
+    },
+    {
+     "id": 2738493810,
+     "name": "起风了 (DJ旋律)",
+     "ar": [
+      {
+       "id": 61888573,
+       "name": "寻梦"
+      },
+      {
+       "id": 0,
+       "name": "Mukyo木西"
+      }
+     ],
+     "al": {
+      "id": 282361937,
+      "name": "Q",
+      "picUrl": "http://p2.music.126.net/GXNh8B9gxorLBo6E1RNlJQ==/109951171907090717.jpg"
+     },
+     "dt": 128806,
+     "alia": [],
+     "no": 2,
+     "cd": "01",
+     "publishTime": 1742832000000,
+     "pop": 60,
+     "fee": 0
+    }
+   ]
+  }
+ }
+}
