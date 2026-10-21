@@ -20,6 +20,7 @@ import { listSources } from '../lx/store.ts'
 import { loadSession } from '../music/auth.ts'
 import { loadBiliSession } from '../bili/auth.ts'
 import { runBinary, ffmpegPath } from '../media/run.ts'
+import { maybeProxiedGet, proxyConfig } from './proxy.ts'
 import { dirUsage } from './disk.ts'
 
 export type CheckKind = 'required' | 'domain' | 'optional'
@@ -156,6 +157,34 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
     } catch (err) {
       add({ name, kind: 'optional', ok: false, detail: (err as Error).message.slice(0, 120) })
     }
+  }
+
+  // —— 代理 ——
+  const proxy = proxyConfig()
+  if (proxy) {
+    const included = proxy.include.length > 0 ? proxy.include.join(', ') : '（全部）'
+    add({
+      name: 'proxy',
+      kind: 'domain',
+      ok: true,
+      detail: `${proxy.url}，走代理：${included}；直连：${proxy.exclude.join(', ') || '（无）'}`,
+    })
+    // 连通性：拿一个走代理的域名试一下
+    const probeHost = proxy.include[0] ?? 'steampowered.com'
+    try {
+      const result = await maybeProxiedGet(`https://${probeHost}/`, { timeoutMs: 10_000 })
+      add({
+        name: 'proxy_reachable',
+        kind: 'domain',
+        ok: result !== null && result.status < 500,
+        detail: result === null ? `${probeHost} 不走代理（检查 proxy.include）` : `经代理访问 ${probeHost} → HTTP ${result.status}`,
+        ...(result === null ? { hint: '把这个域名加进 `proxy.include`' } : {}),
+      })
+    } catch (err) {
+      add({ name: 'proxy_reachable', kind: 'domain', ok: false, detail: `经代理访问失败：${(err as Error).message.slice(0, 100)}`, hint: '检查 proxy.url 和代理容器是否在同一个 docker 网络' })
+    }
+  } else {
+    add({ name: 'proxy', kind: 'optional', ok: true, detail: '未配置代理（Steam 这类被墙的域名不可用）', hint: '需要时：`astra config set proxy.url http://<代理>:<端口>`' })
   }
 
   // —— 可选 ——

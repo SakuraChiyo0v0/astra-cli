@@ -19,6 +19,7 @@ import { allSessions, clearSessions, type Domain } from './core/sessions.ts'
 import { musicCommands } from './music/commands.ts'
 import { biliCommands } from './bili/commands.ts'
 import { mediaCommands } from './media/commands.ts'
+import { steamCommands } from './steam/commands.ts'
 import { vrCommands } from './vr/commands.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
@@ -328,7 +329,7 @@ const auditCmd: Command = {
 const commands: Command[] = [
 
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest,
-  ...musicCommands, ...biliCommands, ...mediaCommands, ...vrCommands,
+  ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands,
 ]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
@@ -384,13 +385,21 @@ async function main(): Promise<number> {
 /**
  * 是不是"被当成命令直接跑"。
  *
- * 原来只认固定文件名（main.ts / astra.mjs / astra），一旦产物改名（比如并排放一份
- * astra-bili.mjs 做测试）就会被判成"不是入口"，静默什么都不输出 —— 排查起来很费劲。
- * 改成"文件名以 astra 开头、扩展名是 .mjs/.js/.ts"，改名和加前缀都不会踩到。
+ * 之前靠文件名白名单（main.ts / astra*.mjs / astra），两次踩坑：
+ * 产物改名成 astra-bili.mjs、临时测试叫 a.mjs，都被判成"不是入口"而静默不执行 ——
+ * 退出码 0、零输出，排查起来极费劲。
+ *
+ * 改成比对路径：当前模块就是 argv[1]（被 node 当作主模块启动）才执行。
+ * 被 import 时 argv[1] 是别的文件，自然不匹配。
  */
-const entryName = (process.argv[1] ?? '').replace(/\\/g, '/').split('/').pop() ?? ''
-// 认两种：开发态直接跑 `src/main.ts`，以及打包/改名后的 `astra*.mjs`
-const isEntry = entryName === 'main.ts' || /^astra[^/]*\.(?:mjs|js|ts)$/.test(entryName) || entryName === 'astra'
+function normalizePath(value: string): string {
+  // 统一成 posix 风格；顺便去掉 Windows 盘符前的多余斜杠
+  return value.split(String.fromCharCode(92)).join('/').replace(/^\/([A-Za-z]:)/, '$1')
+}
+const entryPath = normalizePath(process.argv[1] ?? '')
+const selfPath = normalizePath(import.meta.url.startsWith('file://') ? new URL(import.meta.url).pathname : '')
+// 打包产物里 import.meta.url 指向产物本身；开发态指向 src/main.ts。两者都应能对上 argv[1]。
+const isEntry = entryPath !== '' && (selfPath === entryPath || selfPath.endsWith(entryPath) || entryPath.endsWith(selfPath))
 if (isEntry) {
   main().then(
     (code) => {

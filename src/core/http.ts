@@ -4,6 +4,8 @@
  * 不默认跟随重定向之外的任何"聪明"行为；调用方拿到的状态码就是上游真实的。
  */
 import { AstraError } from './errors.ts'
+import { maybeProxiedGet } from './proxy.ts'
+import { progress } from './output.ts'
 
 export interface HttpOptions {
   method?: string
@@ -22,6 +24,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function httpRequest(url: string, options: HttpOptions = {}): Promise<Response> {
+  // 走代理：调用方完全无感，拿到的还是标准 Response。
+  // 只在配置了代理且该主机命中 include 时生效（见 core/proxy.ts）。
+  const proxied = await maybeProxiedGet(url, {
+    ...(options.headers ? { headers: options.headers } : {}),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+  })
+  if (proxied) {
+    progress('http.proxy', { host: safeHost(url), status: proxied.status })
+    return new Response(proxied.body, { status: proxied.status, headers: proxied.headers })
+  }
+
   const retries = options.retries ?? 1
   let lastError: unknown = null
   for (let attempt = 0; attempt <= retries; attempt += 1) {

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.12.0 — 2026-10-21
+
+**新增 Steam 域 + 代理基础设施**
+
+- `steam wishlist`：愿望单，带名字/价格/折扣/加入日期。实测 111 个条目
+- `steam inventory`：公开库存（CS2、Steam 卡牌等）。**当前被 Steam 限流（429）**，功能完整但环境不通
+- `steam me` / `steam doctor`：玩家资料与自检
+- `steam auth set-user/set-key/clear`：凭据存在本机，权限 600，key 只显示 8 位指纹
+- **按域走代理**：`proxy.url` / `proxy.include` / `proxy.exclude`。Steam 走代理，B 站网易云直连
+- 零依赖实现 HTTPS CONNECT 隧道（`core/proxy.ts`），自己解 chunked 与 gzip
+
+**基础设施解耦**：mihomo 从 `asf_default`（ASF 项目的网络）抽到独立的 `proxy-net`。
+之前代理的可用性被绑在挂卡服务上，ASF 一重建就断。
+
+**修**：`https.request` 在已握手的 socket 上会二次握手，导致 Steam 返回 400；429 现在标为可重试并给提示
+
+
 ## 0.10.7 — 2026-10-21
 
 - 修正上下文阈值：`threshold_tokens` 从 8 万放宽到 40 万（1M 窗口的 40%）。

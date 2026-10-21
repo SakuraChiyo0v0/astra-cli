@@ -53,6 +53,10 @@ services:
       - workbuddy2api_default
       # Kura 的服务映射按容器名解析，kura-server 在 sso-net 上
       - sso-net
+      # 出站代理网络：mihomo 在这个网络上（http://mihomo:7890）。
+      # 这是独立的基础设施网络，不绑在 asf 项目上 —— 之前接 asf_default，
+      # 等于代理由挂卡服务托管，ASF 一重建就断。
+      - proxy-net
     labels:
       # 镜像升级可能带 SQLite / 配置迁移，不要无人在场时自动升级
       - com.centurylinklabs.watchtower.enable=false
@@ -61,4 +65,6 @@ networks:
   workbuddy2api_default:
     external: true
   sso-net:
+    external: true
+  proxy-net:
     external: true

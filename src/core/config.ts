@@ -45,6 +45,13 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (/^\d+$/.test(v) && Number(v) >= 96 && Number(v) <= 320 ? null : '只能是 96..320') },
   { key: 'bili.tag', description: '--audio-only 是否自动写标签并内嵌封面：true / false', default: 'true',
     validate: (v) => (['true', 'false'].includes(v) ? null : '只能是 true / false') },
+  // —— 代理 ——
+  // NAS 上 Steam 全域名不通，但有 mihomo 容器提供 http://mihomo:7890。
+  // 用 include/exclude 按域名控制，别让 B 站、网易云也绕一圈。
+  { key: 'proxy.url', description: 'HTTP 代理地址（如 http://mihomo:7890）；留空则不用代理', default: '',
+    validate: (v) => (v === '' || /^http:\/\/[^\s]+$/.test(v) ? null : '要写成 http://host:port') },
+  { key: 'proxy.include', description: '走代理的域名后缀，逗号分隔（如 steampowered.com,steamcommunity.com）；留空 = 全部走', default: '' },
+  { key: 'proxy.exclude', description: '不走代理的域名后缀，逗号分隔（优先级高于 include）', default: '' },
   // 视频文件大、CDN 也更容易被并发限速，默认比音乐保守
   { key: 'bili.concurrency', description: 'B 站批量任务并发数 1..3', default: '1',
     validate: (v) => (/^[1-3]$/.test(v) ? null : '只能是 1..3') },
