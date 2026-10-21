@@ -15,6 +15,7 @@ import { CONFIG_KEYS, getConfig, listConfig, musicRoot, setConfig, unsetConfig }
 import { astraHome } from './core/paths.ts'
 import { closeDb } from './core/db.ts'
 import { runDoctor } from './core/doctor.ts'
+import { allSessions } from './core/sessions.ts'
 import { musicCommands } from './music/commands.ts'
 import { biliCommands } from './bili/commands.ts'
 import { mediaCommands } from './media/commands.ts'
@@ -118,7 +119,33 @@ const versionCmd: Command = {
   },
 }
 
-const commands: Command[] = [help, versionCmd, doctor, configCmd, notifyTest, ...musicCommands, ...biliCommands, ...mediaCommands, ...vrCommands]
+const loginCmd: Command = {
+  name: 'login',
+  summary: '看所有能力域的登录状态（谁登了、谁过期了、怎么登）',
+  usage: 'astra login',
+  notes: [
+    '只读，不修改任何会话。登录分别用 `astra music login start` / `astra bili login start`',
+    'state 有三种：logged_in / not_logged_in / stale_file（文件在但读不出来，通常是权限或格式坏了）',
+  ],
+  maxArgs: 0,
+  async run() {
+    const sessions = allSessions()
+    const warnings: string[] = []
+    for (const s of sessions) {
+      // 只有"文件坏了"才值得警告：未登录是正常状态，不需要每次都提醒
+      if (s.state === 'stale_file') warnings.push(`${s.label}：会话文件有问题（${s.fileIssue}），需要重新登录：${s.howToLogin}`)
+    }
+    return {
+      data: {
+        loggedIn: sessions.filter((s) => s.state === 'logged_in').map((s) => s.domain),
+        sessions,
+      },
+      warnings,
+    }
+  },
+}
+
+const commands: Command[] = [help, versionCmd, doctor, configCmd, loginCmd, notifyTest, ...musicCommands, ...biliCommands, ...mediaCommands, ...vrCommands]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
 export function route(argv: string[]): { command: Command; rest: string[] } | null {
