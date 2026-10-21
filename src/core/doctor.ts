@@ -20,6 +20,7 @@ import { listSources } from '../lx/store.ts'
 import { loadSession } from '../music/auth.ts'
 import { loadBiliSession } from '../bili/auth.ts'
 import { runBinary, ffmpegPath } from '../media/run.ts'
+import { dirUsage } from './disk.ts'
 
 export type CheckKind = 'required' | 'domain' | 'optional'
 
@@ -139,6 +140,23 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
     detail: biliSession ? `已登录（${biliSession.nickname ?? biliSession.uid ?? '会话存在'}${biliSession.vip ? '，大会员' : ''}）` : '未登录',
     ...(biliSession ? {} : { hint: '登录后才能拿到 1080P 以上画质（`astra bili login start`）' }),
   })
+
+  // —— 磁盘用量 ——
+  // 目录会持续增长，没人会主动上 NAS 看还剩多少。这里顺带报一下，低于警戒线才标红。
+  for (const [name, dir] of [['music_disk', music], ['video_disk', video]] as const) {
+    try {
+      const usage = dirUsage(dir, { minFreeGb: 10 })
+      add({
+        name,
+        kind: 'optional',
+        ok: !usage.lowSpace,
+        detail: usage.detail,
+        ...(usage.lowSpace ? { hint: '剩余空间不足 10GB，清理已看完的内容或扩容' } : {}),
+      })
+    } catch (err) {
+      add({ name, kind: 'optional', ok: false, detail: (err as Error).message.slice(0, 120) })
+    }
+  }
 
   // —— 可选 ——
   const webhook = getConfig('notify.feishu_webhook') || process.env.ASTRA_FEISHU_WEBHOOK

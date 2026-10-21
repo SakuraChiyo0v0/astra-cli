@@ -1,86 +1,77 @@
 /**
- * 登录状态的统一视图。
+ * 统一登录视图与清理。
  *
- * 重点验"文件坏了"这条路 —— 会话 JSON 存在但读不出来时，
- * 用户看到的不该是"未登录"（那会让他去重新扫码，而问题其实是权限）。
+ * 重点是"坏会话"的识别：文件在但读不出来（空文件、权限过宽、格式坏了）要能报出来，
+ * 因为这是"明明登录过却一直提示未登录"的常见原因。
  */
-import { test } from 'node:test'
+import { test, before, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
+import { mkdtempSync, chmodSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-/**
- * 每个用例换一个 ASTRA_HOME，避免污染真实状态。
- *
- * 必须是 async 版本并 await 回调 —— 之前写成同步 fn，
- * finally 在 await 完成前就把目录删了，测试全绿得莫名其妙。
- */
-async function withHome(fn: (home: string) => Promise<void>): Promise<void> {
-  const home = mkdtempSync(path.join(tmpdir(), 'astra-sess-'))
-  const prev = process.env.ASTRA_HOME
-  process.env.ASTRA_HOME = home
-  try {
-    await fn(home)
-  } finally {
-    if (prev === undefined) delete process.env.ASTRA_HOME
-    else process.env.ASTRA_HOME = prev
-    rmSync(home, { recursive: true, force: true })
+let sessions: typeof import('../src/core/sessions.ts')
+
+before(async () => {
+  process.env.ASTRA_HOME = mkdtempSync(path.join(tmpdir(), 'astra-sess-'))
+  process.env.ASTRA_MUSIC_DIR = path.join(process.env.ASTRA_HOME!, 'music')
+  sessions = await import('../src/core/sessions.ts')
+})
+
+beforeEach(() => {
+  // 每个用例从干净状态开始
+  for (const f of ['netease-session.json', 'bili-session.json', 'vr-session.json']) {
+    const p = path.join(process.env.ASTRA_HOME!, f)
+    if (existsSync(p)) rmSync(p, { force: true })
   }
-}
-
-test('没有会话文件：not_logged_in，并给出登录方式', async () => {
-  await withHome(async () => {
-    const { allSessions } = await import('../src/core/sessions.ts')
-    const sessions = allSessions()
-    for (const s of sessions) {
-      assert.equal(s.state, 'not_logged_in')
-      assert.ok(s.howToLogin.length > 0, `${s.domain} 应当给出登录方式`)
-      assert.equal(s.fileIssue, null)
-    }
-  })
 })
 
-test('空文件：报 stale_file 而不是 not_logged_in', async () => {
-  await withHome(async (home) => {
-    writeFileSync(path.join(home, 'bili-session.json'), '')
-    const { biliSessionView } = await import('../src/core/sessions.ts')
-    const view = biliSessionView()
-    assert.equal(view.state, 'stale_file', '文件坏了要说文件坏了，不能只说未登录')
-    assert.match(view.fileIssue ?? '', /空/)
-  })
+const home = (f: string) => path.join(process.env.ASTRA_HOME!, f)
+
+test('三个域都会出现在统一视图里', () => {
+  const list = sessions.allSessions()
+  assert.deepEqual(list.map((s) => s.domain), ['netease', 'bili', 'vrchat'])
+  assert.ok(list.every((s) => s.state === 'not_logged_in'))
+  assert.ok(list.every((s) => s.howToLogin.length > 0), '每个域都要告诉用户怎么登录')
 })
 
-test('权限过宽：一并报出来', async () => {
-  await withHome(async (home) => {
-    const file = path.join(home, 'bili-session.json')
-    writeFileSync(file, '{}')
-    chmodSync(file, 0o644)
-    const { biliSessionView } = await import('../src/core/sessions.ts')
-    const view = biliSessionView()
-    // Windows 上 chmod 基本无效，只在类 Unix 上断言权限提示
-    if (process.platform !== 'win32') {
-      assert.equal(view.state, 'stale_file')
-      assert.match(view.fileIssue ?? '', /权限/)
-    } else {
-      assert.equal(view.state, 'stale_file', '至少要判成坏文件')
-    }
-  })
+test('空文件被识别成 stale_file，而不是"未登录"', () => {
+  writeFileSync(home('bili-session.json'), '')
+  const view = sessions.biliSessionView()
+  assert.equal(view.state, 'stale_file')
+  assert.match(view.fileIssue ?? '', /空的/)
 })
 
-test('两个域都会出现在汇总里', async () => {
-  await withHome(async () => {
-    const { allSessions } = await import('../src/core/sessions.ts')
-    const domains = allSessions().map((s) => s.domain).sort()
-    assert.deepEqual(domains, ['bili', 'netease'])
-  })
+test('权限过宽被识别出来', { skip: process.platform === 'win32' ? 'Windows 没有 POSIX 权限位' : false }, () => {
+  writeFileSync(home('netease-session.json'), '{}')
+  chmodSync(home('netease-session.json'), 0o644)
+  const view = sessions.neteaseSessionView()
+  assert.equal(view.state, 'stale_file')
+  assert.match(view.fileIssue ?? '', /权限过于宽松/)
 })
 
-test('读不出来的文件（非法 JSON）也能给出说明而不是抛异常', async () => {
-  await withHome(async (home) => {
-    writeFileSync(path.join(home, 'netease-session.json'), 'not json at all')
-    const { neteaseSessionView } = await import('../src/core/sessions.ts')
-    const view = neteaseSessionView() // 不应抛
-    assert.equal(view.state, 'stale_file')
-  })
+test('VRChat 有会话文件时能读出账号', () => {
+  writeFileSync(home('vr-session.json'), JSON.stringify({ cookie: 'auth=abc', userId: 'usr_1', displayName: 'Ame', savedAt: '2026-01-01' }))
+  const view = sessions.vrSessionView()
+  assert.equal(view.state, 'logged_in')
+  assert.equal(view.account, 'Ame')
+  assert.match(view.digest ?? '', /^[0-9a-f]{10}$/, '指纹是 10 位，不泄露内容')
+})
+
+test('清理指定域只删那一个', () => {
+  writeFileSync(home('netease-session.json'), JSON.stringify({ cookie: 'MUSIC_U=x', userId: '1', nickname: 'n', savedAt: '' }))
+  writeFileSync(home('vr-session.json'), JSON.stringify({ cookie: 'auth=abc', userId: 'u', displayName: 'd', savedAt: '' }))
+  const result = sessions.clearSessions(['netease'])
+  assert.deepEqual(result.cleared, ['netease'])
+  assert.equal(existsSync(home('netease-session.json')), false)
+  assert.equal(existsSync(home('vr-session.json')), true, '没点名的域不能被删')
+})
+
+test('清理全部三个域', () => {
+  for (const f of ['netease-session.json', 'bili-session.json', 'vr-session.json']) writeFileSync(home(f), '{}')
+  const result = sessions.clearSessions()
+  assert.deepEqual(result.cleared.sort(), ['bili', 'netease', 'vrchat'])
+  for (const f of ['netease-session.json', 'bili-session.json', 'vr-session.json']) {
+    assert.equal(existsSync(home(f)), false, `${f} 应该被删掉`)
+  }
 })

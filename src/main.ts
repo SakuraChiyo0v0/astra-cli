@@ -15,7 +15,7 @@ import { CONFIG_KEYS, getConfig, listConfig, musicRoot, setConfig, unsetConfig }
 import { astraHome } from './core/paths.ts'
 import { closeDb } from './core/db.ts'
 import { runDoctor } from './core/doctor.ts'
-import { allSessions } from './core/sessions.ts'
+import { allSessions, clearSessions, type Domain } from './core/sessions.ts'
 import { musicCommands } from './music/commands.ts'
 import { biliCommands } from './bili/commands.ts'
 import { mediaCommands } from './media/commands.ts'
@@ -201,14 +201,28 @@ const versionCmd: Command = {
 
 const loginCmd: Command = {
   name: 'login',
-  summary: '看所有能力域的登录状态（谁登了、谁过期了、怎么登）',
-  usage: 'astra login',
+  summary: '看所有能力域的登录状态，或清理坏掉的会话',
+  usage: 'astra login | astra login clear [netease|bili|vrchat]',
   notes: [
-    '只读，不修改任何会话。登录分别用 `astra music login start` / `astra bili login start`',
+    '不带参数：只读，列出谁登了、谁过期了、怎么登。三个域都会列',
     'state 有三种：logged_in / not_logged_in / stale_file（文件在但读不出来，通常是权限或格式坏了）',
+    '`login clear`：删本地会话文件，不调上游登出。会话文件坏了、正常 logout 都进不去时用它',
+    '`login clear` 不带域名就清全部；正常登出请用各域的 `logout` 命令',
   ],
-  maxArgs: 0,
-  async run() {
+  maxArgs: 2,
+  async run({ positionals }) {
+    if (positionals[0] === 'clear') {
+      const name = positionals[1]
+      const known: Domain[] = ['netease', 'bili', 'vrchat']
+      if (name !== undefined && !known.includes(name as Domain)) {
+        throw new AstraError('INVALID_INPUT', `未知的域「${name}」`, { exitCode: 2, hint: `可选：${known.join(' / ')}` })
+      }
+      const result = clearSessions(name === undefined ? undefined : [name as Domain])
+      return {
+        data: { ...result, note: '只删了本地会话文件，没有调上游登出；要正常登出请用各域的 logout' },
+        warnings: result.failed.map((f) => `${f.domain} 清理失败：${f.error}`),
+      }
+    }
     const sessions = allSessions()
     const warnings: string[] = []
     for (const s of sessions) {

@@ -7,15 +7,18 @@
  * 但**用户/ AI 需要一个统一的"我现在登录了什么、哪里过期了"**。这里只做只读汇总，不写会话。
  */
 import { createHash } from 'node:crypto'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, rmSync, statSync } from 'node:fs'
 import { homePath } from './paths.ts'
 import { loadSession } from '../music/auth.ts'
 import { biliSessionDigest, loadBiliSession } from '../bili/auth.ts'
+import { loadSession as loadVrSession, clearSession as clearVrSession } from '../vr/auth.ts'
 
 export type SessionState = 'logged_in' | 'not_logged_in' | 'stale_file'
 
+export type Domain = 'netease' | 'bili' | 'vrchat'
+
 export interface SessionView {
-  domain: 'netease' | 'bili'
+  domain: Domain
   label: string
   state: SessionState
   account: string | null
@@ -105,6 +108,59 @@ function digestOf(cookie: string): string {
   return createHash('sha256').update(cookie).digest('hex').slice(0, 10)
 }
 
+export function vrSessionView(): SessionView {
+  const file = homePath('vr-session.json')
+  const session = loadVrSession()
+  if (!session) {
+    const issue = fileDiagnosis(file)
+    return {
+      domain: 'vrchat',
+      label: 'VRChat',
+      state: issue ? 'stale_file' : 'not_logged_in',
+      account: null,
+      digest: null,
+      savedAt: null,
+      fileIssue: issue,
+      howToLogin: 'astra vr login --username <账号> --password <密码>',
+    }
+  }
+  return {
+    domain: 'vrchat',
+    label: 'VRChat',
+    state: 'logged_in',
+    account: session.displayName ?? session.userId ?? null,
+    digest: digestOf(session.cookie),
+    savedAt: session.savedAt,
+    fileIssue: null,
+    howToLogin: 'astra vr login --username <账号> --password <密码>',
+  }
+}
+
 export function allSessions(): SessionView[] {
-  return [neteaseSessionView(), biliSessionView()]
+  return [neteaseSessionView(), biliSessionView(), vrSessionView()]
+}
+
+/**
+ * 清掉指定域的本地会话。不传就清全部。
+ *
+ * 只删本地文件，**不调上游登出** —— 那由各域的 `logout` 命令负责（它们知道各自的端点和语义）。
+ * 这里存在的意义是"会话文件坏了、正常 logout 都进不去"时还能收拾干净。
+ */
+export function clearSessions(domains?: Domain[]): { cleared: Domain[]; failed: { domain: Domain; error: string }[] } {
+  const targets: Domain[] = domains ?? ['netease', 'bili', 'vrchat']
+  const cleared: Domain[] = []
+  const failed: { domain: Domain; error: string }[] = []
+  for (const domain of targets) {
+    const file =
+      domain === 'netease' ? homePath('netease-session.json') : domain === 'bili' ? homePath('bili-session.json') : homePath('vr-session.json')
+    try {
+      if (existsSync(file)) rmSync(file, { force: true })
+      cleared.push(domain)
+    } catch (err) {
+      failed.push({ domain, error: (err as Error).message.slice(0, 120) })
+    }
+  }
+  // VRChat 的两步验证中间态也顺手清掉，否则下次登录可能读到过期的待确认
+  if (targets.includes('vrchat')) clearVrSession()
+  return { cleared, failed }
 }
