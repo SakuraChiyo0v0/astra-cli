@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0 — 2026-10-21
+
+补完 B 站、媒体、音乐三处缺口。
+
+- `bili later`：稍后再看，可 `--download` 一键批量下（需登录）
+- `bili history`：观看历史，同上
+- `media concat`：按顺序拼接；参数一致时直接拷流，不一致自动重编码并提示
+- `media watermark`：文字 / 图片水印，自动找中文字体
+- `music covers`：给专辑目录补 `cover.jpg`（从文件内嵌封面提取，不联网）
+- `music m3u`：导出 M3U8（用 UTF-8 而非本地编码，中文路径不乱码）
+- 修：封面提取漏跳 FLAC PICTURE 的 desc 与宽高字段，永远返回 null
+- 修：水印位置公式用 `w/h`（画面尺寸）而非 `text_w/text_h`，水印被推出画面外
+- 修：拼接重编码时 scale 定义了却没接进 filter 链，concat 报参数不匹配
+
+
 ## 0.8.5 — 2026-10-21
 
 - VRChat 补群组：`vr groups info`（详情 + 成员 + 角色 + 启用权限 + 公告）、`vr groups member`、

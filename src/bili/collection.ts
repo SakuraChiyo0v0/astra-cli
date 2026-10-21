@@ -122,49 +122,56 @@ export function readSeason(viewData: {
 }
 
 /**
- * 解析"一组视频"的输入。支持：
- * - `fav:<收藏夹id>`
- * - `space.bilibili.com/<mid>/favlist?fid=<id>`（收藏夹链接）
- * - `space.bilibili.com/<mid>/channel/collectiondetail?sid=<season_id>`（合集链接）
- * - `space.bilibili.com/<mid>/lists/<id>?type=season`（新版合集链接）
- * - `season:<mid>/<season_id>`
+ * 解析"一组视频"的输入。
  *
- * 合集链接里 **mid 和 sid 都是必需的**：`seasons_archives_list` 两个都要，
- * 只给 sid 会 404（实测）。
+ * 支持的全部写法：
+ * - 收藏夹：`fav:<id>`、`space.bilibili.com/<mid>/favlist?fid=<id>`
+ * - 合集：`collectiondetail?sid=<id>` 链接、`lists/<id>?type=season` 链接、
+ *         `season:<sid>`、`season:<mid>/<sid>`、`collection:<sid>`
+ * - 系列：`seriesdetail?sid=<id>` 链接、`series:<sid>`
+ *
+ * **mid 是可选的**：`seasons_archives_list` 只给 season_id 也能返回（实测 2026-10-21 复核）。
+ * 之前以为必须两个参数，是因为当时用的 sid 本身不存在，404 被误读成"缺 mid"。
  */
 export type CollectionRef =
   | { kind: 'fav'; id: string }
-  | { kind: 'season'; mid: string; seasonId: string }
+  | { kind: 'season'; mid: string | null; seasonId: string }
+  | { kind: 'series'; mid: string | null; seriesId: string }
   | { kind: null; raw: string }
 
 export function parseCollectionRef(input: string): CollectionRef {
   const text = input.trim()
+
+  // —— 收藏夹 ——
   const fav = text.match(/^fav:(\d+)$/i)
   if (fav) return { kind: 'fav', id: fav[1]! }
-
-  // 收藏夹链接：space.bilibili.com/<mid>/favlist?fid=<id>
-  const favUrl = text.match(/favlist\?.*?\bfid=(\d+)/)
+  const favUrl = text.match(/favlist\?[^#]*?fid=(\d+)/)
   if (favUrl) return { kind: 'fav', id: favUrl[1]! }
 
-  // 合集：老版 collectiondetail?sid=<id>，mid 在路径里
-  const collection = text.match(/space\.bilibili\.com\/(\d+)\/channel\/collectiondetail\?.*?\bsid=(\d+)/)
-  if (collection) return { kind: 'season', mid: collection[1]!, seasonId: collection[2]! }
+  // —— 系列（series）—— 先于合集判断：seriesdetail 与 collectiondetail 是两套接口
+  const seriesUrl = text.match(/space\.bilibili\.com\/(\d+)\/channel\/seriesdetail\?[^#]*?sid=(\d+)/)
+  if (seriesUrl) return { kind: 'series', mid: seriesUrl[1]!, seriesId: seriesUrl[2]! }
+  const seriesRef = text.match(/^series:(?:(\d+)\/)?(\d+)$/i)
+  if (seriesRef) return { kind: 'series', mid: seriesRef[1] ?? null, seriesId: seriesRef[2]! }
 
-  // 新版合集链接：space.bilibili.com/<mid>/lists/<id>?type=season
-  const lists = text.match(/space\.bilibili\.com\/(\d+)\/lists\/(\d+)/)
-  if (lists) return { kind: 'season', mid: lists[1]!, seasonId: lists[2]! }
-
-  const explicit = text.match(/^season:(\d+)\/(\d+)$/i)
-  if (explicit) return { kind: 'season', mid: explicit[1]!, seasonId: explicit[2]! }
+  // —— 合集（season）——
+  const collectionUrl = text.match(/space\.bilibili\.com\/(\d+)\/channel\/collectiondetail\?[^#]*?sid=(\d+)/)
+  if (collectionUrl) return { kind: 'season', mid: collectionUrl[1]!, seasonId: collectionUrl[2]! }
+  const listsUrl = text.match(/space\.bilibili\.com\/(\d+)\/lists\/(\d+)/)
+  if (listsUrl) return { kind: 'season', mid: listsUrl[1]!, seasonId: listsUrl[2]! }
+  // `season:<sid>` / `season:<mid>/<sid>` / `collection:<sid>`
+  const seasonRef = text.match(/^(?:season|collection):(?:(\d+)\/)?(\d+)$/i)
+  if (seasonRef) return { kind: 'season', mid: seasonRef[1] ?? null, seasonId: seasonRef[2]! }
 
   return { kind: null, raw: text }
 }
 
 export function assertCollectionRef(input: string): void {
   if (parseCollectionRef(input).kind === null) {
-    throw invalidInput(`认不出这是哪个收藏夹或合集：${input.slice(0, 40)}`, [
-      '收藏夹：`fav:<id>` 或 space.bilibili.com 的 favlist 链接',
-      '合集：space.bilibili.com/<mid>/channel/collectiondetail?sid=<id> 链接，或 `season:<mid>/<sid>`',
+    throw invalidInput(`认不出这是哪个收藏夹 / 合集 / 系列：${input.slice(0, 40)}`, [
+      '收藏夹：`fav:<id>` 或 favlist 链接',
+      '合集：collectiondetail?sid=<id> 链接，或 `season:<sid>` / `collection:<sid>`',
+      '系列：seriesdetail?sid=<id> 链接，或 `series:<sid>`',
     ].join('；'))
   }
 }
@@ -172,18 +179,20 @@ export function assertCollectionRef(input: string): void {
 /**
  * 拉合集里的视频。
  *
- * `seasons_archives_list` 需要 mid + season_id 两个参数，只给 sid 会 404（实测）。
- * 分页取到 limit 或取完为止。
+ * `mid` 可以省略 —— 实测只给 season_id 也能返回（2026-10-21 复核）。
+ * 之前以为必须两个参数，是因为那次用的 sid 不存在，404 被误读成"缺 mid"。
  */
-export async function fetchSeasonArchives(mid: string, seasonId: string, limit: number, signal?: AbortSignal): Promise<Collection> {
+export async function fetchSeasonArchives(mid: string | null, seasonId: string, limit: number, signal?: AbortSignal): Promise<Collection> {
   const pageSize = Math.min(30, Math.max(1, limit))
   const items: CollectionItem[] = []
   let title = ''
   let total: number | null = null
   for (let pageNum = 1; items.length < limit && pageNum <= 50; pageNum += 1) {
-    const url =
-      `https://api.bilibili.com/x/polymer/web-space/seasons_archives_list?mid=${encodeURIComponent(mid)}` +
-      `&season_id=${encodeURIComponent(seasonId)}&sort_reverse=false&page_num=${pageNum}&page_size=${pageSize}`
+    const params = new URLSearchParams({
+      season_id: seasonId, sort_reverse: 'false', page_num: String(pageNum), page_size: String(pageSize),
+    })
+    if (mid) params.set('mid', mid)
+    const url = `https://api.bilibili.com/x/polymer/web-space/seasons_archives_list?${params}`
     const data = await getJson<{
       code: number
       message?: string
@@ -196,7 +205,7 @@ export async function fetchSeasonArchives(mid: string, seasonId: string, limit: 
     if (data.code !== 0) {
       throw new AstraError('BILI_SEASON_ERROR', `合集读取失败（code=${data.code}${data.message ? `：${data.message}` : ''}）`, {
         exitCode: data.code === -404 ? 4 : 5,
-        ...(data.code === -404 ? { hint: '合集链接里的 mid 和 sid 都要对上；确认这个合集公开可见' } : {}),
+        ...(data.code === -404 ? { hint: '确认 sid 正确且这个合集公开可见' } : {}),
       })
     }
     title ||= data.data?.meta?.name ?? data.data?.meta?.title ?? ''
@@ -211,4 +220,48 @@ export async function fetchSeasonArchives(mid: string, seasonId: string, limit: 
     if (total !== null && items.length >= total) break
   }
   return { kind: 'season', id: seasonId, title: title || `合集 ${seasonId}`, items, total }
+}
+
+/**
+ * 拉系列里的视频。
+ *
+ * 系列（series）与合集（season）是**两套独立接口**：
+ * 系列走 `/x/series/archives`，合集走 `seasons_archives_list`。
+ * 系列比合集少见（实测几个大 UP 都只有合集没有系列），实现按官方文档写，拿不到就给明确错误。
+ */
+export async function fetchSeriesArchives(mid: string | null, seriesId: string, limit: number, signal?: AbortSignal): Promise<Collection> {
+  if (!mid) {
+    throw new AstraError('SERIES_NEED_MID', '系列需要 mid（B 站系列接口必须带作者 id）', {
+      exitCode: 2,
+      hint: `用完整链接，或 \`series:<mid>/${seriesId}\``,
+    })
+  }
+  const pageSize = Math.min(30, Math.max(1, limit))
+  const items: CollectionItem[] = []
+  let title = ''
+  let total: number | null = null
+  for (let pn = 1; items.length < limit && pn <= 50; pn += 1) {
+    const url = `https://api.bilibili.com/x/series/archives?mid=${encodeURIComponent(mid)}&series_id=${encodeURIComponent(seriesId)}&only_normal=true&sort=desc&pn=${pn}&ps=${pageSize}`
+    const data = await getJson<{
+      code: number
+      message?: string
+      data?: { archives?: { bvid?: string; title?: string; duration?: number }[]; page?: { total?: number } }
+    }>(url, '系列', signal)
+    if (data.code !== 0) {
+      throw new AstraError('BILI_SERIES_ERROR', `系列读取失败（code=${data.code}${data.message ? `：${data.message}` : ''}）`, {
+        exitCode: data.code === -404 ? 4 : 5,
+        ...(data.code === -404 ? { hint: '确认 mid 与 sid 对应同一个 UP，且系列公开可见' } : {}),
+      })
+    }
+    total = data.data?.page?.total ?? total
+    const archives = data.data?.archives ?? []
+    for (const a of archives) {
+      if (!a.bvid) continue
+      items.push({ bvid: a.bvid, title: a.title ?? a.bvid, part: null, durationSec: a.duration ?? null, downloaded: false })
+      if (items.length >= limit) break
+    }
+    if (archives.length === 0 || items.length >= limit) break
+    if (total !== null && items.length >= total) break
+  }
+  return { kind: 'season', id: seriesId, title: title || `系列 ${seriesId}`, items, total }
 }

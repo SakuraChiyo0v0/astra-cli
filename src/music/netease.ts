@@ -186,8 +186,8 @@ export async function albumInfo(albumId: string, signal?: AbortSignal): Promise<
   }
 }
 
-export async function playlistTracks(playlistId: string, signal?: AbortSignal): Promise<{ name: string; total: number; tracks: Track[] }> {
-  const body = await get<CodeBody & { playlist?: { name: string; trackCount?: number; trackIds?: { id: number }[]; tracks?: RawSong[] } }>(
+export async function playlistTracks(playlistId: string, signal?: AbortSignal): Promise<{ name: string; total: number; tracks: Track[]; coverUrl: string | null }> {
+  const body = await get<CodeBody & { playlist?: { name: string; trackCount?: number; trackIds?: { id: number }[]; tracks?: RawSong[]; coverImgUrl?: string } }>(
     `/api/v6/playlist/detail?id=${encodeURIComponent(playlistId)}&n=100000`,
     '歌单',
     signal,
@@ -199,7 +199,7 @@ export async function playlistTracks(playlistId: string, signal?: AbortSignal): 
   // 按歌单原顺序排
   const order = new Map(ids.map((id, i) => [id, i]))
   tracks.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
-  return { name: playlist.name, total: playlist.trackCount ?? tracks.length, tracks }
+  return { name: playlist.name, total: playlist.trackCount ?? tracks.length, tracks, coverUrl: playlist.coverImgUrl ? playlist.coverImgUrl.replace(/^http:/, 'https:') : null }
 }
 
 export async function artistTopTracks(artistId: string, signal?: AbortSignal): Promise<{ name: string; tracks: Track[] }> {

@@ -13,6 +13,7 @@ import { artistTopTracks, albumInfo, playlistTracks, searchCollection, searchSon
 import { resolveTarget } from './target.ts'
 import { downloadTrack } from './download.ts'
 import { allTracks, backfillFingerprints, findTrack, forgetTrack, libraryStats, searchLibrary, type LibraryTrack } from './library.ts'
+import { archiveAlbumCovers, exportM3u } from './library-io.ts'
 import { refreshLibrarySpecs } from './maintain.ts'
 import {
   addSubscription, dueSubscriptions, fetchSubscriptionTracks, findSubscription, listSubscriptions,
@@ -850,10 +851,54 @@ const subscribeRun: Command = {
   },
 }
 
+const coversCmd: Command = {
+  name: 'music covers',
+  summary: '给每张专辑目录补一张 cover.jpg（从文件内嵌封面提取，不联网）',
+  usage: 'astra music covers',
+  notes: [
+    '已有 cover.jpg 的会跳过；文件里没有内嵌封面的会列在 failed 里',
+    'Navidrome 等播放器按专辑浏览时就有了封面，不再是空白',
+  ],
+  maxArgs: 0,
+  async run({ signal }) {
+    const result = await archiveAlbumCovers(signal)
+    return {
+      data: result,
+      warnings: result.failed.length > 0 ? [`${result.failed.length} 张没取到（多半是文件里没内嵌封面）`] : [],
+    }
+  },
+}
+
+const m3uCmd: Command = {
+  name: 'music m3u',
+  summary: '把曲库导出成 M3U8 播放列表',
+  usage: 'astra music m3u <输出路径> [--keyword 关键词] [--relative]',
+  notes: [
+    '用 M3U8（UTF-8）而不是 M3U：中文路径在 M3U 里常被按本地编码读成乱码',
+    '--relative 写相对路径（播放列表和音乐目录一起搬走时用）',
+  ],
+  options: {
+    keyword: { type: 'string', description: '只导出匹配的曲目', valueName: 'kw' },
+    relative: { type: 'boolean', description: '写相对路径' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    void signal
+    const result = await exportM3u({
+      output: positionals[0]!,
+      ...(typeof values.keyword === 'string' ? { keyword: values.keyword } : {}),
+      relative: values.relative === true,
+    })
+    return { data: result }
+  },
+}
+
 export const musicCommands: Command[] = [
   get, search, info, batch, have, forget,
   job, jobs, jobCancel, jobResume, worker,
   loginPlain, loginStart, loginPoll, loginWait, account, logout, playlists, daily, liked,
   subscribeAdd, subscribeList, subscribeSet, subscribeRemove, subscribeRun,
   sourceList, sourceAdd, sourceRemove, sourceToggle(true), sourceToggle(false), sourceTest,
+  coversCmd, m3uCmd,
 ]

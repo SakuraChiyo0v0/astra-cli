@@ -15,9 +15,10 @@ import { downloadPage } from './download.ts'
 import { probe } from './ffmpeg.ts'
 import { QUALITY_NAMES, QUALITY_ORDER, qualityName } from './sign.ts'
 import { parseBiliTarget } from './target.ts'
-import { parseCollectionRef, fetchFavorite, fetchSeasonArchives, readSeason } from './collection.ts'
+import { parseCollectionRef, fetchFavorite, fetchSeasonArchives, fetchSeriesArchives, readSeason } from './collection.ts'
 import { danmakuToAss, fetchDanmaku } from './danmaku.ts'
 import { popular as fetchPopular, weeklyIssues as fetchWeeklyIssues, weeklyOne as fetchWeeklyOne } from './discover.ts'
+import { watchLater, watchHistory } from './account-lists.ts'
 import { httpRequest } from '../core/http.ts'
 
 import { mediaRoot } from '../core/config.ts'
@@ -374,7 +375,8 @@ const bulk: Command = {
   usage: 'astra bili bulk <fav:id|收藏夹链接|合集链接> [--limit 50] [--quality 1080p] [--all-pages]',
   notes: [
     '收藏夹：`fav:<id>` 或 favlist 链接（需登录看私密收藏夹）',
-    '合集：space.bilibili.com/<mid>/channel/collectiondetail?sid=<id> 链接，或 `season:<mid>/<sid>`',
+    '合集：collectiondetail?sid=<id> 链接，或 `season:<sid>` / `collection:<sid>`',
+    '系列：seriesdetail?sid=<id> 链接，或 `series:<mid>/<sid>`',
     '给普通视频链接时，--all-pages 会把它的所有分 P 都排进任务',
     '开的是后台任务，用 `astra bili job <id>` 看进度',
     '**不支持按 UP 主主页批量**：B 站的 UP 投稿接口会返回风控页，硬啃只会一直失败',
@@ -394,11 +396,13 @@ const bulk: Command = {
 
     // 收藏夹 / 合集：两种"一组视频"，先看是哪一种
     const ref = parseCollectionRef(input)
-    if (ref.kind === 'fav' || ref.kind === 'season') {
+    if (ref.kind !== null) {
       const collection = ref.kind === 'fav'
         ? await fetchFavorite(ref.id, limit, signal)
-        : await fetchSeasonArchives(ref.mid, ref.seasonId, limit, signal)
-      const label = ref.kind === 'fav' ? '收藏夹' : '合集'
+        : ref.kind === 'series'
+          ? await fetchSeriesArchives(ref.mid, ref.seriesId, limit, signal)
+          : await fetchSeasonArchives(ref.mid, ref.seasonId, limit, signal)
+      const label = ref.kind === 'fav' ? '收藏夹' : ref.kind === 'series' ? '系列' : '合集'
       const items = collection.items.map((v) => ({
         id: v.bvid,
         title: v.title,
@@ -408,7 +412,7 @@ const bulk: Command = {
       if (items.length === 0) {
         throw new AstraError('EMPTY_COLLECTION', `${label}「${collection.title}」里没有可下载的视频`, { exitCode: 4 })
       }
-      const job = createJob({ domain: BILI_DOMAIN, kind: ref.kind === 'fav' ? 'fav' : 'season', title: `${label}「${collection.title}」`, profile: qualityName(quality), items })
+      const job = createJob({ domain: BILI_DOMAIN, kind: ref.kind, title: `${label}「${collection.title}」`, profile: qualityName(quality), items })
       spawnWorker(BILI_DOMAIN, job.id)
       return {
         data: {
@@ -656,8 +660,70 @@ const weekly: Command = {
   },
 }
 
+const watchLaterCmd: Command = {
+  name: 'bili later',
+  summary: '稍后再看：列出或批量下载（需登录）',
+  usage: 'astra bili later [--download] [--quality 1080p]',
+  notes: [
+    '不带 --download 只列出来；带上就开后台任务全下',
+    '每项带 bvid，也可单独 `astra bili get <bvid>`',
+  ],
+  options: {
+    download: { type: 'boolean', description: '把整个稍后再看开成下载任务' },
+    quality: { type: 'string', short: 'q', description: '配合 --download 的画质', valueName: 'q' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const items = await watchLater(signal)
+    if (items.length === 0) return { data: { total: 0, items: [] }, warnings: ['稍后再看是空的'] }
+    if (values.download === true) {
+      const quality = parseQuality(values.quality)
+      const jobItems = items.map((v) => ({ id: v.bvid, title: v.title, subtitle: '稍后再看', meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true } }))
+      const job = createJob({ domain: BILI_DOMAIN, kind: 'later', title: '稍后再看', profile: qualityName(quality), items: jobItems })
+      spawnWorker(BILI_DOMAIN, job.id)
+      return { data: { status: 'job_started', job: { id: job.id, title: '稍后再看', total: items.length }, preview: items.slice(0, 5).map((v) => ({ bvid: v.bvid, title: v.title })) } }
+    }
+    return { data: { total: items.length, items: items.map((v) => ({ ...v, duration: formatDuration(v.durationSec) })) } }
+  },
+}
+
+const historyCmd: Command = {
+  name: 'bili history',
+  summary: '观看历史：列出最近的（需登录）',
+  usage: 'astra bili history [--limit 20] [--download]',
+  notes: ['只要视频，不含直播和专栏；--download 开后台任务批量下'],
+  options: {
+    limit: { type: 'string', short: 'n', description: '默认 20，最多 100', valueName: 'n' },
+    download: { type: 'boolean', description: '把列出的这些开成下载任务' },
+    quality: { type: 'string', short: 'q', description: '配合 --download 的画质', valueName: 'q' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const limit = Math.max(1, Math.min(100, Number(values.limit ?? '20') || 20))
+    const items = await watchHistory(limit, signal)
+    if (values.download === true) {
+      if (items.length === 0) throw new AstraError('EMPTY_HISTORY', '观看历史是空的', { exitCode: 4 })
+      const quality = parseQuality(values.quality)
+      const jobItems = items.map((v) => ({ id: v.bvid, title: v.title, subtitle: '观看历史', meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true } }))
+      const job = createJob({ domain: BILI_DOMAIN, kind: 'history', title: '观看历史', profile: qualityName(quality), items: jobItems })
+      spawnWorker(BILI_DOMAIN, job.id)
+      return { data: { status: 'job_started', job: { id: job.id, title: '观看历史', total: items.length } } }
+    }
+    return {
+      data: {
+        total: items.length,
+        items: items.map((v) => ({
+          ...v,
+          duration: formatDuration(v.durationSec),
+          viewedAt: v.viewedAt ? new Date(v.viewedAt * 1000).toISOString().slice(0, 16).replace('T', ' ') : null,
+        })),
+      },
+    }
+  },
+}
+
 export const biliCommands: Command[] = [
-  get, info, subtitle, danmaku, popular, weekly, bulk,
+  get, info, subtitle, danmaku, popular, weekly, watchLaterCmd, historyCmd, bulk,
   jobCmd, jobList, jobCancel, jobResume, workerCmd,
   loginStart, loginPoll, account, logout, doctor,
 ]

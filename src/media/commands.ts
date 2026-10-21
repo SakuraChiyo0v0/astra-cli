@@ -8,6 +8,7 @@ import path from 'node:path'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command } from '../core/command.ts'
 import { cut, extractAudio, mediaInfo, parseTime, thumbnail, transcode } from './tools.ts'
+import { concat, watermark, pickFont, type WatermarkPosition } from './compose.ts'
 
 function formatDuration(sec: number | null): string | null {
   if (sec === null || sec <= 0) return null
@@ -167,4 +168,71 @@ const thumb: Command = {
   },
 }
 
-export const mediaCommands: Command[] = [info, audio, cutCmd, transcodeCmd, thumb]
+const concatCmd: Command = {
+  name: 'media concat',
+  summary: '按顺序拼接多个音视频文件',
+  usage: 'astra media concat <文件1> <文件2> [文件3...] [--out 路径] [--reencode] [--overwrite]',
+  notes: [
+    '输入参数一致时直接拷贝流（快、无损）；不一致时自动重编码并提示',
+    '--reencode 可强制重编码，即便参数一致',
+  ],
+  options: {
+    out: { type: 'string', description: '输出路径', valueName: 'path' },
+    reencode: { type: 'boolean', description: '强制重编码' },
+    overwrite: { type: 'boolean', description: '覆盖已有文件' },
+  },
+  minArgs: 2,
+  async run({ positionals, values, signal }) {
+    const result = await concat({
+      inputs: positionals,
+      ...(typeof values.out === 'string' ? { output: values.out } : {}),
+      reencode: values.reencode === true,
+      overwrite: values.overwrite === true,
+      signal,
+    })
+    return { data: { output: result.output, mode: result.mode, info: result.info }, warnings: result.warnings }
+  },
+}
+
+const watermarkCmd: Command = {
+  name: 'media watermark',
+  summary: '加文字或图片水印',
+  usage: 'astra media watermark <视频> --text "文字" | --image <图片> [--position bottom-right] [--opacity 0.8]',
+  notes: [
+    '位置：top-left / top-right / bottom-left / bottom-right',
+    '文字水印默认自带半透明底框；找不到系统字体时用 --font 指定 .ttf/.ttc',
+  ],
+  options: {
+    text: { type: 'string', description: '文字水印内容', valueName: 'text' },
+    image: { type: 'string', description: '图片水印路径（与 --text 二选一）', valueName: 'path' },
+    position: { type: 'string', description: '位置，默认 bottom-right', valueName: 'pos' },
+    opacity: { type: 'string', description: '透明度 0..1，默认 0.8', valueName: 'n' },
+    'font-size': { type: 'string', description: '字号（像素），默认按画面高度估算', valueName: 'px' },
+    font: { type: 'string', description: '字体文件路径', valueName: 'path' },
+    out: { type: 'string', description: '输出路径', valueName: 'path' },
+    overwrite: { type: 'boolean', description: '覆盖已有文件' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const position = (values.position as string | undefined) ?? 'bottom-right'
+    if (!['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(position)) {
+      throw invalidInput('--position 只能是 top-left / top-right / bottom-left / bottom-right')
+    }
+    const result = await watermark({
+      input: positionals[0]!,
+      ...(typeof values.text === 'string' ? { text: values.text } : {}),
+      ...(typeof values.image === 'string' ? { image: values.image } : {}),
+      position: position as WatermarkPosition,
+      ...(values.opacity !== undefined ? { opacity: Number(values.opacity) } : {}),
+      ...(values['font-size'] !== undefined ? { fontSize: Number(values['font-size']) } : {}),
+      ...(typeof values.font === 'string' ? { font: values.font } : {}),
+      ...(typeof values.out === 'string' ? { output: values.out } : {}),
+      overwrite: values.overwrite === true,
+      signal,
+    })
+    return { data: { output: result.output, info: result.info }, warnings: result.warnings }
+  },
+}
+
+export const mediaCommands: Command[] = [info, audio, cutCmd, transcodeCmd, thumb, concatCmd, watermarkCmd]

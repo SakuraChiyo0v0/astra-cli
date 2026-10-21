@@ -32,6 +32,28 @@ test('合集链接必须同时给出 mid 和 sid（只给 sid 接口会 404）',
   assert.equal(parseCollectionRef('https://api.bilibili.com/x/polymer/web-space/seasons_archives_list?season_id=1903592').kind, null)
 })
 
+
+test('合集：只给 sid 的简写（用户反馈里要求的）', () => {
+  assert.deepEqual(parseCollectionRef('season:1903592'), { kind: 'season', mid: null, seasonId: '1903592' })
+  assert.deepEqual(parseCollectionRef('collection:1903592'), { kind: 'season', mid: null, seasonId: '1903592' })
+})
+
+test('系列：seriesdetail 链接与 series: 写法', () => {
+  assert.deepEqual(
+    parseCollectionRef('https://space.bilibili.com/546195/channel/seriesdetail?sid=123456'),
+    { kind: 'series', mid: '546195', seriesId: '123456' },
+  )
+  assert.deepEqual(parseCollectionRef('series:546195/123456'), { kind: 'series', mid: '546195', seriesId: '123456' })
+  assert.deepEqual(parseCollectionRef('series:123456'), { kind: 'series', mid: null, seriesId: '123456' })
+})
+
+test('seriesdetail 与 collectiondetail 不会串（两套接口）', () => {
+  const season = parseCollectionRef('https://space.bilibili.com/1/channel/collectiondetail?sid=2')
+  const series = parseCollectionRef('https://space.bilibili.com/1/channel/seriesdetail?sid=2')
+  assert.equal(season.kind, 'season')
+  assert.equal(series.kind, 'series')
+})
+
 test('认不出的一律 null，不硬猜', () => {
   assert.equal(parseCollectionRef('https://www.bilibili.com/video/BV17x411w7KC').kind, null)
   assert.equal(parseCollectionRef('随便一句话').kind, null)
