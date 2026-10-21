@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.1 — 2026-10-21
+
+- 新增 `bili space <UP链接|mid:546195>`：列出某个 UP 的**合集与系列**
+- **全量投稿接口做不了**：`space/wbi/arc/search` 试了 wbi 签名、完整浏览器头、设备指纹
+  （`buvid3`/`buvid4`）、移动端接口，一律 `-352` / `-412`。参数越像浏览器封得越狠，不硬啃
+- 替代方案实测可用：`seasons_series_list` **免签名**就能列合集/系列，
+  而 UP 的视频绝大多数按合集组织，所以"列合集再逐个下"覆盖了大部分需求
+- 补：系列名要单独查 `/x/series/series`；UP 名要查 `/x/web-interface/card`（合集 meta 里的 name 是合集名）
+
+
 ## 0.9.3 — 2026-10-21
 
 - 部署：放开 `/opt/astra/skills` 写权限，让 Hermes 能自己维护技能文档

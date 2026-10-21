@@ -236,9 +236,21 @@ export async function fetchSeriesArchives(mid: string | null, seriesId: string, 
       hint: `用完整链接，或 \`series:<mid>/${seriesId}\``,
     })
   }
+  // 系列名要单独查：`series/archives` 只给视频列表，不给名字
+  let title = ''
+  try {
+    const meta = await getJson<{ code: number; data?: { meta?: { name?: string; total?: number } } }>(
+      `https://api.bilibili.com/x/series/series?mid=${encodeURIComponent(mid)}&series_id=${encodeURIComponent(seriesId)}`,
+      '系列信息',
+      signal,
+    )
+    if (meta.code === 0) title = meta.data?.meta?.name ?? ''
+  } catch {
+    // 拿不到名字不影响拉视频
+  }
+
   const pageSize = Math.min(30, Math.max(1, limit))
   const items: CollectionItem[] = []
-  let title = ''
   let total: number | null = null
   for (let pn = 1; items.length < limit && pn <= 50; pn += 1) {
     const url = `https://api.bilibili.com/x/series/archives?mid=${encodeURIComponent(mid)}&series_id=${encodeURIComponent(seriesId)}&only_normal=true&sort=desc&pn=${pn}&ps=${pageSize}`
