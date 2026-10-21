@@ -23,6 +23,8 @@ import { vrCommands } from './vr/commands.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
 import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
+import { backup, listBackups, restore } from './core/backup.ts'
+import { listAudit, pruneAudit } from './core/audit.ts'
 
 declare const ASTRA_VERSION: string | undefined
 
@@ -239,7 +241,88 @@ const loginCmd: Command = {
   },
 }
 
-const commands: Command[] = [help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, notifyTest, ...musicCommands, ...biliCommands, ...mediaCommands, ...vrCommands]
+/**
+ * 备份。曲库丢了要重下几千首，会话丢了要重新扫码 —— 这是最该有自动化的一件事。
+ *
+ * `restore` 是危险操作：会覆盖当前曲库。所以要求显式给备份目录，且它会先把当前库
+ * 改名保留（`.replaced-<时间戳>`），不做不可逆的事。
+ */
+const backupCmd: Command = {
+  name: 'backup',
+  summary: '备份曲库数据库与会话，或用备份恢复',
+  usage: 'astra backup | astra backup list | astra backup restore <备份目录>',
+  notes: [
+    '只备份 astra.db（曲库与任务历史）和三个会话文件；**不备份**音乐/视频文件本身',
+    '数据库用 SQLite 的 VACUUM INTO 生成一致快照，不会因为那一刻有写入而损坏',
+    '默认保留最近 7 份；备份目录可用环境变量 ASTRA_BACKUP_DIR 指到别的盘',
+    '`restore` 会覆盖当前曲库，但会先把当前库改名保留；有任务在跑时会拒绝',
+  ],
+  maxArgs: 2,
+  async run({ positionals }) {
+    const [sub, arg] = positionals
+    if (sub === 'list') {
+      return { data: { backups: listBackups().map((b) => ({ name: b.name, path: b.dir, bytes: b.bytes, createdAt: b.createdAt })) } }
+    }
+    if (sub === 'restore') {
+      if (!arg) throw new AstraError('INVALID_INPUT', '需要备份目录', { exitCode: 2, hint: '`astra backup list` 看有哪些' })
+      const result = restore(arg)
+      return {
+        data: { ...result, note: '已用备份覆盖曲库；原库已改名保留，确认无误后可手动删除' },
+        warnings: result.previousKept ? [`原库保留在 ${result.previousKept}`] : [],
+      }
+    }
+    const result = backup()
+    const warnings: string[] = []
+    if (!result.hasDatabase) warnings.push('本次没有备份到数据库（还没下载过任何东西时是正常的）')
+    if (result.sessionCount === 0) warnings.push('没有可备份的会话文件（可能都还没登录）')
+    return { data: result, warnings }
+  },
+}
+
+/**
+ * 审计日志：谁在什么时候改了什么。
+ *
+ * 只记写操作（红心、退群、删订阅……），读操作不留痕。
+ */
+const auditCmd: Command = {
+  name: 'audit',
+  summary: '写操作审计：什么时候改了什么、成功没',
+  usage: 'astra audit [--domain music|vr] [--failed] [--since 2026-10-01] [--limit 50] | astra audit prune',
+  notes: [
+    '只记写操作（红心、退群、收藏、删订阅），读操作不留痕',
+    '不记 cookie，也不记完整上游响应；只记动作、对象名字、结果',
+    '`audit prune` 只保留最近 1000 条',
+  ],
+  maxArgs: 1,
+  async run({ positionals, values }) {
+    if (positionals[0] === 'prune') {
+      const removed = pruneAudit()
+      const remaining = listAudit({ limit: 500 }).length
+      return { data: { removed, remaining } }
+    }
+    const limit = Number(values.limit ?? 50)
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new AstraError('INVALID_INPUT', '--limit 必须是 1..500 的整数', { exitCode: 2 })
+    const records = listAudit({
+      limit,
+      ...(typeof values.domain === 'string' ? { domain: values.domain } : {}),
+      ...(values.failed === true ? { failedOnly: true } : {}),
+      ...(typeof values.since === 'string' ? { since: values.since } : {}),
+    })
+    return {
+      data: {
+        total: records.length,
+        failed: records.filter((r) => !r.ok).length,
+        records: records.map((r) => ({ at: r.at, action: r.action, summary: r.summary, ok: r.ok, ...(r.error ? { error: r.error } : {}) })),
+      },
+    }
+  },
+}
+
+const commands: Command[] = [
+
+  help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest,
+  ...musicCommands, ...biliCommands, ...mediaCommands, ...vrCommands,
+]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
 export function route(argv: string[]): { command: Command; rest: string[] } | null {

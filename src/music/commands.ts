@@ -28,7 +28,8 @@ import { accountStatus, beginLogin, logout as logoutSession, pollLogin, waitLogi
 import { loadSession, myPlaylists } from './auth.ts'
 import { likedIds, likedStatus, recommendDaily, requireSession, weapiPost } from './account-api.ts'
 import { loadCandidateTracks, scanUpgradable } from './upgrade.ts'
-import { applyLike, prepareLike } from './like.ts'
+import { applyLike, prepareLike, readPending as readLikePending } from './like.ts'
+import { audited } from '../core/audit.ts'
 import { toTrack } from './netease.ts'
 
 function qualityOf(value: unknown): Quality {
@@ -650,7 +651,13 @@ const liked: Command = {
 
     // 执行已确认的写操作
     if (typeof values.confirm === 'string') {
-      const result = await applyLike(values.confirm, session, signal)
+      // 审计要用待办里的信息（动作、歌名），执行完待办就被清了
+      const pending = readLikePending()
+      const verb = pending?.action === 'unlike' ? '取消红心' : '点红心'
+      const titles = pending?.titles.map((t: { title: string }) => t.title).join('、') ?? '(未知)'
+      const result = await audited({ action: pending?.action === 'unlike' ? 'music.unlike' : 'music.like', summary: `${verb} ${titles}`, detail: { trackIds: pending?.trackIds ?? [] } }, () =>
+        applyLike(String(values.confirm), session, signal),
+      )
       return {
         data: { ...result, total: result.changed.length },
         warnings: result.failedCount > 0 ? [`${result.failedCount} 首没成功，见 changed 里的 error`] : [],

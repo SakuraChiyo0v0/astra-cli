@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.2 — 2026-10-21
+
+- 新增 `astra backup [list|restore]`：曲库数据库（VACUUM INTO 一致快照）与三个会话文件，
+  默认留 7 份；`restore` 会先把当前库改名保留，有任务在跑时拒绝
+- 新增写操作审计：红心 / VRChat 的加好友、退群、收藏、改状态等都留痕，
+  `astra audit [--domain|--failed|--since]` 可查，`audit prune` 只留最近 1000 条
+- 修：审计的 detail 原本按字符截断 JSON，切成半个字符串导致整条记录读不出来；改成超长时记明确的截断标记
+
+
 ## 0.10.1 — 2026-10-21
 
 - `astra login` 现在也列 VRChat 的登录状态；新增 `astra login clear [域]` 清理坏掉的会话文件

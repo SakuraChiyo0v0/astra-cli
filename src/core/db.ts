@@ -123,6 +123,19 @@ const MIGRATIONS: string[] = [
   `drop table jobs`,
   `alter table jobs_new rename to jobs`,
   `create index jobs_created on jobs (created_at desc)`,
+  // 写操作审计：红心、退群、删订阅这些真的改了东西的操作要留痕。
+  // 只记"改了什么、成功没"，不记 cookie 和完整上游响应。
+  `create table audit_log (
+     id integer primary key autoincrement,
+     at text not null,
+     action text not null,
+     summary text not null,
+     ok integer not null,
+     error text,
+     detail text
+   )`,
+  `create index audit_at on audit_log (at desc)`,
+  `create index audit_action on audit_log (action)`,
 ]
 
 export function db(): DatabaseSync {

@@ -6,6 +6,7 @@
 import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command } from '../core/command.ts'
 import { clearPending, consume, prepare, readPending } from '../core/confirm.ts'
+import { audited } from '../core/audit.ts'
 import * as api from './data.ts'
 import * as actions from './actions.ts'
 import {
@@ -14,6 +15,16 @@ import {
 } from './auth.ts'
 
 const PURPOSE = 'vr'
+
+/** 把预览对象压成一句人能读的话，给审计用。 */
+function describePreview(preview: unknown): string {
+  if (preview === null || typeof preview !== 'object') return String(preview)
+  const p = preview as Record<string, unknown>
+  // 优先用名字，其次 id
+  const pick = p.name ?? p.displayName ?? p.userId ?? p.groupId ?? p.favoriteId ?? p.avatarId ?? p.status ?? p.id
+  const extra = p.count !== undefined ? `（${String(p.count)} 项）` : ''
+  return `${String(pick ?? '?')}${extra}`
+}
 
 function needString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim() === '') throw invalidInput(`缺少 --${name}`, `用法见 \`astra vr ${name} --help\``)
@@ -335,7 +346,12 @@ function writeCommand(config: {
     async run({ positionals, values, signal }) {
       if (typeof values.confirm === 'string') {
         const pending = consume(PURPOSE, values.confirm, config.action)
-        const result = await config.execute(config.toExecute(pending.preview as Record<string, unknown>), signal)
+        // 审计用预览里的信息：它是"用户确认过的那份"，执行完待办就没了
+        const previewText = describePreview(pending.preview)
+        const result = await audited(
+          { action: `vr.${config.action}`, summary: `${config.summary.replace(/（.*?）/g, '')}：${previewText}`, detail: { preview: pending.preview } },
+          () => config.execute(config.toExecute(pending.preview as Record<string, unknown>), signal),
+        )
         clearPending(PURPOSE)
         return { data: { status: 'done', action: config.action, ...result } }
       }

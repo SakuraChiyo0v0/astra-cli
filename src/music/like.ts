@@ -40,7 +40,7 @@ function pendingFile(): string {
   return homePath('like-pending.json')
 }
 
-function readPending(): PendingLike | null {
+export function readPending(): PendingLike | null {
   try {
     const parsed = JSON.parse(readFileSync(pendingFile(), 'utf8')) as PendingLike
     if (typeof parsed.token !== 'string' || !Array.isArray(parsed.trackIds)) return null
