@@ -402,10 +402,76 @@ export interface VrBalance {
   subscription: Record<string, unknown> | null
 }
 
+/**
+ * 余额（`GET /user/{id}/balance`，需要登录）。
+ *
+ * 只读，不包含购买或付款。上游没给就是 null，不补 0 —— 0 和"没数据"是两回事。
+ */
 export async function balance(signal?: AbortSignal): Promise<VrBalance> {
   const session = needSession()
-  const raw = await getJson<{ balance?: number; subscriptions?: unknown }>('/user/subscription', { cookie: cookieOf(session), ...(signal ? { signal } : {}) })
+  const id = await selfId(signal)
+  const raw = await getJson<{ balance?: number; subscriptions?: unknown }>(`/user/${encodeURIComponent(id)}/balance`, {
+    cookie: cookieOf(session),
+    ...(signal ? { signal } : {}),
+  })
   return { balance: typeof raw.balance === 'number' ? raw.balance : null, subscription: (raw.subscriptions as Record<string, unknown>) ?? null }
+}
+
+export interface VrTransaction {
+  id: string
+  status: string | null
+  /** 交易类型：purchase / subscription 等，上游给什么就带什么。 */
+  type: string | null
+  description: string | null
+  amount: number | null
+  balance: number | null
+  createdAt: string | null
+  /** 原始字段整体保留：交易详情随版本变化，宁可多带不乱解释。 */
+  raw: Record<string, unknown>
+}
+
+/**
+ * 交易明细（`GET /user/{id}/economy/transactions`，需要登录）。
+ *
+ * status 已知取值 active / failed / succeeded / cancelled；**出现新取值时原样转述**，
+ * 不拒绝也不改写。只读，不发起任何交易。
+ */
+export async function transactions(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<VrTransaction[]> {
+  const session = needSession()
+  const id = await selfId(options.signal)
+  const raw = await getJson<Record<string, unknown>[]>(`/user/${encodeURIComponent(id)}/economy/transactions`, {
+    cookie: cookieOf(session),
+    query: { n: options.limit ?? 20, offset: options.offset ?? 0 },
+    ...(options.signal ? { signal: options.signal } : {}),
+  })
+  return (Array.isArray(raw) ? raw : []).map((t) => ({
+    id: typeof t.id === 'string' ? t.id : '',
+    status: typeof t.status === 'string' ? t.status : null,
+    type: typeof t.type === 'string' ? t.type : null,
+    description: typeof t.description === 'string' ? t.description : null,
+    amount: typeof t.amount === 'number' ? t.amount : null,
+    balance: typeof t.balance === 'number' ? t.balance : null,
+    createdAt: typeof t.created_at === 'string' ? t.created_at : null,
+    raw: t,
+  }))
+}
+
+/** 各类型收藏的数量上限（`GET /auth/user/favoritelimits`）。三种分开给，不合并。 */
+export async function favoriteLimits(signal?: AbortSignal): Promise<{ avatar: number | null; friend: number | null; world: number | null }> {
+  const session = needSession()
+  const raw = await getJson<{ avatar?: number; friend?: number; world?: number }>('/auth/user/favoritelimits', {
+    cookie: cookieOf(session),
+    ...(signal ? { signal } : {}),
+  })
+  const pick = (v: unknown): number | null => (typeof v === 'number' ? v : null)
+  return { avatar: pick(raw.avatar), friend: pick(raw.friend), world: pick(raw.world) }
+}
+
+async function selfId(signal?: AbortSignal): Promise<string> {
+  const session = needSession()
+  const me = await getJson<{ id?: string }>('/auth/user', { cookie: cookieOf(session), ...(signal ? { signal } : {}) })
+  if (!me.id) throw new AstraError('VRCHAT_NO_USER_ID', '拿不到自己的用户 id', { exitCode: 5 })
+  return me.id
 }
 
 /**

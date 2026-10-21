@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.4 — 2026-10-21
+
+- VRChat 补经济类：余额改用正确的 `GET /user/<built-in function id>/balance`（原先是 `/user/subscription`），
+  `vr economy` 顺带给出各类型收藏上限，新增 `vr transactions` 交易明细
+- 只读，不发起任何交易；余额缺失时是 null 不是 0
+
+
 ## 0.8.3 — 2026-10-21
 
 - VRChat 补三块：收藏分组的建/删、头像切换与回退、平台系统信息与权限位清单

@@ -1,7 +1,7 @@
 ---
 name: astra-vrchat
 description: Check VRChat friends, worlds and notifications.
-version: 0.8.3
+version: 0.8.4
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -51,7 +51,8 @@ stdout 只有一个 JSON，`ok: false` 时看 `error.code` / `error.hint`。
 | 我的群组 | `astra vr groups`；搜群组 `astra vr groups search <词>` |
 | 头像 | `astra vr avatars` |
 | 收藏 | `astra vr favorites [--type world\|avatar\|friend]` |
-| 余额 / 订阅 | `astra vr economy` |
+| 余额 / 订阅 / 收藏上限 | `astra vr economy` |
+| 交易明细 | `astra vr transactions [--limit 20]` |
 | 在线人数 / 上游时间 | `astra vr system`（不用登录） |
 | 平台权限位清单 | `astra vr permissions [--id <id>]` |
 | 自检 | `astra vr doctor` |

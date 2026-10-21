@@ -248,9 +248,38 @@ const economyCmd: Command = {
   name: 'vr economy',
   summary: '余额与订阅状态',
   usage: 'astra vr economy',
+  notes: ['只读。上游没给余额时是 null，不是 0 —— 两者含义不同，别把 null 说成"没余额"'],
   maxArgs: 0,
   async run({ signal }) {
-    return { data: await api.balance(signal) }
+    const [bal, limits] = await Promise.all([api.balance(signal), api.favoriteLimits(signal)])
+    return { data: { ...bal, favoriteLimits: limits } }
+  },
+}
+
+const transactionsCmd: Command = {
+  name: 'vr transactions',
+  summary: '交易明细（只读，不发起任何交易）',
+  usage: 'astra vr transactions [--limit 20] [--offset 0]',
+  notes: [
+    'status 已知取值：active / failed / succeeded / cancelled；出现新值就原样转述，不要自己解释成成功或失败',
+    '只读，不会买东西、不会退款',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '1..100，默认 20', valueName: 'n' },
+    offset: { type: 'string', description: '跳过多少条，默认 0', valueName: 'n' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const limit = intOf(values.limit, 20, 1, 100, 'limit')
+    const offset = intOf(values.offset, 0, 0, 100000, 'offset')
+    const list = await api.transactions({ limit, offset, signal })
+    return {
+      data: {
+        count: list.length,
+        transactions: list.map((t) => ({ id: t.id, status: t.status, type: t.type, description: t.description, amount: t.amount, balanceAfter: t.balance, createdAt: t.createdAt })),
+        truncated: list.length >= limit,
+      },
+    }
   },
 }
 
@@ -642,7 +671,7 @@ export const vrCommands: Command[] = [
   worldCmd, searchWorldsCmd, instanceCmd,
   groupsCmd, searchGroupsCmd,
   avatarsCmd, favoritesCmd, favoriteAddCmd, favoriteRemoveCmd,
-  economyCmd, statusCmd, inviteCmd,
+  economyCmd, transactionsCmd, statusCmd, inviteCmd,
   favoriteGroupCreateCmd, favoriteGroupDeleteCmd,
   avatarSelectCmd, avatarFallbackCmd,
   systemCmd, permissionsCmd,
