@@ -5,7 +5,10 @@
 # 自己 pyproject.toml 的 feishu extra：lark-oapi==1.6.8。
 #
 # venv 里没有 pip，用镜像自带的 uv 装，`--no-deps` 不惊动已锁定的整套依赖。
-FROM nousresearch/hermes-agent:latest
+# 锁 digest 而不是 latest：tag 会被上游覆盖，digest 不会。
+# 升级时改这里，并且**先在一个独立容器里验证**再切生产（Hermes 升级可能带 SQLite / 配置迁移）。
+# 2026-10-21 验证可用的版本：
+FROM nousresearch/hermes-agent@sha256:36099926da316742423544e055d4734777105ffe6341873af5459b957d0c2919
 
 RUN UV=$(ls -d /opt/hermes/tools/uv-*/uv | head -1) && \
     "$UV" pip install --python /opt/hermes/.venv/bin/python --no-cache \
