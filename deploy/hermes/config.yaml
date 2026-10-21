@@ -7,7 +7,13 @@ model:
   base_url: "http://workbuddy2api:7863/v1"
   # 2026-10-21 实测：deepseek-v4-pro / glm-5.3 / kimi-k3-1 / minimax-m3 等都能正确调 terminal 并遵守"歧义时先问"。
   # 换模型：飞书里发 /model，或改这里
-  default: "cn:deepseek-v4-pro"
+  default: "cn:glm-5.3-flash"
+  # glm-5.3-flash 是快模型，思考档位压到 low：响应快、省 token
+  reasoning_effort: "low"
+  # 换模型时若上下文超过这个数会先警告（飞书里回 /approve 或 /cancel）；0 关掉。
+  # 实测这个键从 model 段读，不是独立的 model_switch_guard 段。
+  # 留着是好事：换模型会让 prompt cache 整份失效，提醒一下值得
+  switch_context_confirm_tokens: 100000
 
 terminal:
   backend: local
@@ -32,3 +38,16 @@ group_sessions_per_user: true
 # 官方镜像默认禁止按需装依赖（HERMES_DISABLE_LAZY_INSTALLS）；飞书适配器要 lark_oapi，允许一次
 security:
   allow_lazy_installs: true
+
+# ---- 上下文成本 ----
+# 飞书是常驻会话，聊久了历史会一直涨。实测一个会话能到 16 万 token，
+# 之后每句话都重新读一遍（第三方模型的 prompt cache 按模型 key，换模型就失效）。
+# 两道闸门：
+# - threshold_tokens：到 8 万就压缩，不等比例阈值（小窗口模型的下限太高）
+# - idle_compact_after_seconds：空闲半小时再回来时先压缩，别让旧历史重复计费
+compression:
+  enabled: true
+  threshold: 0.50
+  threshold_tokens: 80000
+  target_ratio: 0.20
+  # 压缩摘要由主模型做（glm-5.3-flash 够快），不单独配 auxiliary

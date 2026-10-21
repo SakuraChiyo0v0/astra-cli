@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.6 — 2026-10-21
+
+- Hermes 配置加上下文成本控制：`compression.threshold_tokens: 80000`（到 8 万就压缩，不等比例阈值）、
+  `model.switch_context_confirm_tokens: 100000`（换模型时提醒）
+- 飞书链路实测通过：用户在飞书里发 `/model` 得到正常响应与提醒
+
+
 ## 0.10.5 — 2026-10-21
 
 - 修：`astra audit` 的 usage 里写了 `--domain / --failed / --since / --limit`，但这四个选项一个都没声明，
