@@ -1,4 +1,28 @@
 node_modules/
 dist/
+
+# 运行时状态：会话（含 cookie）、曲库、日志、临时产物。
+# 这些永远不该进仓库，尤其是公开仓库。
 .data/
 *.log
+astra.db
+astra.db-shm
+astra.db-wal
+*-session.json
+login-pending.json
+bili-login-pending.json
+login-qr.png
+bili-login-qr.png
+
+# 音源脚本由用户自己导入，不进仓库
+# 音源脚本（洛雪 .js）：名字五花八门，用目录排除更可靠
+lx-sources/
+qdy*.js
+*source*.js
+
+# 临时文件
+*.part-*
+*.tagging
+*.v-*.tmp
+*.a-*.tmp
+*.out-*.tmp*
