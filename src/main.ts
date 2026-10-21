@@ -15,6 +15,7 @@ import { CONFIG_KEYS, getConfig, listConfig, musicRoot, setConfig, unsetConfig }
 import { astraHome } from './core/paths.ts'
 import { closeDb } from './core/db.ts'
 import { musicCommands } from './music/commands.ts'
+import { biliCommands } from './bili/commands.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
 
@@ -117,7 +118,7 @@ const versionCmd: Command = {
   },
 }
 
-const commands: Command[] = [help, versionCmd, doctor, configCmd, notifyTest, ...musicCommands]
+const commands: Command[] = [help, versionCmd, doctor, configCmd, notifyTest, ...musicCommands, ...biliCommands]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
 export function route(argv: string[]): { command: Command; rest: string[] } | null {
@@ -169,7 +170,16 @@ async function main(): Promise<number> {
   }
 }
 
-const isEntry = process.argv[1] && /(?:main\.ts|astra\.mjs|astra)$/.test(process.argv[1].replace(/\\/g, '/'))
+/**
+ * 是不是"被当成命令直接跑"。
+ *
+ * 原来只认固定文件名（main.ts / astra.mjs / astra），一旦产物改名（比如并排放一份
+ * astra-bili.mjs 做测试）就会被判成"不是入口"，静默什么都不输出 —— 排查起来很费劲。
+ * 改成"文件名以 astra 开头、扩展名是 .mjs/.js/.ts"，改名和加前缀都不会踩到。
+ */
+const entryName = (process.argv[1] ?? '').replace(/\\/g, '/').split('/').pop() ?? ''
+// 认两种：开发态直接跑 `src/main.ts`，以及打包/改名后的 `astra*.mjs`
+const isEntry = entryName === 'main.ts' || /^astra[^/]*\.(?:mjs|js|ts)$/.test(entryName) || entryName === 'astra'
 if (isEntry) {
   main().then(
     (code) => {

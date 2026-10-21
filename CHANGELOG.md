@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — 2026-10-21
+
+第二个能力域：B 站视频下载。
+
+- `bili get`：BV 号 / av 号 / 视频链接 / b23.tv 短链；多分 P 用 `--page 2,5-8` 指定，`--audio-only` 只取音频
+- DASH 音视频分流下载后 ffmpeg 合并（`-c copy` 不重编码），自动在 baseUrl / backupUrl 间回退
+- 下完用 ffprobe 核时长与流，报告实际分辨率与编码
+- `bili login start / poll / account / logout`：扫码登录。**未登录画质封顶 360P**，登录后才可能到 1080P60 / 4K
+- `bili info`（`--probe` 看实际可得画质）、`bili subtitle`（字幕转 srt）、`bili doctor`
+- wbi 签名（`w_rid` + `wts`）
+- 把路径模板抽到 `core/template.ts` 供音乐与视频共用；修掉"空变量残留 `01 .mp4`"的问题
+- 修：入口文件判断原来只认固定文件名，产物改名后会静默不执行
+
+
 ## 0.4.0 — 2026-10-21
 
 - 新增逐字歌词：网易云没有逐字（`klyric` 实测恒为空），改从酷狗取 KRC，解出后另存 `.word.lrc`（增强 LRC）
