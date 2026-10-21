@@ -23,6 +23,10 @@ services:
       # dashboard 的开关必须是容器环境变量：镜像里的 s6 run 脚本只看进程环境，不读 data/.env
       - HERMES_DASHBOARD=${HERMES_DASHBOARD:-1}
       - ASTRA_HOME=/opt/astra/home
+      # Hermes 默认只允许写 /opt/data（HERMES_WRITE_SAFE_ROOT 在镜像里设成这个值）。
+      # 要让它能改 skill 文档，把 skills 目录也加进来。多个路径用 os.pathsep 分隔，
+      # Linux 下是冒号。**注意这不是 config.yaml 里的键，是环境变量，写配置里不生效。**
+      - HERMES_WRITE_SAFE_ROOT=/opt/data:/opt/astra/skills
       - ASTRA_MUSIC_DIR=/music
     ports:
       # Web 面板；只在内网。非回环绑定强制要账号密码（见 data/.env）
@@ -38,7 +42,9 @@ services:
       - /volume1:/host-root/volume1
       - ${DEPLOY_ROOT:?}/hermes/data:/opt/data
       - ${DEPLOY_ROOT}/astra/bin:/opt/astra/bin:ro
-      - ${DEPLOY_ROOT}/astra/skills:/opt/astra/skills:ro
+      # skills 放开为可写：Hermes 要能更新技能文档（agent 自己维护它）。
+      # 只放这一个目录 —— 里面只有 .md，不碰代码和数据。
+      - ${DEPLOY_ROOT}/astra/skills:/opt/astra/skills
       - ${DEPLOY_ROOT}/astra/home:/opt/astra/home
       # astra 包装脚本放进 Hermes 默认 PATH 里的 ~/.local/bin（PATH 不能经 .env 改）
       - ${DEPLOY_ROOT}/astra/bin/astra:/opt/data/.local/bin/astra:ro
