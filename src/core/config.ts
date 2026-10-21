@@ -29,6 +29,8 @@ export const CONFIG_KEYS: ConfigKey[] = [
     default: '{albumartist}/{album}/{track:02} {title}.{ext}' },
   { key: 'music.lyric', description: '是否写歌词：embed（写进标签）/ lrc（另存 .lrc）/ both / none', default: 'both',
     validate: (v) => (['embed', 'lrc', 'both', 'none'].includes(v) ? null : '只能是 embed / lrc / both / none') },
+  { key: 'music.wordLyric', description: '逐字歌词：auto（从酷狗取，时长对不上就跳过）/ off', default: 'auto',
+    validate: (v) => (['auto', 'off'].includes(v) ? null : '只能是 auto / off') },
   { key: 'music.ffmpeg', description: 'ffmpeg 可执行文件路径；留空则从 PATH 查找', default: '' },
   { key: 'music.concurrency', description: '批量下载并发数 1..4', default: '2',
     validate: (v) => (/^[1-4]$/.test(v) ? null : '只能是 1..4') },

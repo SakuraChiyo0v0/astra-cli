@@ -21,6 +21,7 @@ import { albumInfo, beijingDate, lyric, type AlbumInfo, type Track } from './net
 import { resolveUrl } from './resolve.ts'
 import { audioPayload, writeTags, type TagData } from './tags.ts'
 import { renderTemplate, resolveInside } from './paths.ts'
+import { kugouWordLyric, toEnhancedLrc } from './kugou-lyric.ts'
 import { findTrack, saveTrack, type LibraryTrack } from './library.ts'
 
 export interface DownloadOptions {
@@ -44,6 +45,8 @@ export interface DownloadResult {
   bitrateKbps: number | null
   source: string | null
   lyricFile: string | null
+  /** 逐字歌词（增强 LRC）；没有就是 null。 */
+  wordLyricFile: string | null
   warnings: string[]
 }
 
@@ -60,6 +63,7 @@ function existingResult(hit: LibraryTrack, requested: Quality): DownloadResult {
     bitrateKbps: hit.bps ? Math.round(hit.bps / 1000) : null,
     source: hit.sourceId,
     lyricFile: null,
+    wordLyricFile: null,
     warnings: [],
   }
 }
@@ -248,6 +252,21 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       await writeFile(lyricFile, lyricBody.lrc, 'utf8')
     }
 
+    // 逐字歌词单独存 .word.lrc：网易云没有逐字，从酷狗取；取不到就安静跳过。
+    // 单独的扩展名，这样普通播放器用 .lrc，支持增强 LRC 的用 .word.lrc，互不干扰。
+    let wordLyricFile: string | null = null
+    if (getConfig('music.wordLyric') !== 'off') {
+      try {
+        const krc = await kugouWordLyric(track, signal)
+        if (krc) {
+          wordLyricFile = target.replace(/\.[^.]+$/, '.word.lrc')
+          await writeFile(wordLyricFile, toEnhancedLrc(krc), 'utf8')
+        }
+      } catch (err) {
+        warnings.push(`逐字歌词获取失败：${(err as Error).message}`)
+      }
+    }
+
     saveTrack({
       platform: 'wy',
       id: track.id,
@@ -276,6 +295,7 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       bitrateKbps: probe.bps ? Math.round(probe.bps / 1000) : null,
       source: resolved.sourceId === 'official' ? 'official' : `${resolved.sourceId}@${resolved.route}`,
       lyricFile,
+      wordLyricFile,
       warnings,
     }
   } finally {
