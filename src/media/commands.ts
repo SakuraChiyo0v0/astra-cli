@@ -24,12 +24,19 @@ const info: Command = {
   maxArgs: 1,
   async run({ positionals, signal }) {
     const info = await mediaInfo(positionals[0]!, signal)
+    const warnings: string[] = []
+    // 带内嵌封面的音频（FLAC / MP3 常见）会被 ffprobe 当成一条 mjpeg/png 视频流。
+    // 这不是真的视频，不说明的话 AI 会误以为"这是个视频文件"。
+    const coverOnly = info.hasVideo && info.hasAudio && ['mjpeg', 'png', 'bmp', 'gif', 'webp'].includes(info.videoCodec ?? '')
+    if (coverOnly) warnings.push(`这条"视频流"其实是内嵌封面（${info.videoCodec}），文件本身是音频`)
     return {
       data: {
         ...info,
+        coverOnly,
         durationLabel: formatDuration(info.durationSec),
         sizeMB: Math.round((info.bytes / 1048576) * 10) / 10,
       },
+      warnings,
     }
   },
 }

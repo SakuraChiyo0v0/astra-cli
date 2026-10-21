@@ -47,3 +47,21 @@ test('mediaInfo：文件不存在报 NOT_FOUND', async () => {
     return true
   })
 })
+
+test('内嵌封面：ffprobe 会把它报成一条 mjpeg 视频流（提示的依据）', async () => {
+  const withCover = new URL('./fixtures/with-cover.flac', import.meta.url).pathname
+    .replace(/^\/([A-Za-z]:)/, '$1')
+  const info = await mediaInfo(decodeURIComponent(withCover))
+  // 这条断言是"提示逻辑成立"的事实依据：真有封面时 hasVideo=true 且编码是 mjpeg
+  assert.equal(info.hasAudio, true)
+  assert.equal(info.hasVideo, true)
+  assert.equal(info.videoCodec, 'mjpeg')
+  assert.ok(['mjpeg', 'png', 'bmp', 'gif', 'webp'].includes(info.videoCodec ?? ''), '应当被判定为封面')
+})
+
+test('纯音频没有封面时不误报', async () => {
+  const plain = new URL('./fixtures/tone.flac', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
+  const info = await mediaInfo(decodeURIComponent(plain))
+  assert.equal(info.hasVideo, false)
+  assert.equal(info.videoCodec, null)
+})
