@@ -20,6 +20,8 @@ import { danmakuToAss, fetchDanmaku } from './danmaku.ts'
 import { popular as fetchPopular, weeklyIssues as fetchWeeklyIssues, weeklyOne as fetchWeeklyOne } from './discover.ts'
 import { watchLater, watchHistory } from './account-lists.ts'
 import { httpRequest } from '../core/http.ts'
+import { searchUsers, searchVideos } from './search.ts'
+import { addBiliSubscription, dueBiliSubscriptions, findBiliSubscription, listBiliSubscriptions, removeBiliSubscription, runBiliSubscription, setBiliSubscription } from './subscribe.ts'
 
 import { mediaRoot } from '../core/config.ts'
 import path from 'node:path'
@@ -722,9 +724,240 @@ const historyCmd: Command = {
   },
 }
 
+const search: Command = {
+  name: 'bili search',
+  summary: '搜索视频或 UP 主',
+  usage: 'astra bili search <关键词> [--type video|user] [--limit 20] [--page 1]',
+  notes: [
+    '视频结果每项带 bvid，可直接 `astra bili get <bvid>` 下载',
+    '**不给列出某 UP 的全部投稿**：那个接口（space/wbi/arc/search）即使带签名也返回 -352 风控',
+    '搜索本身也受风控，频繁调用会被拒（-352），冷却几分钟再试',
+  ],
+  options: {
+    type: { type: 'string', short: 't', description: 'video（默认）/ user', valueName: 'kind' },
+    limit: { type: 'string', short: 'n', description: '默认 20，最多 50', valueName: 'n' },
+    page: { type: 'string', description: '页码，默认 1', valueName: 'n' },
+  },
+  minArgs: 1,
+  async run({ positionals, values, signal }) {
+    const keyword = positionals.join(' ')
+    const kind = typeof values.type === 'string' ? values.type : 'video'
+    const limit = Math.max(1, Math.min(50, Number(values.limit ?? '20') || 20))
+    const page = Math.max(1, Number(values.page ?? '1') || 1)
+    if (kind === 'user') {
+      const users = await searchUsers(keyword, limit, page, signal)
+      return {
+        data: {
+          type: 'user',
+          keyword,
+          page,
+          total: users.length,
+          items: users.map((u) => ({ ...u, ref: `mid:${u.mid}` })),
+        },
+      }
+    }
+    if (kind !== 'video') throw invalidInput(`--type ${kind} 不合法`, '可选：video / user')
+    const videos = await searchVideos(keyword, limit, page, signal)
+    return {
+      data: {
+        type: 'video',
+        keyword,
+        page,
+        total: videos.length,
+        items: videos.map((v) => ({ ...v, duration: formatDuration(v.durationSec) })),
+      },
+    }
+  },
+}
+
+const collectionCmd: Command = {
+  name: 'bili collection',
+  summary: '列出合集 / 系列 / 收藏夹里的视频清单（只列不下载）',
+  usage: 'astra bili collection <合集链接|season:<sid>|fav:<id>> [--limit 50]',
+  notes: [
+    '和 `bili bulk` 用同一套输入解析，但只列清单、不建任务',
+    '想下载用 `astra bili bulk <同样的输入>`',
+  ],
+  options: { limit: { type: 'string', short: 'n', description: '默认 50，最多 500', valueName: 'n' } },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const input = positionals[0]!
+    const limit = Math.max(1, Math.min(500, Number(values.limit ?? '50') || 50))
+    const ref = parseCollectionRef(input)
+    if (ref.kind === null) {
+      throw invalidInput(`认不出这是哪个收藏夹 / 合集 / 系列：${input.slice(0, 40)}`, [
+        '收藏夹：`fav:<id>` 或 favlist 链接',
+        '合集：collectiondetail?sid=<id> 链接，或 `season:<sid>`',
+        '系列：seriesdetail?sid=<id> 链接，或 `series:<mid>/<sid>`',
+      ].join('；'))
+    }
+    const collection = ref.kind === 'fav'
+      ? await fetchFavorite(ref.id, limit, signal)
+      : ref.kind === 'series'
+        ? await fetchSeriesArchives(ref.mid, ref.seriesId, limit, signal)
+        : await fetchSeasonArchives(ref.mid, ref.seasonId, limit, signal)
+    const label = ref.kind === 'fav' ? '收藏夹' : ref.kind === 'series' ? '系列' : '合集'
+    return {
+      data: {
+        kind: label,
+        title: collection.title,
+        total: collection.total,
+        returned: collection.items.length,
+        truncated: collection.total !== null && collection.items.length < collection.total,
+        items: collection.items.map((v, i) => ({
+          index: i + 1,
+          bvid: v.bvid,
+          title: v.title,
+          duration: formatDuration(v.durationSec),
+          downloadWith: `astra bili get ${v.bvid}`,
+        })),
+        downloadAllWith: `astra bili bulk ${input}`,
+      },
+    }
+  },
+}
+
+const subAdd: Command = {
+  name: 'bili subscribe add',
+  summary: '订阅合集 / 系列 / 收藏夹：定时检查，出新视频自动下',
+  usage: 'astra bili subscribe add <合集链接|season:<sid>|fav:<id>> [--every 24] [--quality 1080p]',
+  notes: [
+    '建订阅时会把**当前已有的一批记为基线**，第一次检查不会把整个合集重下一遍',
+    '新视频靠"上次见到的 bvid 列表"求差判断，不依赖发布时间（B 站时间字段不可靠）',
+    '**不支持订阅 UP 主**：UP 投稿列表接口带签名也返回 -352 风控（实测）',
+  ],
+  options: {
+    every: { type: 'string', description: '每隔几小时检查一次，默认 24', valueName: 'h' },
+    quality: { type: 'string', short: 'q', description: '下载画质，默认取 bili.quality', valueName: 'q' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const every = Number(values.every ?? '24')
+    if (!Number.isInteger(every) || every < 1 || every > 720) throw invalidInput('--every 必须是 1..720 的整数')
+    const quality = parseQuality(values.quality)
+    const sub = await addBiliSubscription(
+      { target: positionals[0]!, everyHours: every, quality: String(quality) },
+      signal,
+    )
+    return {
+      data: { status: 'subscribed', subscription: sub, quality: qualityName(quality) },
+      warnings: ['已记录当前内容作为基线；之后每 ' + every + ' 小时检查一次，发现新视频时下载'],
+    }
+  },
+}
+
+const subList: Command = {
+  name: 'bili subscribe list',
+  summary: '列出 B 站订阅及状态',
+  usage: 'astra bili subscribe list',
+  maxArgs: 0,
+  async run() {
+    const subs = listBiliSubscriptions()
+    return {
+      data: {
+        total: subs.length,
+        subscriptions: subs.map((s) => ({
+          id: s.id,
+          title: s.title,
+          target: s.targetId,
+          everyHours: s.everyHours,
+          enabled: s.enabled,
+          lastCheckedAt: s.lastCheckedAt,
+          knownVideos: s.lastSeen.length,
+          lastJobId: s.lastJobId,
+        })),
+      },
+    }
+  },
+}
+
+const subSet: Command = {
+  name: 'bili subscribe set',
+  summary: '改订阅：间隔 / 启停 / 画质',
+  usage: 'astra bili subscribe set <id> [--every 12] [--enable|--disable] [--quality 1080p]',
+  options: {
+    every: { type: 'string', description: '每隔几小时', valueName: 'h' },
+    enable: { type: 'boolean', description: '启用' },
+    disable: { type: 'boolean', description: '停用' },
+    quality: { type: 'string', short: 'q', description: '画质', valueName: 'q' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values }) {
+    if (values.enable === true && values.disable === true) throw invalidInput('--enable 与 --disable 不能同时给')
+    const patch: { everyHours?: number; enabled?: boolean; quality?: string | null } = {}
+    if (values.every !== undefined) {
+      const n = Number(values.every)
+      if (!Number.isInteger(n) || n < 1 || n > 720) throw invalidInput('--every 必须是 1..720 的整数')
+      patch.everyHours = n
+    }
+    if (values.enable === true) patch.enabled = true
+    if (values.disable === true) patch.enabled = false
+    if (values.quality !== undefined) patch.quality = String(parseQuality(values.quality))
+    return { data: setBiliSubscription(positionals[0]!, patch) }
+  },
+}
+
+const subRemove: Command = {
+  name: 'bili subscribe remove',
+  summary: '删除订阅（已下载的文件不动）',
+  usage: 'astra bili subscribe remove <id>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    return { data: { removed: removeBiliSubscription(positionals[0]!) } }
+  },
+}
+
+const subRun: Command = {
+  name: 'bili subscribe run',
+  summary: '检查到点的订阅并下载新视频（给定时任务调）',
+  usage: 'astra bili subscribe run [--id <id>] [--force]',
+  notes: [
+    '不带 --id 时只跑到点的；--force 不管间隔强制检查',
+    '在 Hermes 里配一条 cron 定时调这个命令即可（比如每 6 小时）',
+  ],
+  options: {
+    id: { type: 'string', description: '只跑这一个订阅', valueName: 'id' },
+    force: { type: 'boolean', description: '忽略间隔，立刻检查' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const targets = typeof values.id === 'string' && values.id
+      ? [findBiliSubscription(values.id)]
+      : values.force === true ? listBiliSubscriptions().filter((s) => s.enabled) : dueBiliSubscriptions()
+    if (targets.length === 0) return { data: { ran: 0, results: [], note: '没有到点的订阅' } }
+    const results = []
+    for (const sub of targets) {
+      if (signal?.aborted) break
+      try {
+        results.push(await runBiliSubscription(sub.id, { ...(values.force === true ? { force: false } : {}), ...(signal ? { signal } : {}) }))
+      } catch (err) {
+        results.push({ subscription: sub, newCount: 0, jobId: null, note: `失败：${(err as Error).message.slice(0, 150)}`, baseline: false })
+      }
+    }
+    return {
+      data: {
+        ran: results.length,
+        results: results.map((r) => ({
+          id: r.subscription.id,
+          title: r.subscription.title,
+          newCount: r.newCount,
+          jobId: r.jobId,
+          note: r.note,
+          baseline: r.baseline,
+        })),
+      },
+    }
+  },
+}
+
 export const biliCommands: Command[] = [
-  get, info, subtitle, danmaku, popular, weekly, watchLaterCmd, historyCmd, bulk,
+  get, info, subtitle, danmaku, popular, weekly, search, collectionCmd, watchLaterCmd, historyCmd, bulk,
   jobCmd, jobList, jobCancel, jobResume, workerCmd,
   loginStart, loginPoll, account, logout, doctor,
+  subAdd, subList, subSet, subRemove, subRun,
 ]
 export { QUALITY_ORDER }

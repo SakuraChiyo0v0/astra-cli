@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.1 — 2026-10-21
+
+- `astra login` 现在也列 VRChat 的登录状态；新增 `astra login clear [域]` 清理坏掉的会话文件
+  （会话文件权限不对、内容坏了导致 logout 都进不去时用）
+- `doctor` 增加磁盘用量：音乐 / 视频目录各占多少、所在文件系统还剩多少，剩余低于 10GB 会告警
+- 实测 NAS：音乐 501MB/34 文件、视频 277GB/240 文件、磁盘剩 2.5TB
+
+
+## 0.10.0 — 2026-10-21
+
+按使用反馈补 P2 两项。
+
+- **`bili search`**：视频 / UP 主搜索（wbi 签名）。**不给列某 UP 的全部投稿** ——
+  `space/wbi/arc/search` 带签名也返回 -352 风控（实测）
+- **`bili collection`**：只列合集 / 系列 / 收藏夹清单，每项带 `downloadWith`
+- **`bili subscribe add/list/set/remove/run`**：定时盯合集 / 系列 / 收藏夹，出新视频自动下。
+  复用音乐的 `subscriptions` 表；第一次跑只记基线（否则会把整个合集当新视频一次下几百个）
+
+
 ## 0.9.2 — 2026-10-21
 
 - 新增跨域统一任务入口：`astra jobs` 一次列出所有域的任务（带 domain 标签与按域统计），

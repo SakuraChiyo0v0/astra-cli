@@ -20,6 +20,16 @@ export interface BiliJobItem {
   meta: Record<string, unknown>
 }
 
+/** 一组视频（合集 / 收藏夹 / 订阅发现的新视频）直接转成任务项。 */
+export function collectionToItems(items: { bvid: string; title: string }[], collectionTitle: string, quality: number): BiliJobItem[] {
+  return items.map((v) => ({
+    id: v.bvid,
+    title: v.title,
+    subtitle: collectionTitle,
+    meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true },
+  }))
+}
+
 /** 一个 bvid 的若干分 P 展开成 job item；`pages` 为空表示只下第 1 个。 */
 export async function biliJobItems(bvid: string, pages: number[] | null, quality: number): Promise<BiliJobItem[]> {
   const info = await fetchInfo(bvid)
