@@ -1,7 +1,7 @@
 ---
 name: astra-music
 description: Download songs, albums and playlists to the NAS.
-version: 0.5.0
+version: 0.6.0
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -105,6 +105,19 @@ stderr 是进度日志，不用管。
 2. 之后靠定时任务触发：`astra music subscribe run`（只跑"到点的"）。
    如果 Hermes 有 cron 能力，配一条每小时执行的 `astra music subscribe run` 就够了。
 3. `astra music subscribe list --runs` 看历史和最近有没有新歌。
+
+## 红心 / 取消红心（写操作，必须二次确认）
+
+这会改动用户真实的网易云歌单，**绝不能一句话就直接执行**：
+
+1. 用户说"把这首加进我喜欢的"时，先跑 `astra music liked --like <ref>`（或 `--unlike`）。
+   它**不执行**，只返回 `status: needs_confirmation`、`token` 和 `tracks` 预览。
+2. 把 `tracks` 列给用户看（歌名 + 歌手），明确问一句"要给这几首点红心吗"。
+   `willSkip` 大于 0 时说明有些本来就是红的、会自动跳过。
+3. 用户确认后，用返回的 `token` 执行：`astra music liked --confirm <token>`。令牌 5 分钟有效、只能用一次。
+4. 用户没确认就不要自己往下走；令牌过期要重新生成预览。
+
+**不要**尝试自己拼令牌、也不要跳过确认环节。`willChange` 为 0 时说明没有需要改的，直接告诉用户即可。
 
 ## Pitfalls
 

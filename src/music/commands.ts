@@ -25,6 +25,7 @@ import { probeUrl } from './audio.ts'
 import { accountStatus, beginLogin, logout as logoutSession, pollLogin, waitLogin } from './login.ts'
 import { loadSession, myPlaylists } from './auth.ts'
 import { likedIds, likedStatus, recommendDaily, requireSession, weapiPost } from './account-api.ts'
+import { applyLike, prepareLike } from './like.ts'
 import { toTrack } from './netease.ts'
 
 function qualityOf(value: unknown): Quality {
@@ -619,10 +620,13 @@ const daily: Command = {
 
 const liked: Command = {
   name: 'music liked',
-  summary: '我喜欢的音乐（需要登录）：列出或一键下载',
-  usage: 'astra music liked [--limit 50] [--download] [--check <ref>...]',
+  summary: '我喜欢的音乐（需要登录）：列出 / 下载 / 查红心 / 点红心（写操作需二次确认）',
+  usage: 'astra music liked [--limit 50] [--download] [--check <ref>...] [--like <ref>...] [--unlike <ref>...] [--confirm <token>]',
   notes: [
-    '不带 --check 时列出红心歌单；--check 用来看某几首是否已红心（不传 --check 时那份列表才是全量）',
+    '不带参数时列出红心歌单；--check 查某几首是否已红心',
+    '--like / --unlike 是**写操作**，会改动用户真实的网易云歌单。它不直接执行，只返回预览和一次性令牌；',
+    '  把预览给用户看过、用户同意后，再用 `--confirm <token>` 执行。令牌 5 分钟有效、只能用一次',
+    '已经是目标状态的歌会自动跳过（重复点红心是幂等的，但没必要发请求）',
     '--download 把红心歌单开成后台任务',
   ],
   options: {
@@ -630,10 +634,44 @@ const liked: Command = {
     download: { type: 'boolean', description: '把喜欢的歌开成下载任务' },
     quality: { type: 'string', short: 'q', description: '配合 --download 的请求音质', valueName: 'q' },
     check: { type: 'boolean', description: '把位置参数当作歌曲 ref，查它们是否已红心' },
+    like: { type: 'boolean', description: '把位置参数当作歌曲 ref，准备「点红心」（需 --confirm 确认）' },
+    unlike: { type: 'boolean', description: '把位置参数当作歌曲 ref，准备「取消红心」（需 --confirm 确认）' },
+    confirm: { type: 'string', description: '执行之前预览生成的令牌', valueName: 'token' },
   },
   async run({ positionals, values, signal }) {
     const status = await accountStatus(signal)
     const { session, userId } = requireSession(status.userId, signal)
+
+    // 执行已确认的写操作
+    if (typeof values.confirm === 'string') {
+      const result = await applyLike(values.confirm, session, signal)
+      return {
+        data: { ...result, total: result.changed.length },
+        warnings: result.failedCount > 0 ? [`${result.failedCount} 首没成功，见 changed 里的 error`] : [],
+      }
+    }
+
+    // 准备写操作：只查状态 + 生成令牌，不动账号
+    if (values.like === true || values.unlike === true) {
+      if (values.like === true && values.unlike === true) throw invalidInput('--like 与 --unlike 不能同时给')
+      if (positionals.length === 0) throw invalidInput('需要至少一个歌曲 ref', '例如：astra music liked --like wy:449818741')
+      const action = values.like === true ? 'like' : 'unlike'
+      const ids: string[] = []
+      for (const p of positionals) {
+        const t = await resolveTarget(p)
+        if (t.kind !== 'song') throw invalidInput(`「${p}」不是一首歌的 ref`)
+        if (!ids.includes(t.id)) ids.push(t.id)
+      }
+      const [details, statusMap] = await Promise.all([songDetails(ids, signal), likedStatus(session, ids, signal)])
+      const titles = details.map((t) => ({
+        id: t.id,
+        title: t.title,
+        artists: t.artists,
+        currentlyLiked: statusMap.get(t.id) === true,
+      }))
+      return { data: prepareLike(action, titles) }
+    }
+
     if (values.check === true) {
       if (positionals.length === 0) throw invalidInput('--check 需要至少一个 ref', '例如：astra music liked --check wy:186016')
       const ids: string[] = []
