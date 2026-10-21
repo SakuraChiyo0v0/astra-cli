@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs'
 import path from 'node:path'
 import { homePath } from './paths.ts'
 import { AstraError, invalidInput } from './errors.ts'
+import { QUALITY_NAMES } from '../bili/sign.ts'
 
 export interface ConfigKey {
   key: string
@@ -31,7 +32,13 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (['embed', 'lrc', 'both', 'none'].includes(v) ? null : '只能是 embed / lrc / both / none') },
   { key: 'music.wordLyric', description: '逐字歌词：auto（从酷狗取，时长对不上就跳过）/ off', default: 'auto',
     validate: (v) => (['auto', 'off'].includes(v) ? null : '只能是 auto / off') },
-  { key: 'music.ffmpeg', description: 'ffmpeg 可执行文件路径；留空则从 PATH 查找', default: '' },
+  { key: 'music.ffmpeg', description: 'ffmpeg 可执行文件路径（B 站合并音视频也用它）；留空则从 PATH 查找', default: '' },
+  { key: 'bili.dir', description: '视频根目录（绝对路径）；环境变量 ASTRA_VIDEO_DIR 优先', default: '',
+    validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
+  { key: 'bili.template', description: '视频落盘模板，变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}',
+    default: '{uploader}/{title}/{page:02} {part}.{ext}' },
+  { key: 'bili.quality', description: '默认请求画质：4k / 1080p60 / 1080p / 720p / 480p / 360p（未登录会被服务端封顶 360P）', default: '1080p',
+    validate: (v) => ([...Object.values(QUALITY_NAMES)].includes(v) || /^\d+$/.test(v) ? null : '画质名或 qn 数字') },
   { key: 'music.concurrency', description: '批量下载并发数 1..4', default: '2',
     validate: (v) => (/^[1-4]$/.test(v) ? null : '只能是 1..4') },
   { key: 'notify.feishu_webhook', description: '后台任务结束时推送到飞书群机器人的 webhook 地址；环境变量 ASTRA_FEISHU_WEBHOOK 优先', default: '',
@@ -108,4 +115,13 @@ export function musicRoot(): string {
   const configured = getConfig('music.dir')
   if (configured) return configured
   return homePath('music')
+}
+
+/** 视频根目录：`ASTRA_VIDEO_DIR` > `bili.dir` > `<ASTRA_HOME>/video`。 */
+export function mediaRoot(): string {
+  const fromEnv = process.env.ASTRA_VIDEO_DIR
+  if (fromEnv && fromEnv.trim()) return path.resolve(fromEnv)
+  const configured = getConfig('bili.dir')
+  if (configured) return configured
+  return homePath('video')
 }
