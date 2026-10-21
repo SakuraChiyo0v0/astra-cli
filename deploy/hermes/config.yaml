@@ -25,3 +25,7 @@ skills:
 
 # 共享群聊里每人一份会话
 group_sessions_per_user: true
+
+# 官方镜像默认禁止按需装依赖（HERMES_DISABLE_LAZY_INSTALLS）；飞书适配器要 lark_oapi，允许一次
+security:
+  allow_lazy_installs: true

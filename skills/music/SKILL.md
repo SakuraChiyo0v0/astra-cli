@@ -1,7 +1,7 @@
 ---
 name: astra-music
 description: Download songs, albums and playlists to the NAS.
-version: 0.1.2
+version: 0.1.3
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]

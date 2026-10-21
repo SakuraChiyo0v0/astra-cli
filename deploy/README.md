@@ -28,6 +28,16 @@ astra 是单文件 `dist/astra.mjs`，Hermes 官方镜像自带 Node（≥ 24，
 
 音乐目录单独用 `astra/` 子目录，不和 music-web 的 `wy/` 混在一起。
 
+## 镜像：为什么要自己 build
+
+官方镜像**装不了**飞书 SDK，必须用同目录的 Dockerfile 派生一层：
+
+- 镜像设了 `HERMES_DISABLE_LAZY_INSTALLS`，运行期按需装依赖被拒（`sync_venv` 静默空跑、`hermes pm install feishu` 报 unknown package）
+- `/opt/hermes` 是 root 所有、运行期只读；venv 里没有 pip，只有 `/opt/hermes/tools/uv-*/uv`
+
+所以 Dockerfile 里用镜像自带的 uv 预装 `lark-oapi==1.6.8`（版本取自 hermes 自己 pyproject 的 feishu extra）。
+改依赖后：`docker compose build && docker compose up -d --force-recreate`。
+
 ## 步骤
 
 1. **飞书应用**（开放平台 → 企业自建应用）
@@ -39,7 +49,7 @@ astra 是单文件 `dist/astra.mjs`，Hermes 官方镜像自带 Node（≥ 24，
 2. **放文件**：按上面目录放好；`data/.env` 填 `OPENAI_API_KEY`（WorkBuddy2API 的 api_key）和飞书三项
 3. **权限**：`HERMES_UID/GID` 要对 `hermes/data`、`astra/home`、`<音乐目录>/astra` 可写
 4. **起容器**：`docker compose up -d`（在 `<部署根>/hermes`）
-5. **导入音源**（进容器执行一次）：
+5. **导入音源**（进容器执行一次。注意用 `sh -c` 而不是 `bash -lc`，登录 shell 会覆盖 PATH）：
    ```sh
    docker exec hermes astra music source add /opt/astra/home/import/qdy.js --id qdy
    docker exec hermes astra doctor
@@ -63,3 +73,12 @@ deepseek-v4-pro / deepseek-v4.1-flash / glm-5.3 / kimi-k3-1 / minimax-m3 / hy3 �
 - Hermes 的 terminal 是 local 后端，能在容器里执行任意命令。容器里只挂了它需要的目录，没有 Docker socket
 - 白名单必须填
 - `data/.env`、`astra/home/` 里有密钥和音源脚本，不要放进共享目录
+
+## 部署时踩过的坑（2026-10-21）
+
+- **WebDAV 上传的文件权限是 000**，挂进容器后 hermes 用户读不到。
+  → 上传完在 NAS 上 `chmod 755` 那几个文件，音乐目录 `chown -R <uid>:<gid>`。
+- **astra 包装脚本要放进 `/opt/data/.local/bin`**：它在容器默认 PATH 里，而 `/opt/astra/bin` 不在；`PATH` 不能通过 .env 改（被 denylist 拦）。
+- **`docker exec ... bash -lc` 会加载登录 profile、把 PATH 换成宿主机的**，测容器内命令要用 `sh -c` 或 `bash -c`。
+- **白名单生效前**：网关会回一条配对提示。把日志里的 `sender=user:ou_...` 填进 `data/.env` 的 `FEISHU_ALLOWED_USERS` 再重启即可，不必走配对审批。
+- **改模型**：改 `data/config.yaml` 的 `model.default` 后要重启容器；重启会让进行中的任务中断（飞书里会看到 shutting down 提示，属正常）。

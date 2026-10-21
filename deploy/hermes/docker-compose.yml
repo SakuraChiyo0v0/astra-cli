@@ -7,7 +7,11 @@
 # - 模型 key、飞书密钥都在 data/.env（Hermes 自己的配置），这里不写明文
 services:
   hermes:
-    image: nousresearch/hermes-agent:${HERMES_TAG:-latest}
+    # 官方镜像 + 飞书 SDK（见同目录 Dockerfile）。首次/更新依赖时：docker compose build
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hermes-feishu:${HERMES_TAG:-latest}
     container_name: hermes
     restart: unless-stopped
     command: ["gateway", "run"]

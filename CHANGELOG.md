@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 — 2026-10-21
+
+- deploy/hermes 增加派生镜像 Dockerfile：官方镜像运行期装不了飞书 SDK，必须预装 lark-oapi
+- 部署文档补上权限、PATH、白名单与换模型的坑
+
 ## 0.1.2 — 2026-10-21
 
 - 部署方案改为 Hermes（飞书长连接）+ astra 同容器，模型走同机 WorkBuddy2API：`deploy/hermes/` 下给出 compose、Hermes 的 config.yaml 与两份 env 模板
