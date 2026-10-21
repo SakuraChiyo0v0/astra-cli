@@ -1,76 +1,15 @@
 /**
- * ffmpeg 调用。
+ * B 站下载用到的 ffmpeg 封装：合并分轨、提取音轨、探测成品。
  *
- * B 站的 DASH 把视频流和音频流分开给，**必须合并**才能得到一个正常播放的文件。
- * 不合并的话得到的是只有画面没声音的 mp4，或者要用户自己装播放器折腾。
- *
- * 也用它读时长/编码做下载后的核验 —— 与音乐那边"只信实测"的原则一致。
+ * 执行器本身在 `media/run.ts`（媒体处理域共用）。
  */
-import { spawn } from 'node:child_process'
 import { AstraError } from '../core/errors.ts'
+import { runFfmpeg, runFfprobe } from '../media/run.ts'
 
-export interface RunResult {
-  code: number
-  stdout: string
-  stderr: string
-}
-
-export function ffmpegPath(configured: string): string {
-  return configured.trim() || 'ffmpeg'
-}
-
-export function ffprobePath(configured: string): string {
-  const ffmpeg = ffmpegPath(configured)
-  // 配了绝对路径时，ffprobe 通常在同目录
-  if (ffmpeg.includes('/') || ffmpeg.includes('\\')) return ffmpeg.replace(/ffmpeg(\.exe)?$/i, (m) => m.replace(/ffmpeg/i, 'ffprobe'))
-  return 'ffprobe'
-}
-
-function run(bin: string, args: string[], signal?: AbortSignal, timeoutMs = 300_000): Promise<RunResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { windowsHide: true })
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const timer = setTimeout(() => {
-      if (settled) return
-      settled = true
-      child.kill('SIGKILL')
-      reject(new AstraError('FFMPEG_TIMEOUT', `${bin} 超过 ${Math.round(timeoutMs / 1000)} 秒没结束`, { exitCode: 5, retryable: true }))
-    }, timeoutMs)
-    const onAbort = (): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      child.kill('SIGKILL')
-      reject(new AstraError('CANCELLED', '已取消', { exitCode: 130 }))
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-    child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    child.on('error', (err) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-      reject(new AstraError('FFMPEG_MISSING', `找不到 ${bin}：${err.message}`, {
-        exitCode: 3,
-        hint: '装 ffmpeg，或用 `astra config set music.ffmpeg <绝对路径>` 指定',
-      }))
-    })
-    child.on('close', (code) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-      resolve({ code: code ?? -1, stdout, stderr })
-    })
-  })
-}
+export { ffmpegPath, ffprobePath } from '../media/run.ts'
 
 /** 把分轨的音视频合成一个文件。`-c copy` 不重编码，快且无损。 */
 export async function mux(video: string, audio: string | null, output: string, configured: string, signal?: AbortSignal): Promise<void> {
-  const bin = ffmpegPath(configured)
   const args = ['-hide_banner', '-loglevel', 'error', '-y']
   args.push('-i', video)
   if (audio) args.push('-i', audio)
@@ -78,7 +17,7 @@ export async function mux(video: string, audio: string | null, output: string, c
   if (audio) args.push('-map', '1:a:0')
   // mp4 里放不了某些 codec 的原生封装（例如 AV1 的某些 annexb），有明显兼容问题就转封装
   args.push('-movflags', '+faststart', output)
-  const result = await run(bin, args, signal)
+  const result = await runFfmpeg(configured, args, signal)
   if (result.code !== 0) {
     throw new AstraError('FFMPEG_FAILED', `ffmpeg 合并失败（退出码 ${result.code}）：${result.stderr.trim().slice(0, 300)}`, { exitCode: 5 })
   }
@@ -86,11 +25,10 @@ export async function mux(video: string, audio: string | null, output: string, c
 
 /** 只提取音轨（用于 --audio-only）。 */
 export async function extractAudio(input: string, output: string, configured: string, signal?: AbortSignal): Promise<void> {
-  const bin = ffmpegPath(configured)
   // 音频流本来就是 m4a(aac) 时直接 copy，不是就转 aac
-  const result = await run(bin, ['-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-vn', '-c:a', 'copy', output], signal)
+  const result = await runFfmpeg(configured, ['-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-vn', '-c:a', 'copy', output], signal)
   if (result.code === 0) return
-  const transcode = await run(bin, ['-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-vn', '-c:a', 'aac', '-b:a', '192k', output], signal)
+  const transcode = await runFfmpeg(configured, ['-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-vn', '-c:a', 'aac', '-b:a', '192k', output], signal)
   if (transcode.code !== 0) {
     throw new AstraError('FFMPEG_FAILED', `ffmpeg 提取音轨失败：${transcode.stderr.trim().slice(0, 300)}`, { exitCode: 5 })
   }
@@ -106,8 +44,7 @@ export interface ProbeResult {
 
 /** 读实际时长与流信息，判断成品是不是正常。 */
 export async function probe(file: string, configured: string, signal?: AbortSignal): Promise<ProbeResult> {
-  const bin = ffprobePath(configured)
-  const result = await run(bin, ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height', '-of', 'json', file], signal, 60_000)
+  const result = await runFfprobe(configured, ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height', '-of', 'json', file], signal, 60_000)
   if (result.code !== 0) {
     // ffprobe 不在时不让整个下载失败：返回空，调用方当作"未知"
     return { durationSec: null, videoCodec: null, audioCodec: null, width: null, height: null }

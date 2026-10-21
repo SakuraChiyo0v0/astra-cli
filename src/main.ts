@@ -16,6 +16,7 @@ import { astraHome } from './core/paths.ts'
 import { closeDb } from './core/db.ts'
 import { musicCommands } from './music/commands.ts'
 import { biliCommands } from './bili/commands.ts'
+import { mediaCommands } from './media/commands.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
 
@@ -118,7 +119,7 @@ const versionCmd: Command = {
   },
 }
 
-const commands: Command[] = [help, versionCmd, doctor, configCmd, notifyTest, ...musicCommands, ...biliCommands]
+const commands: Command[] = [help, versionCmd, doctor, configCmd, notifyTest, ...musicCommands, ...biliCommands, ...mediaCommands]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
 export function route(argv: string[]): { command: Command; rest: string[] } | null {

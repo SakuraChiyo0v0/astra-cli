@@ -12,7 +12,8 @@
 | 能力域 | 能做什么 | 命令数 |
 |-|-|-|
 | **音乐**（网易云） | 找歌 → 判断版本 → 取最高音质 → 写标签/封面/歌词 → 存进曲库 | 30 |
-| **B 站** | 视频 / 分 P / 收藏夹 / 合集下载，音视频合并，字幕 | 13 |
+| **B 站** | 视频 / 分 P / 收藏夹 / 合集下载，音视频合并，字幕，弹幕，热门 | 16 |
+| **媒体处理** | 抽音轨、裁剪、转码、截图（对本地文件） | 5 |
 | 基础设施 | 统一输出、配置、飞书通知、自检 | 5 |
 
 规模：48 条命令（不含内部 worker），约 7600 行 TS，16 个测试文件 91 项测试。
@@ -39,7 +40,24 @@ astra bili get <链接> --audio-only        # 只要音频
 astra bili bulk fav:123456 --limit 20    # 收藏夹批量
 astra bili info <链接> --probe            # 看实际能拿到什么画质
 astra bili subtitle <链接>                # 字幕转 srt
+astra bili danmaku <链接>                 # 弹幕转 ASS
+astra bili popular --limit 10             # 综合热门
+astra bili weekly                          # 每周必看
 ```
+
+### 媒体处理
+
+对**已下载到本地**的文件加工，不联网：
+
+```sh
+astra media info <文件>                    # 时长 / 编码 / 分辨率 / 码率 / 帧率
+astra media audio <视频> --format mp3      # 抽音轨
+astra media cut <文件> --start 10 --duration 5   # 裁剪
+astra media transcode <文件> --width 720   # 转码 / 改分辨率
+astra media thumbnail <视频> --at 30       # 截一帧当封面
+```
+
+输出路径**绝不会等于输入**——这是硬约束，`--overwrite` 也绕不过。默认不覆盖已存在的文件。
 
 DASH 的音视频是**分开的两个流**，下完用 ffmpeg 合并 —— 所以 B 站能力需要 ffmpeg（音乐那边不需要）。
 
@@ -107,4 +125,5 @@ docs/        归档（每件事的"踩过的坑"）、PLAN（进度与待办）
 ## 还可以做什么
 
 大多数能力在 [astrahub](../astrahub/) 里已经有实现可以借鉴，对照见 [docs/astrahub-对照.md](docs/astrahub-对照.md)。
-最值得补的：B 站弹幕、热门/每周必看、稍后再看、媒体处理（剪裁/转码/抽音轨）。
+最近补完的是 B 站弹幕 / 热门 / 每周必看和整个媒体处理域。
+还值得做的：B 站稍后再看（需登录）、图片处理、媒体拼接与水印。

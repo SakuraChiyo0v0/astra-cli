@@ -9,18 +9,30 @@ import { getConfig } from '../core/config.ts'
 import type { Command } from '../core/command.ts'
 import { homePath } from '../core/paths.ts'
 import { renderQrText, writeQrPng } from '../core/qr.ts'
-import { biliSessionDigest, clearBiliSession, fetchBiliAccount, loadBiliSession, pollBiliQr, saveBiliSession, startBiliQr } from './auth.ts'
+import { biliSessionDigest, clearBiliSession, cookieHeader, fetchBiliAccount, loadBiliSession, pollBiliQr, saveBiliSession, startBiliQr } from './auth.ts'
 import { playInfo, subtitleList, videoInfo, type VideoInfo } from './api.ts'
 import { downloadPage } from './download.ts'
 import { probe } from './ffmpeg.ts'
 import { QUALITY_NAMES, QUALITY_ORDER, qualityName } from './sign.ts'
 import { parseBiliTarget } from './target.ts'
 import { parseCollectionRef, fetchFavorite, readSeason } from './collection.ts'
+import { danmakuToAss, fetchDanmaku } from './danmaku.ts'
+import { popular as fetchPopular, weeklyIssues as fetchWeeklyIssues, weeklyOne as fetchWeeklyOne } from './discover.ts'
+import { httpRequest } from '../core/http.ts'
+
+import { mediaRoot } from '../core/config.ts'
+import path from 'node:path'
+import { sanitizeSegment } from '../core/template.ts'
 import { BILI_DOMAIN, biliJobItems, qualitySummary } from './jobs.ts'
 import { cancelJob, createJob, getJob, listJobs, resumeJob, runWorker, spawnWorker, statusLabel } from '../core/jobs.ts'
 import { readFileSync, writeFileSync, existsSync, rmSync, chmodSync } from 'node:fs'
 
 const PENDING_TTL_MS = 3 * 60 * 1000
+
+/** 文件名净化：复用 core/template 的规则，别自己再写一套。 */
+function safeFile(text: string): string {
+  return sanitizeSegment(text, 80)
+}
 
 interface Pending { qrcodeKey: string; url: string; startedAt: number }
 
@@ -516,5 +528,131 @@ const workerCmd: Command = {
   },
 }
 
-export const biliCommands: Command[] = [get, info, subtitle, bulk, jobCmd, jobList, jobCancel, jobResume, workerCmd, loginStart, loginPoll, account, logout, doctor]
+const danmaku: Command = {
+  name: 'bili danmaku',
+  summary: '下载弹幕并存成 ASS 字幕（可跟着视频一起看）',
+  usage: 'astra bili danmaku <BV号|链接> [--page 1] [--out 路径] [--raw] [--max 3]',
+  notes: [
+    '默认转成 ASS（带颜色、描边、滚动效果），和视频放一起改成同名即被播放器自动加载',
+    '--raw 存原始 XML（不转换，体积更小但播放器不认）',
+    '默认只保留滚动弹幕，过滤底部/顶部固定弹幕；同一时间窗最多合并 3 条，避免刷屏',
+  ],
+  options: {
+    page: { type: 'string', description: '分 P，默认 1', valueName: 'n' },
+    out: { type: 'string', description: '输出路径（.ass 或 .xml）', valueName: 'path' },
+    raw: { type: 'boolean', description: '存原始 XML 而不是 ASS' },
+    max: { type: 'string', description: '每条字幕最多几条弹幕，默认 3', valueName: 'n' },
+    all: { type: 'boolean', description: '保留顶部/底部固定弹幕（默认只留滚动的）' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const target = await parseBiliTarget(positionals[0]!, signal)
+    if (target.kind !== 'video') throw invalidInput('需要一个视频的 BV 号或链接')
+    const info = await videoInfo(target.bvid, signal)
+    const index = Math.max(0, Number(values.page ?? '1') - 1)
+    const page = info.pages[index]
+    if (!page) throw invalidInput(`没有第 ${index + 1} 个分 P`, `这个视频有 ${info.pages.length} 个分 P`)
+
+    const items = await fetchDanmaku(page.cid, {
+      scrollOnly: values.all !== true,
+      ...(signal ? { signal } : {}),
+    })
+    if (items.length === 0) {
+      return { data: { bvid: info.bvid, page: page.page, count: 0, output: null }, warnings: ['这个分 P 没有弹幕'] }
+    }
+
+    const dir = mediaRoot()
+    const base = path.join(dir, info.owner.name || '未知UP', info.title)
+    const suffix = info.pages.length > 1 ? `-P${page.page}` : ''
+    const raw = values.raw === true
+    const output = typeof values.out === 'string' && values.out
+      ? values.out
+      : path.join(base, `${safeFile(info.title)}${suffix}.${raw ? 'xml' : 'ass'}`)
+
+    const maxPerLine = Math.max(1, Math.min(10, Number(values.max ?? '3') || 3))
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    await mkdir(path.dirname(output), { recursive: true })
+    if (raw) {
+      // 原始 XML 用接口原文，不重新拼
+      const session = loadBiliSession()
+      const response = await httpRequest(`https://api.bilibili.com/x/v1/dm/list.so?oid=${page.cid}`, {
+        headers: {
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0',
+          referer: 'https://www.bilibili.com/',
+          ...(session ? { cookie: cookieHeader(session) } : {}),
+        },
+        timeoutMs: 20_000,
+        retries: 1,
+      })
+      await writeFile(output, await response.text(), 'utf8')
+    } else {
+      await writeFile(output, danmakuToAss(items, {
+        width: 1920,
+        height: 1080,
+        maxPerLine,
+        maxItems: 1200,
+      }), 'utf8')
+    }
+    return {
+      data: {
+        bvid: info.bvid,
+        page: page.page,
+        title: info.title,
+        count: items.length,
+        format: raw ? 'xml' : 'ass',
+        output,
+        hint: raw ? null : '把文件改成和视频同名（如 `01 xxx.ass`）放在同一目录，播放器会自动加载',
+      },
+    }
+  },
+}
+
+const popular: Command = {
+  name: 'bili popular',
+  summary: '综合热门：列出当前热门视频',
+  usage: 'astra bili popular [--limit 20]',
+  notes: ['每项带 bvid，可以直接 `astra bili get <bvid>` 下载'],
+  options: { limit: { type: 'string', short: 'n', description: '默认 20，最多 50', valueName: 'n' } },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const limit = Math.max(1, Math.min(50, Number(values.limit ?? '20') || 20))
+    const items = await fetchPopular(limit, signal)
+    return { data: { total: items.length, items: items.map((v) => ({ ...v, duration: formatDuration(v.durationSec) })) } }
+  },
+}
+
+const weekly: Command = {
+  name: 'bili weekly',
+  summary: '每周必看：列出某一期（默认最新）的视频',
+  usage: 'astra bili weekly [--issue 394] [--list]',
+  notes: ['--list 只列期数；不给 --issue 时取最新一期'],
+  options: {
+    issue: { type: 'string', description: '期数编号', valueName: 'n' },
+    list: { type: 'boolean', description: '只列所有期数，不取具体视频' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    if (values.list === true) {
+      const issues = await fetchWeeklyIssues(signal)
+      return { data: { total: issues.length, issues: issues.slice(0, 50) } }
+    }
+    const issue = values.issue === undefined ? null : Number(values.issue)
+    if (issue !== null && (!Number.isInteger(issue) || issue < 1)) throw invalidInput('--issue 必须是正整数')
+    const result = await fetchWeeklyOne(issue, signal)
+    return {
+      data: {
+        issue: result.issue,
+        total: result.items.length,
+        items: result.items.map((v) => ({ ...v, duration: formatDuration(v.durationSec) })),
+      },
+    }
+  },
+}
+
+export const biliCommands: Command[] = [
+  get, info, subtitle, danmaku, popular, weekly, bulk,
+  jobCmd, jobList, jobCancel, jobResume, workerCmd,
+  loginStart, loginPoll, account, logout, doctor,
+]
 export { QUALITY_ORDER }
