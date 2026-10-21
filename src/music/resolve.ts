@@ -18,6 +18,7 @@ import type { LoadedLxSource, LxMusicInfo } from '../lx/host.ts'
 import type { LxSourceRecord } from '../lx/store.ts'
 import { probeUrl, qualityRank, qualitySatisfied, type Probe, type Quality } from './audio.ts'
 import { findOnKuwo } from './kuwo.ts'
+import { normalize } from './match.ts'
 import type { Track } from './netease.ts'
 
 export interface ResolvedUrl {
@@ -55,6 +56,34 @@ export function musicInfoOf(track: Track): LxMusicInfo {
   }
 }
 
+/**
+ * 探测出的真实时长与网易云记录差多少秒（只有 FLAC 能从头部精确算出；其它格式返回 null 表示不知道）。
+ *
+ * 实测（2026-10-21，NAS 上）：アイドル 的酷我"同曲"FLAC 是 261 秒，网易云记录 213 秒 —— 酷我搜索结果里
+ * 写的 DURATION 是 213，但直链指向的是另一个版本。只信搜索结果的时长不够，要在拿到文件头后再核一次。
+ */
+export function durationGap(probe: Probe, track: Track): number | null {
+  if (!probe.flac || probe.flac.sampleRate <= 0 || probe.flac.totalSamples <= 0 || !track.durationMs) return null
+  return Math.abs(probe.flac.totalSamples / probe.flac.sampleRate - track.durationMs / 1000)
+}
+
+export const MAX_DURATION_GAP_SECONDS = 10
+
+/**
+ * 文件自带标题和要的歌明显不是一首时返回自带标题，否则 null。
+ * 去掉附注后互不包含才判不同，并且也和网易云的别名 / 译名比一遍（自带标签可能用的是中文译名）。
+ */
+export function identityMismatch(probe: Probe, track: Track): string | null {
+  const title = probe.embedded?.title
+  if (!title) return null
+  const got = normalize(title.replace(/[(（[【].*?[)）\]】]/g, ''))
+  const candidates = [track.title, ...track.aliases, ...track.translations].map((t) => normalize(t.replace(/[(（[【].*?[)）\]】]/g, ''))).filter(Boolean)
+  if (!got || candidates.length === 0) return null
+  if (candidates.some((want) => got.includes(want) || want.includes(got))) return null
+  // 歌手对得上也不放过：实测的错链就是同一歌手的另一首歌
+  return title
+}
+
 /** a 是否比 b 好：先比档位，同档位比码率。 */
 export function better(a: Probe, b: Probe | undefined): boolean {
   if (!b) return true
@@ -85,7 +114,9 @@ async function tryRoute(
     if (!declared) continue
     // 只有"能用的"地址才记下来去重：坏地址（404 等）换档位后可能指向别的东西，不能据此提前放弃
     const seenUrls = new Set<string>()
+    let rejected = false
     for (const q of ladder(requested)) {
+      if (rejected) break
       if (state.best && qualityRank(q) > qualityRank(state.best.probe.quality)) break
       for (const alias of qualityAliases(q, declared)) {
         if (signal?.aborted) throw new AstraError('CANCELLED', '已取消', { exitCode: 130 })
@@ -113,6 +144,22 @@ async function tryRoute(
         if (probe.problem) {
           attempts.push(`${tag}: ${probe.problem}`)
           continue
+        }
+        const otherSong = identityMismatch(probe, track)
+        if (otherSong !== null) {
+          attempts.push(`${tag}: 文件自带标题是「${otherSong}」，不是这首歌，放弃这条路线`)
+          progress('music.url.rejected', { route: route.platform, source: record.id, reason: 'identity', embeddedTitle: otherSong })
+          rejected = true
+          break
+        }
+        const gap = durationGap(probe, track)
+        if (gap !== null && gap > MAX_DURATION_GAP_SECONDS) {
+          // 不是同一个版本。同一个音源对同一个 id 的其它档位也是这个版本（实测 320k MP3 同样 261 秒），
+          // 整条路线放弃，换下一个音源 / 路线
+          attempts.push(`${tag}: 时长差 ${Math.round(gap)} 秒，不是同一版本，放弃这条路线`)
+          progress('music.url.rejected', { route: route.platform, source: record.id, reason: 'duration', gapSeconds: Math.round(gap) })
+          rejected = true
+          break
         }
         seenUrls.add(key)
         attempts.push(`${tag}: ${probe.format} ${probe.quality}${probe.bps ? ` ${Math.round(probe.bps / 1000)}kbps` : ''}`)

@@ -48,6 +48,8 @@ export interface JobItemView {
   quality: string | null
   path: string | null
   error: string | null
+  /** 成功但值得一提的事，比如"请求 flac，音源只给到 128k"。 */
+  note: string | null
 }
 
 interface JobRow {
@@ -113,6 +115,7 @@ function toView(row: JobRow): JobView {
 }
 
 function itemView(row: ItemRow): JobItemView {
+  const failed = row.status === 'failed'
   return {
     seq: row.seq,
     id: row.native_id,
@@ -121,7 +124,9 @@ function itemView(row: ItemRow): JobItemView {
     status: row.status as ItemStatus,
     quality: row.quality,
     path: row.file_path,
-    error: row.error,
+    // 同一列存两种东西：失败原因，或成功时的提醒（音质降级等）。对外分开，免得 AI 把提醒当失败
+    error: failed ? row.error : null,
+    note: failed ? null : row.error,
   }
 }
 
@@ -279,10 +284,20 @@ async function finish(jobId: string): Promise<void> {
   const lines = [
     `【${job.title}】${statusLabel(job.status)}`,
     `共 ${job.total} 首：新下载 ${job.done}，已有 ${job.skipped}，失败 ${job.failed}`,
+    qualitySummary(items ?? []),
     ...failed.slice(0, 5).map((i) => `✗ ${i.title} - ${i.artists.join('/')}：${i.error ?? ''}`),
     failed.length > 5 ? `…另有 ${failed.length - 5} 首失败，详见 astra music job ${job.id}` : '',
   ].filter(Boolean)
   await notify(lines.join('\n'))
+}
+
+/** "音质：24bit 3 / flac 2 / 128k 5"。热歌榜实测大半只有 128k，用户应该知道。 */
+export function qualitySummary(items: JobItemView[]): string {
+  const counts = new Map<string, number>()
+  for (const i of items) if ((i.status === 'done' || i.status === 'skipped') && i.quality) counts.set(i.quality, (counts.get(i.quality) ?? 0) + 1)
+  if (counts.size === 0) return ''
+  const order = ['24bit', 'flac', '320k', '128k']
+  return '音质：' + [...counts].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([q, n]) => `${q} ${n}`).join(' / ')
 }
 
 export function statusLabel(status: JobStatus): string {

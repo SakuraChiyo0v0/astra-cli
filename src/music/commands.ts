@@ -13,7 +13,7 @@ import { artistTopTracks, albumInfo, playlistTracks, searchCollection, searchSon
 import { resolveTarget } from './target.ts'
 import { downloadTrack } from './download.ts'
 import { findTrack, forgetTrack, libraryStats, searchLibrary } from './library.ts'
-import { cancelJob, createJob, getJob, listJobs, resumeJob, runWorker, spawnWorker, statusLabel } from './jobs.ts'
+import { cancelJob, createJob, getJob, listJobs, qualitySummary, resumeJob, runWorker, spawnWorker, statusLabel } from './jobs.ts'
 import { addSource, listSources, loadEnabledSources, orphanScripts, removeSource, setSourceEnabled } from '../lx/store.ts'
 import { musicInfoOf } from './resolve.ts'
 import { probeUrl } from './audio.ts'
@@ -278,9 +278,17 @@ const job: Command = {
       await new Promise((resolve) => setTimeout(resolve, 2000))
       snapshot = getJob(id, false)
     }
-    const full = getJob(id, values.items === true || values.failed === true)
+    const full = getJob(id, true)
     const items = values.failed === true ? full.items?.filter((i) => i.status === 'failed') : full.items
-    return { data: { ...full.job, statusLabel: statusLabel(full.job.status), ...(items ? { items } : {}) } }
+    return {
+      data: {
+        ...full.job,
+        statusLabel: statusLabel(full.job.status),
+        quality: qualitySummary(full.items ?? []) || null,
+        requestedQuality: full.job.quality,
+        ...(values.items === true || values.failed === true ? { items } : {}),
+      },
+    }
   },
 }
 

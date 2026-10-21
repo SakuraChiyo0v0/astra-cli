@@ -4,7 +4,9 @@ import { parseTarget } from '../src/music/target.ts'
 import { renderTemplate, resolveInside, sanitizeSegment } from '../src/music/paths.ts'
 import { mergeLrc } from '../src/music/download.ts'
 import { beijingDate } from '../src/music/netease.ts'
-import { ladder } from '../src/music/resolve.ts'
+import { durationGap, identityMismatch, ladder, MAX_DURATION_GAP_SECONDS } from '../src/music/resolve.ts'
+import { summarize } from '../src/music/audio.ts'
+import { readFileSync } from 'node:fs'
 
 test('目标解析：ref / 数字 id / 各种网易云链接 / 关键词', () => {
   assert.deepEqual(parseTarget('wy:186016'), { kind: 'song', id: '186016' })
@@ -51,6 +53,34 @@ test('网易云发行时间按北京时间取日期', () => {
   // 1681228800000 = 2023-04-11T16:00:00Z = 北京时间 2023-04-12 00:00
   assert.equal(beijingDate(1681228800000), '2023-04-12')
   assert.equal(beijingDate(null), null)
+})
+
+test('时长核对：FLAC 头部算出的时长与网易云差太多就不是同一版本', () => {
+  const head = readFileSync(new URL('./fixtures/tone.flac', import.meta.url))
+  const probe = summarize(head, head.length, null)
+  const track = { durationMs: 1000 } as Parameters<typeof durationGap>[1]
+  assert.ok((durationGap(probe, track) ?? 99) < 0.1)
+  // 实测 アイドル：酷我 FLAC 261 秒，网易云 213 秒
+  assert.ok((durationGap(probe, { ...track, durationMs: 60_000 }) ?? 0) > MAX_DURATION_GAP_SECONDS)
+  // MP3 算不出精确时长 → 不知道，不拦
+  assert.equal(durationGap(summarize(readFileSync(new URL('./fixtures/tone.mp3', import.meta.url)), 17195, 1000), track), null)
+})
+
+test('身份核对：文件自带标题是另一首歌就拦下（实测 アイドル 拿到了 夜に駆ける）', () => {
+  const idol = { title: 'アイドル', artists: ['YOASOBI'], aliases: ['TV动画《我推的孩子》片头曲'], translations: ['偶像'], durationMs: 1000 } as Parameters<typeof identityMismatch>[1]
+  for (const name of ['wrong-title.flac', 'wrong-title.mp3']) {
+    const head = readFileSync(new URL(`./fixtures/${name}`, import.meta.url))
+    const probe = summarize(head, head.length, 1000)
+    assert.equal(probe.embedded?.title, '夜に駆ける', name)
+    assert.equal(identityMismatch(probe, idol), '夜に駆ける', name)
+    // 要的就是 夜に駆ける 时不拦
+    assert.equal(identityMismatch(probe, { ...idol, title: '夜に駆ける', aliases: [], translations: [] }), null, name)
+  }
+  // 自带标题带附注 / 用译名都不算错
+  const base = summarize(readFileSync(new URL('./fixtures/tone.flac', import.meta.url)), 20669, 1000)
+  assert.equal(identityMismatch({ ...base, embedded: { title: 'アイドル (TV Size)', artist: null } }, idol), null)
+  assert.equal(identityMismatch({ ...base, embedded: { title: '偶像', artist: null } }, idol), null)
+  assert.equal(identityMismatch({ ...base, embedded: null }, idol), null)
 })
 
 test('音质阶梯：从请求档位往下', () => {

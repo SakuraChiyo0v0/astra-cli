@@ -68,6 +68,8 @@ export interface Probe {
   bps: number | null
   quality: Quality
   flac: FlacInfo | null
+  /** 文件自带的标题 / 歌手（读得到时）。 */
+  embedded: { title: string | null; artist: string | null } | null
   /** 不可用时的原因。 */
   problem: string | null
 }
@@ -79,7 +81,13 @@ export function summarize(head: Buffer, totalBytes: number | null, durationMs: n
   if (flac && flac.totalSamples > 0 && flac.sampleRate > 0) seconds = flac.totalSamples / flac.sampleRate
   const bps = seconds && totalBytes && totalBytes > 0 ? Math.round((totalBytes * 8) / seconds) : null
   const problem = format === 'unknown' ? describeNonAudio(head) : null
-  return { format, bytes: totalBytes, bps, quality: inferQuality(format, bps, flac), flac, problem }
+  let embedded: Probe['embedded'] = null
+  try {
+    embedded = embeddedIdentity(head)
+  } catch {
+    // 标签残缺不影响判断
+  }
+  return { format, bytes: totalBytes, bps, quality: inferQuality(format, bps, flac), flac, embedded, problem }
 }
 
 function describeNonAudio(head: Buffer): string {
@@ -98,7 +106,7 @@ export async function probeUrl(url: string, durationMs: number | null, signal?: 
   const status = response.status
   if (status >= 400) {
     await response.body?.cancel()
-    return { format: 'unknown', bytes: null, bps: null, quality: '128k', flac: null, problem: `直链返回 HTTP ${status}`, status }
+    return { format: 'unknown', bytes: null, bps: null, quality: '128k', flac: null, embedded: null, problem: `直链返回 HTTP ${status}`, status }
   }
   const head = Buffer.from(await response.arrayBuffer()).subarray(0, 65536)
   const range = response.headers.get('content-range')
@@ -118,6 +126,73 @@ export async function probeFile(file: string, durationMs: number | null): Promis
   } finally {
     await handle.close()
   }
+}
+
+/**
+ * 读文件自带的标题 / 歌手（FLAC Vorbis Comment 或 ID3v2 的 TIT2 / TPE1），用来核对"拿到的是不是这首歌"。
+ *
+ * 实测（2026-10-21）：酷我经 qdy 给的 アイドル FLAC，自带标签是 TITLE=夜に駆ける —— 直链指向了别的歌。
+ * 只拿得到前 64KB，读不到就返回 null，不当失败。
+ */
+export function embeddedIdentity(head: Buffer): { title: string | null; artist: string | null } | null {
+  const format = detectFormat(head)
+  if (format === 'flac') {
+    let offset = head.indexOf('fLaC', 0, 'latin1')
+    if (offset < 0) return null
+    offset += 4
+    for (let guard = 0; guard < 64 && offset + 4 <= head.length; guard += 1) {
+      const header = head[offset]!
+      const length = (head[offset + 1]! << 16) | (head[offset + 2]! << 8) | head[offset + 3]!
+      if ((header & 0x7f) === 4) {
+        const data = head.subarray(offset + 4, offset + 4 + length)
+        if (data.length < length) return null
+        const comments = new Map<string, string>()
+        let p = 4 + data.readUInt32LE(0)
+        const count = data.readUInt32LE(p)
+        p += 4
+        for (let i = 0; i < count && p + 4 <= data.length; i += 1) {
+          const len = data.readUInt32LE(p)
+          const entry = data.subarray(p + 4, p + 4 + len).toString('utf8')
+          p += 4 + len
+          const eq = entry.indexOf('=')
+          if (eq > 0) {
+            const key = entry.slice(0, eq).toUpperCase()
+            if (!comments.has(key)) comments.set(key, entry.slice(eq + 1))
+          }
+        }
+        return { title: comments.get('TITLE') ?? null, artist: comments.get('ARTIST') ?? null }
+      }
+      if (header & 0x80) break
+      offset += 4 + length
+    }
+    return null
+  }
+  if (format === 'mp3' && head.subarray(0, 3).toString('latin1') === 'ID3') {
+    const version = head[3]!
+    const tagEnd = 10 + (((head[6]! & 0x7f) << 21) | ((head[7]! & 0x7f) << 14) | ((head[8]! & 0x7f) << 7) | (head[9]! & 0x7f))
+    const found: Record<string, string> = {}
+    let p = 10
+    while (p + 10 <= Math.min(tagEnd, head.length)) {
+      const id = head.subarray(p, p + 4).toString('latin1')
+      if (!/^[A-Z0-9]{4}$/.test(id)) break
+      const size = version >= 4
+        ? ((head[p + 4]! & 0x7f) << 21) | ((head[p + 5]! & 0x7f) << 14) | ((head[p + 6]! & 0x7f) << 7) | (head[p + 7]! & 0x7f)
+        : head.readUInt32BE(p + 4)
+      if ((id === 'TIT2' || id === 'TPE1') && p + 10 + size <= head.length) found[id] = decodeId3Text(head.subarray(p + 10, p + 10 + size))
+      p += 10 + size
+    }
+    return { title: found.TIT2 ?? null, artist: found.TPE1 ?? null }
+  }
+  return null
+}
+
+function decodeId3Text(body: Buffer): string {
+  const encoding = body[0]
+  const raw = body.subarray(1)
+  const text = encoding === 1 || encoding === 2
+    ? new TextDecoder(encoding === 2 ? 'utf-16be' : 'utf-16').decode(raw)
+    : encoding === 3 ? raw.toString('utf8') : raw.toString('latin1')
+  return text.replace(/\u0000+$/, '').split('\u0000')[0]!.trim()
 }
 
 export function extensionFor(format: AudioFormat): string {

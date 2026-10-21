@@ -25,6 +25,12 @@ export function failResult(err: AstraError): Fail {
   return { ok: false, error }
 }
 
+// 读端提前关闭（`astra ... | head`）时 stdout 会报 EPIPE；结果已经没人要了，安静退出而不是崩出一屏堆栈
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') process.exit(process.exitCode ?? 0)
+  throw err
+})
+
 export function writeJson(value: unknown, pretty: boolean): void {
   process.stdout.write(JSON.stringify(value, null, pretty ? 2 : undefined) + '\n')
 }
