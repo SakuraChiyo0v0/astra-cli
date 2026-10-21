@@ -26,7 +26,7 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   { key: 'music.quality', description: '默认请求音质：128k / 320k / flac / 24bit（实际以文件实测为准）', default: 'flac',
     validate: (v) => (QUALITIES.includes(v) ? null : `只能是 ${QUALITIES.join(' / ')}`) },
-  { key: 'music.template', description: '落盘路径模板，变量 {artist} {primary_artist} {albumartist} {album} {title} {year} {track} {disc} {ext}，支持 {track:02}',
+  { key: 'music.template', description: '落盘路径模板，变量 {artist}（逗号分隔全部）{artist_list}（分号分隔）{primary_artist}（第一位）{albumartist} {album} {title} {year} {track} {disc} {source} {ext}，支持 {track:02}',
     default: '{albumartist}/{album}/{track:02} {title}.{ext}' },
   { key: 'music.compilation-dir', description: '合辑（专辑歌手是「群星」）的落盘目录，代替模板里的歌手一层；设成 Various Artists 可让播放器按惯例归类', default: '合辑',
     validate: (v) => (v.trim() === '' ? '不能为空' : /[\\/:*?"<>|]/.test(v) ? '目录名里不能有 \\ / : * ? " < > |' : null) },

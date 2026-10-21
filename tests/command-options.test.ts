@@ -39,6 +39,35 @@ test('命令名唯一', () => {
   assert.deepEqual([...new Set(dupes)], [], `重复的命令名：${dupes.join(', ')}`)
 })
 
+/**
+ * 给用户 / AI 的提示里写的命令，必须是能原样执行的。
+ *
+ * 实际踩到：`vr login` 的两步验证提示写 `astra vr login 2fa <code>`，
+ * 照着敲会报「参数太多：2fa 887889」—— 正确写法是 `--code`。
+ * 这类文案错误运行时不会暴露，只有真的照着做才会失败。
+ */
+test('notes / 提示里提到的 --选项必须在对应命令上声明过', async () => {
+  const byName = new Map(all.map((c) => [c.name, c]))
+  const problems: string[] = []
+  for (const command of all) {
+    for (const note of command.notes ?? []) {
+      for (const match of note.matchAll(/astra ([\w ]+?)(?=\s|$|`|，|。)/g)) {
+        const invoked = match[1]!.trim()
+        // 只在命令名能对上时才检查，参数占位符等跳过
+        const target = byName.get(invoked) ?? byName.get(invoked.split(' ').slice(0, 2).join(' '))
+        if (!target) continue
+        const declared = new Set(Object.keys(target.options ?? {}))
+        for (const opt of note.matchAll(/--([a-z0-9-]+)/g)) {
+          if (!declared.has(opt[1]!) && !command.usage.includes(`--${opt[1]}`)) {
+            problems.push(`${command.name} 的 notes 提到 --${opt[1]}，但 ${target.name} 没声明`)
+          }
+        }
+      }
+    }
+  }
+  assert.deepEqual(problems, [], problems.join('\n'))
+})
+
 // 把 main.ts 里的命令也纳入检查（audit 那个 bug 就在 main.ts）
 import { readFileSync } from 'node:fs'
 test('main.ts 里的命令也能被这项检查覆盖', () => {

@@ -24,6 +24,28 @@
   `config list` 里写清 `proxy.include` 留空 = 全部走
 
 
+## 0.12.3 — 2026-10-23
+
+**修合作曲被拆成假歌手目录（P0），以及一批一致性问题**
+
+- **修（P0）**：合作单曲落盘到「Lady Gaga, Bruno Mars」这种假歌手目录。两处一起改：
+  1. 源头：`albumInfo` 优先取专辑的 `artists` 复数字段，而网易云会把**曲目歌手**灌进这个字段。
+     改为单数 `artist` 优先，复数只兜底
+  2. 下游：`albumArtistsFor` 去掉"专辑级有多个就 join"的分支，**永远只返回一位**。
+     只修源头不够 —— 专辑级真的写了多个名字时仍会拼
+  实测 `Lady Gaga/A Star Is Born Soundtrack/12 Shallow.flac`、`Lady Gaga/Die With A Smile/01 ...`
+- **修**：`bili subscribe list` 增加 `ref` 字段，可直接喂给 `collection` / `bulk` / `subscribe add`
+  （原字段 `target` 保留，不打断现有脚本）
+- **修**：`vr login` 两步验证的提示写 `astra vr login 2fa <code>`，照着敲会报「参数太多」。改为 `--code`
+- **修**：`bili bulk` 新增 `--pages 1,3-5`，按分 P 选择性下载（原来只能全下或只下 P1）
+- **新增**：模板变量 `{artist_list}`（分号分隔）与 `{source}`（音源标识）
+- **改进**：`help` 的 conventions 写清两套 status 的区别 —— 单次操作用 `downloaded`，
+  后台任务项用 `done` / `skipped`。混用会静默得到空集合
+- **改进**：订阅的 `quality` 为 null 时输出 `qualityNote`，说明运行时实际用哪个档位
+- 测试：新增合集 ref 三种写法的回归测试（防 `season:<sid>` 再退化）、`--pages` 解析测试、
+  专辑艺术家取值测试
+
+
 ## 0.12.2 — 2026-10-23
 
 **音乐：合辑归到一处，专辑艺术家不再拼一串**

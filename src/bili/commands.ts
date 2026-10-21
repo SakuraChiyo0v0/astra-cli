@@ -28,6 +28,7 @@ import { mediaRoot } from '../core/config.ts'
 import path from 'node:path'
 import { sanitizeSegment } from '../core/template.ts'
 import { BILI_DOMAIN, biliJobItems, qualitySummary } from './jobs.ts'
+import { parsePageSelection } from './pages.ts'
 import { cancelJob, createJob, getJob, listJobs, resumeJob, runWorker, spawnWorker, statusLabel } from '../core/jobs.ts'
 import { readFileSync, writeFileSync, existsSync, rmSync, chmodSync } from 'node:fs'
 
@@ -375,12 +376,12 @@ const doctor: Command = {
 const bulk: Command = {
   name: 'bili bulk',
   summary: '批量下载：收藏夹 / 视频合集 / 一个视频的多个分 P',
-  usage: 'astra bili bulk <fav:id|收藏夹链接|合集链接> [--limit 50] [--quality 1080p] [--all-pages]',
+  usage: 'astra bili bulk <fav:id|收藏夹链接|合集链接|视频链接> [--limit 50] [--quality 1080p] [--all-pages | --pages 1,3-5]',
   notes: [
     '收藏夹：`fav:<id>` 或 favlist 链接（需登录看私密收藏夹）',
     '合集：collectiondetail?sid=<id> 链接，或 `season:<sid>` / `collection:<sid>`',
     '系列：seriesdetail?sid=<id> 链接，或 `series:<mid>/<sid>`',
-    '给普通视频链接时，--all-pages 会把它的所有分 P 都排进任务',
+    '给普通视频链接时，--all-pages 下全部分 P，--pages 1,3-5 只下指定的几个（P 号从 1 开始）',
     '开的是后台任务，用 `astra bili job <id>` 看进度',
     '**不支持按 UP 主主页批量**：B 站的 UP 投稿接口会返回风控页，硬啃只会一直失败',
   ],
@@ -388,6 +389,7 @@ const bulk: Command = {
     limit: { type: 'string', short: 'n', description: '最多取几个视频，默认 50', valueName: 'n' },
     quality: { type: 'string', short: 'q', description: '画质', valueName: 'q' },
     'all-pages': { type: 'boolean', description: '普通视频：把所有分 P 都加进任务' },
+    pages: { type: 'string', description: '普通视频：只下这些分 P，如 1,3-5（P 号从 1 开始，可与 --all-pages 二选一）', valueName: 'list' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -446,13 +448,42 @@ const bulk: Command = {
       }
     }
 
-    if (values['all-pages'] !== true) {
-      throw invalidInput('这个视频没有合集，也不是收藏夹', '想要它的全部分 P 就加 --all-pages')
+    if (values['all-pages'] !== true && values.pages === undefined) {
+      throw invalidInput('这个视频没有合集，也不是收藏夹', '想要它的全部分 P 就加 --all-pages，只想下几个就加 --pages 1,3-5')
     }
-    const items = (await biliJobItems(info.bvid, info.pages.map((_, i) => i), quality))
+    if (values['all-pages'] === true && values.pages !== undefined) {
+      throw invalidInput('--all-pages 和 --pages 只能选一个', '要么全下，要么列出你要的那几个 P')
+    }
+
+    // --pages：用户写的是 P 号（1-based），内部 pageIndex 是 0-based
+    let indexes: number[] | null = null
+    const warnings: string[] = []
+    if (values.pages !== undefined) {
+      let selection
+      try {
+        selection = parsePageSelection(String(values.pages), info.pages.length)
+      } catch (err) {
+        throw invalidInput((err as Error).message)
+      }
+      if (selection.indexes.length === 0) {
+        throw invalidInput(
+          `--pages 里的 P 号都不存在：视频只有 ${info.pages.length} 个分 P`,
+          `可用的 P 号是 1..${info.pages.length}`,
+        )
+      }
+      if (selection.outOfRange.length > 0) {
+        warnings.push(`这些 P 号不存在，已忽略：${selection.outOfRange.join(', ')}（视频只有 ${info.pages.length} 个分 P）`)
+      }
+      indexes = selection.indexes
+    }
+
+    const items = await biliJobItems(info.bvid, indexes ?? info.pages.map((_, i) => i), quality)
     const job = createJob({ domain: BILI_DOMAIN, kind: 'pages', title: info.title, profile: qualityName(quality), items })
     spawnWorker(BILI_DOMAIN, job.id)
-    return { data: { status: 'job_started', job: { id: job.id, title: info.title, total: items.length }, preview: items.slice(0, 5).map((i) => ({ title: i.title })) } }
+    return {
+      data: { status: 'job_started', job: { id: job.id, title: info.title, total: items.length }, preview: items.slice(0, 5).map((i) => ({ title: i.title })) },
+      ...(warnings.length > 0 ? { warnings } : {}),
+    }
   },
 }
 
@@ -862,6 +893,10 @@ const subList: Command = {
         subscriptions: subs.map((s) => ({
           id: s.id,
           title: s.title,
+          // `ref` 是可以直接喂给其它命令的规范写法（`season:<mid>/<sid>`，解析器认这种带 mid 的形状）。
+          // `target` 是同一个值的旧名，留着是为了不打断已经在用的脚本。
+          // 之前只叫 target，调用方以为它不是"可复用的 ref"而去手工拼 `season:<sid>`，白踩一次坑。
+          ref: s.targetId,
           target: s.targetId,
           everyHours: s.everyHours,
           enabled: s.enabled,

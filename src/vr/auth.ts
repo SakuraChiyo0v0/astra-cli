@@ -105,7 +105,9 @@ export async function login(username: string, password: string, signal?: AbortSi
     return {
       status: 'needs_2fa',
       methods,
-      next: `让用户把 ${methods.includes('totp') ? '手机验证器里的 6 位码' : '邮箱收到的验证码'} 给你，然后 \`astra vr login 2fa <code>\`。5 分钟内有效`,
+      // 这里给的命令必须是能原样执行的。原先写的 `astra vr login 2fa <code>` 是错的 ——
+      // 2fa 会被当成多余的位置参数，报「参数太多」。正确写法是 --code。
+      next: `让用户把 ${methods.includes('totp') ? '手机验证器里的 6 位码' : '邮箱收到的验证码'} 给你，然后 \`astra vr login --code <验证码>\`。5 分钟内有效`,
     }
   }
   void status

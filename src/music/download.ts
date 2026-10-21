@@ -188,6 +188,8 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
   const ext = extensionFor(resolved.probe.format)
   const vars = {
     artist: track.artists.join(', '),
+    // 三位歌手以上时 {artist} 会变成一长串；{artist_list} 用分号，和标签里的多值写法一致
+    artist_list: track.artists.join(';'),
     albumartist: albumArtists.join(', '),
     primary_artist: primaryArtist(track.artists),
     album: track.album ?? '未知专辑',
@@ -195,6 +197,8 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
     year: date?.slice(0, 4) ?? '',
     track: track.trackNo ? String(track.trackNo) : '',
     disc: track.discNo ? String(Number.parseInt(track.discNo, 10) || '') : '',
+    // 音源标识（official / qdy@wy 之类），想按来源分目录时用得上
+    source: resolved.sourceId === 'official' ? 'official' : `${resolved.sourceId}@${resolved.route}`,
     ext,
   }
   const relative = renderTemplate(

@@ -18,9 +18,13 @@
  *
  * ## 为什么不按"专辑歌手有多个"来判
  *
- * 那会把**合作专辑**误判成合辑（两个人各出一半的专辑，专辑级就是两个歌手），
- * 文件一落地就进了 `合辑/`，而且不会有人立刻发现。合辑只认显式的群星标记，
- * 判不准的时候宁可按普通专辑走。
+ * 2026-10-23 更正：这段原先写的是"会把合作专辑误判成合辑"，**理由是错的**。
+ * 实测下来，网易云里"专辑级多个歌手"根本不是合作专辑的信号 —— 那是合作**单曲**的
+ * 曲目歌手被灌进了 `artists` 复数字段（见 `netease.ts` 里 `albumInfo` 的注释）。
+ * 真正的多艺术家专辑，单数字段给的是一个整体组合名。
+ *
+ * 结论不变、理由换了：`artists` 复数字段本就不可信，拿它当合辑判据一样不可靠。
+ * 合辑只认显式的群星标记，判不准时宁可按普通专辑走。
  */
 
 /** 网易云与其它平台对"群星"的叫法，全部按规范名处理。 */
@@ -63,16 +67,23 @@ export function isCompilation(input: AlbumArtistInput): boolean {
 }
 
 /**
- * 标签里的专辑艺术家。
+ * 标签里的专辑艺术家 —— **永远只有一位**，没有 join 全部分支。
  *
- * 专辑查不到时退回**第一位**歌手，不是拼接全部 —— 专辑级字段塞一串歌手
- * 会让每首歌的专辑归属看起来都不一样，播放器列表里同一个专辑散成好几张。
+ * 取谁：专辑级有就用专辑级的第一位，没有才退回曲目级的第一位。
+ *
+ * 为什么一律只取一位：
+ * - 专辑级塞一串歌手，会让每首歌的专辑归属看起来都不一样，播放器里同一张专辑散成好几张
+ * - 更现实的原因是"专辑级有多个"经常不是真的多艺术家，而是**曲目歌手被灌进了专辑字段**
+ *   （见 `netease.ts` 里 `albumArtistsFrom` 的注释）。这种情况下第二位是合作歌手，
+ *   拼进去就变成「Lady Gaga, Bruno Mars」这种假歌手目录
+ *
+ * 用户要的是"这首歌归谁" —— 归唱片的主艺术家，合作歌手写在 `ARTIST` 多值里就够了，
+ * 播放器会把它们拆成两位歌手显示。
  */
 export function albumArtistsFor(input: AlbumArtistInput): string[] {
   if (isCompilation(input)) return [COMPILATION_ARTIST]
   const fromAlbum = namesOf(input.albumArtists)
-  if (fromAlbum.length > 0) return fromAlbum
-  const primary = firstOf(input.trackArtists)
+  const primary = firstOf(fromAlbum.length > 0 ? fromAlbum : input.trackArtists)
   return primary ? [primary] : []
 }
 

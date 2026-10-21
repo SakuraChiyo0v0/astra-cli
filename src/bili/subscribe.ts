@@ -27,6 +27,8 @@ export interface BiliSubscription {
   targetId: string
   title: string
   quality: string | null
+  /** quality 为 null 时说明运行时会用什么；否则为 null。 */
+  qualityNote: string | null
   everyHours: number
   enabled: boolean
   lastCheckedAt: string | null
@@ -64,6 +66,9 @@ function toView(row: Row): BiliSubscription {
     targetId: row.target_id,
     title: row.title,
     quality: row.quality,
+    // 老订阅（v0.12 之前建的）没存画质，跑的时候按 80（1080p）算。
+    // 只回一个 null 的话，调用方没法判断"继承了什么"，所以把实际会用的值一并说明。
+    qualityNote: row.quality === null ? '未指定，运行时按 1080p（qn 80）下载' : null,
     everyHours: row.every_hours,
     enabled: row.enabled === 1,
     lastCheckedAt: row.last_checked_at,

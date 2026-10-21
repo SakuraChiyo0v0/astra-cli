@@ -162,6 +162,27 @@ export async function songDetail(id: string, signal?: AbortSignal): Promise<Trac
   return track
 }
 
+/**
+ * 从专辑接口的 `artist` / `artists` 里挑出真正的专辑艺术家。
+ *
+ * **单数字段 `artist` 优先，复数字段 `artists` 只做兜底。**
+ *
+ * 实测（2026-10-23）复数字段会把曲目歌手一起灌进来：
+ *   Die With A Smile  artist="Lady Gaga"  artists=["Lady Gaga","Bruno Mars"]  曲数 1
+ *   两个人叫我们        artist="林可期"     artists=["林可期","陆锦舟"]           曲数 1
+ * 这两张专辑实际都只有一位主艺术家，复数里的第二个是合作歌手。
+ * 取复数会把它们拼成 "Lady Gaga, Bruno Mars"，落盘各起一个假歌手目录 ——
+ * 这是"合作曲散落在假歌手目录下"的根因，修在别处都没用，错的数据是这里传出去的。
+ *
+ * 真正多人共同署名的专辑，单数是一整个组合名，仍然对：
+ *   マクロス40周年…  artist="シェリル・ランカ・ワルキューレ"  artists=[同名, May'n, 中島愛, ワルキューレ]
+ *
+ * 单数缺失时才退回复数（老数据 / 别的接口形状）。
+ */
+export function albumArtistsFrom(album: { artist?: RawArtist; artists?: RawArtist[] }): string[] {
+  return (album.artist ? [album.artist] : album.artists ?? []).map((x) => x.name ?? '').filter(Boolean)
+}
+
 /** 专辑元数据（公司、专辑歌手、发行时间），写标签用。 */
 export async function albumInfo(albumId: string, signal?: AbortSignal): Promise<{ album: AlbumInfo; tracks: Track[] }> {
   const body = await get<CodeBody & { album?: { id: number; name: string; picUrl?: string; company?: string; publishTime?: number; size?: number; artists?: RawArtist[]; artist?: RawArtist }; songs?: RawSong[] }>(
@@ -171,7 +192,7 @@ export async function albumInfo(albumId: string, signal?: AbortSignal): Promise<
   )
   if (!body.album) throw new AstraError('NOT_FOUND', `网易云没有专辑 ${albumId}`, { exitCode: 4 })
   const a = body.album
-  const artists = (a.artists && a.artists.length > 0 ? a.artists : a.artist ? [a.artist] : []).map((x) => x.name ?? '').filter(Boolean)
+  const artists = albumArtistsFrom(a)
   return {
     album: {
       id: String(a.id),

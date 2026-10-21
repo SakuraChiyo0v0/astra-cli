@@ -56,6 +56,11 @@ const help: Command = {
           'error.hint 是下一步建议；retryable=true 表示稍后重试可能成功',
           'stderr 是进度日志，不要当结果解析',
           '含空格的关键词可以不加引号（get / search 会把剩余参数拼起来）',
+          // 两套 status 是不同层的东西，混用会静默得到空集合（踩过：按 == "downloaded"
+          // 过滤任务项，101 项全部漏掉，误判成全部失败）
+          '两种 status 别混用：单次操作看 data.status（downloaded / already_have / ambiguous / job_started）；',
+          '  后台任务的每项看 data.items[].status，取值是 done / skipped / failed / queued / running。',
+          '  任务项成功用 done（不是 downloaded），曲库里已有而跳过用 skipped',
         ],
         commands: visible.map(describeCommand),
       },
