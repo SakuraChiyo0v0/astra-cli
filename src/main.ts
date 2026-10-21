@@ -14,9 +14,11 @@ import { describeCommand, parseCommandArgs, type Command } from './core/command.
 import { CONFIG_KEYS, getConfig, listConfig, musicRoot, setConfig, unsetConfig } from './core/config.ts'
 import { astraHome } from './core/paths.ts'
 import { closeDb } from './core/db.ts'
+import { runDoctor } from './core/doctor.ts'
 import { musicCommands } from './music/commands.ts'
 import { biliCommands } from './bili/commands.ts'
 import { mediaCommands } from './media/commands.ts'
+import { vrCommands } from './vr/commands.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
 
@@ -78,24 +80,21 @@ const configCmd: Command = {
 
 const doctor: Command = {
   name: 'doctor',
-  summary: '自检：数据目录、音乐目录、音源、网络',
+  summary: '自检：硬依赖、两个域的音源/登录/目录、可选通知',
   usage: 'astra doctor',
+  notes: [
+    '按三类列出：required（缺了直接不可用）/ domain（缺了某个能力不可用）/ optional（少了只是不方便）',
+    '会真的往目录写一个临时文件来验证可写性 —— 权限位对了但挂载只读的情况也能发现',
+  ],
   maxArgs: 0,
   async run() {
-    const checks: { name: string; ok: boolean; detail: string }[] = []
-    checks.push({ name: 'node', ok: Number(process.versions.node.split('.')[0]) >= 24, detail: process.versions.node })
-    checks.push({ name: 'home', ok: true, detail: astraHome() })
-    checks.push({ name: 'music_dir', ok: true, detail: musicRoot() })
-    const sources = listSources()
-    checks.push({ name: 'lx_sources', ok: sources.some((s) => s.enabled), detail: sources.length === 0 ? '未导入音源，下载不可用' : sources.map((s) => `${s.id}${s.enabled ? '' : '(停用)'}`).join(', ') })
-    try {
-      const r = await fetch('https://music.163.com/api/v3/song/detail?c=' + encodeURIComponent('[{"id":1472480890}]'), { headers: { Referer: 'https://music.163.com/' }, signal: AbortSignal.timeout(8000) })
-      checks.push({ name: 'netease', ok: r.ok, detail: `HTTP ${r.status}` })
-    } catch (err) {
-      checks.push({ name: 'netease', ok: false, detail: (err as Error).message })
+    const { checks, summary } = await runDoctor()
+    // required 有失败才算整体不通过；domain 失败只影响对应能力
+    const ok = summary.failedRequired === 0
+    return {
+      data: { version: version(), ok, summary, checks },
+      warnings: checks.filter((c) => !c.ok && c.hint).map((c) => `${c.name}：${c.hint}`),
     }
-    checks.push({ name: 'notify', ok: true, detail: getConfig('notify.feishu_webhook') || process.env.ASTRA_FEISHU_WEBHOOK ? '已配置飞书 webhook' : '未配置（后台任务完成不推送）' })
-    return { data: { version: version(), ok: checks.every((c) => c.ok), checks } }
   },
 }
 
@@ -119,7 +118,7 @@ const versionCmd: Command = {
   },
 }
 
-const commands: Command[] = [help, versionCmd, doctor, configCmd, notifyTest, ...musicCommands, ...biliCommands, ...mediaCommands]
+const commands: Command[] = [help, versionCmd, doctor, configCmd, notifyTest, ...musicCommands, ...biliCommands, ...mediaCommands, ...vrCommands]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
 export function route(argv: string[]): { command: Command; rest: string[] } | null {
