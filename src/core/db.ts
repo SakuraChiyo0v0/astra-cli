@@ -97,6 +97,32 @@ const MIGRATIONS: string[] = [
   // 指纹 = 标题 + 歌手 + 时长（秒），用于跨 id 的"其实已经有了"判断。
   `alter table tracks add column fingerprint text`,
   `create index tracks_fingerprint on tracks (fingerprint)`,
+  // jobs.quality 原本是 NOT NULL，但并不是每个域都有"档位"这个概念
+  // （VRChat 这类任务没有音质/画质）。SQLite 不能直接改约束，只能重建表。
+  //
+  // 注意：domain 不是独立列 —— 它存在 meta JSON 里（`{"domain":"bili"}`），
+  // 由 core/jobs.ts 的 toView 读出来，缺省当 music。所以这里不需要保住 domain 列。
+  `create table jobs_new (
+     id text primary key,
+     kind text not null,
+     title text not null,
+     status text not null,
+     quality text,
+     total integer not null,
+     done integer not null default 0,
+     failed integer not null default 0,
+     skipped integer not null default 0,
+     pid integer,
+     error text,
+     created_at text not null,
+     updated_at text not null,
+     meta text
+   )`,
+  `insert into jobs_new (id, kind, title, status, quality, total, done, failed, skipped, pid, error, created_at, updated_at, meta)
+     select id, kind, title, status, quality, total, done, failed, skipped, pid, error, created_at, updated_at, meta from jobs`,
+  `drop table jobs`,
+  `alter table jobs_new rename to jobs`,
+  `create index jobs_created on jobs (created_at desc)`,
 ]
 
 export function db(): DatabaseSync {
