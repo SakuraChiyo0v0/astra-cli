@@ -21,7 +21,7 @@ import { popular as fetchPopular, weeklyIssues as fetchWeeklyIssues, weeklyOne a
 import { watchLater, watchHistory } from './account-lists.ts'
 import { httpRequest } from '../core/http.ts'
 import { searchUsers, searchVideos } from './search.ts'
-import { parseMid, spaceOverview } from './space.ts'
+import { parseMid, spaceOverview, spaceVideos } from './space.ts'
 import { addBiliSubscription, dueBiliSubscriptions, findBiliSubscription, listBiliSubscriptions, removeBiliSubscription, runBiliSubscription, setBiliSubscription } from './subscribe.ts'
 
 import { mediaRoot } from '../core/config.ts'
@@ -957,40 +957,79 @@ const subRun: Command = {
 
 const spaceCmd: Command = {
   name: 'bili space',
-  summary: '列某个 UP 主的合集与系列（这是"按 UP 批量"的替代方案）',
-  usage: 'astra bili space <UP空间链接|mid:546195>',
+  summary: '看某个 UP：全部投稿 / 合集 / 系列',
+  usage: 'astra bili space <UP链接|mid:546195> [--videos] [--keyword 词] [--limit 50] [--download]',
   notes: [
-    '**B 站的全量投稿接口做不了**：`space/wbi/arc/search` 带签名、带设备指纹、带完整浏览器头',
-    '都返回 -352 / -412 风控（实测多种姿势），不硬啃',
-    '但这个接口免签名可用 —— UP 的视频绝大多数按合集/系列组织，所以"列合集再逐个下"覆盖了大部分需求',
-    '拿到 seasonId / seriesId 后：`astra bili collection season:<id>` 看清单，`astra bili bulk season:<id>` 下载',
+    '默认列合集与系列；加 --videos 列**全部投稿**',
+    '全部投稿走 `series/recArchivesByKeywords`（keywords 留空即全部），**免签名免登录**，实测稳定',
+    'B 站自己的投稿接口 `space/wbi/arc/search` 有风控（-352/-412），这个是它的可行替代',
+    '--keyword 按标题筛（B 站侧筛）；--download 把列出的开成下载任务',
   ],
+  options: {
+    videos: { type: 'boolean', description: '列全部投稿（而不是合集/系列）' },
+    keyword: { type: 'string', description: '按标题关键词筛选（配合 --videos）', valueName: 'kw' },
+    limit: { type: 'string', short: 'n', description: '最多列/下多少个，默认 50', valueName: 'n' },
+    download: { type: 'boolean', description: '把列出的视频开成下载任务' },
+    quality: { type: 'string', short: 'q', description: '配合 --download 的画质', valueName: 'q' },
+  },
   minArgs: 1,
   maxArgs: 1,
-  async run({ positionals, signal }) {
+  async run({ positionals, values, signal }) {
     const mid = parseMid(positionals[0]!)
     if (!mid) throw invalidInput(`认不出这是哪个 UP：${positionals[0]!.slice(0, 40)}`, '给 space.bilibili.com/<mid> 链接，或 mid:<数字>')
+    const limit = Math.max(1, Math.min(500, Number(values.limit ?? '50') || 50))
+
+    if (values.videos === true) {
+      const keyword = typeof values.keyword === 'string' ? values.keyword : ''
+      const result = await spaceVideos(mid, keyword, limit, signal)
+      const items = result.videos.map((v) => ({ ...v, duration: formatDuration(v.durationSec) }))
+      if (values.download === true) {
+        if (items.length === 0) throw new AstraError('EMPTY_COLLECTION', '没有可下载的视频', { exitCode: 4 })
+        const quality = parseQuality(values.quality)
+        const jobItems = result.videos.map((v) => ({
+          id: v.bvid, title: v.title, subtitle: `UP ${mid}`,
+          meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true },
+        }))
+        const job = createJob({
+          domain: BILI_DOMAIN, kind: 'space',
+          title: `UP ${mid}${keyword ? ` 「${keyword}」` : ''} 投稿`,
+          profile: qualityName(quality), items: jobItems,
+        })
+        spawnWorker(BILI_DOMAIN, job.id)
+        return {
+          data: { status: 'job_started', job: { id: job.id, total: jobItems.length, platformTotal: result.total }, preview: items.slice(0, 5) },
+        }
+      }
+      return {
+        data: {
+          mid, keyword: keyword || null, total: result.total, returned: items.length,
+          hasMore: result.hasMore || (result.total !== null && items.length < result.total),
+          videos: items,
+          downloadAllWith: `astra bili space ${mid} --videos${keyword ? ` --keyword ${keyword}` : ''} --limit ${limit} --download`,
+        },
+      }
+    }
+
     const overview = await spaceOverview(mid, 5, signal)
     return {
       data: {
         mid: overview.mid,
         name: overview.name,
-        seasons: overview.seasons.map((s) => ({
-          ...s,
-          ref: `season:${s.seasonId}`,
-          listWith: `astra bili collection season:${s.seasonId}`,
-          downloadWith: `astra bili bulk season:${s.seasonId}`,
+        seasons: overview.seasons.map((x) => ({
+          ...x, ref: `season:${x.seasonId}`,
+          listWith: `astra bili collection season:${x.seasonId}`,
+          downloadWith: `astra bili bulk season:${x.seasonId}`,
         })),
-        series: overview.series.map((s) => ({
-          ...s,
-          ref: `series:${s.seriesId}`,
-          listWith: `astra bili collection series:${s.seriesId}`,
-          downloadWith: `astra bili bulk series:${s.seriesId}`,
+        series: overview.series.map((x) => ({
+          ...x, ref: `series:${x.seriesId}`,
+          listWith: `astra bili collection series:${mid}/${x.seriesId}`,
+          downloadWith: `astra bili bulk series:${mid}/${x.seriesId}`,
         })),
         truncated: overview.truncated,
+        hint: '想看这个 UP 的全部投稿（含没归入合集的），加 --videos',
       },
       warnings: overview.seasons.length === 0 && overview.series.length === 0
-        ? ['这个 UP 没有公开的合集或系列；散装视频只能靠 `bili search` 或手给链接']
+        ? ['这个 UP 没有公开的合集或系列；用 `--videos` 列全部投稿']
         : [],
     }
   },

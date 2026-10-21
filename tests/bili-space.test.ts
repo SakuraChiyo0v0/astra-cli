@@ -1,8 +1,9 @@
 /**
- * UP 主空间的 mid 解析。
+ * UP 主空间的输入解析。
  *
- * 背景：B 站的全量投稿接口做不了（-352 / -412 风控，实测多种姿势都不行），
- * 替代方案是列这个 UP 的合集与系列。这个文件只测输入解析，网络部分靠真实验证。
+ * 背景：B 站自己的投稿接口 `space/wbi/arc/search` 有风控（-352/-412，试遍签名与设备指纹都不行）。
+ * 可行替代是从社区文档翻到的 `series/recArchivesByKeywords`（keywords 留空 = 全部投稿，免签名）。
+ * 网络部分靠真实验证，这里只测纯解析。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'

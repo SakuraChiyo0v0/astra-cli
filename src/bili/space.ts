@@ -1,5 +1,5 @@
 /**
- * UP 主空间：列出他的合集与系列。
+ * UP 主空间：列出他的合集与系列，以及**全部投稿**。
  *
  * ## 为什么不是"全量投稿"
  *
@@ -12,7 +12,17 @@
  *
  * 参数越齐全反而封得更狠，说明它校验的东西我们模拟不出来。**没有硬啃**。
  *
- * ## 替代方案（实测可用）
+ * ## 真正的解法：`series/recArchivesByKeywords`
+ *
+ * 从社区文档（SocialSisterYi/bilibili-API-collect 的存档）里翻到：
+ * ```
+ * GET /x/series/recArchivesByKeywords?mid=<mid>&keywords=&ps=100&pn=1
+ * ```
+ * `keywords` **留空就是该 UP 的全部投稿**，而且**免签名、免登录**。
+ * 实测「老番茄」mid=546195 返回 `total: 682`，分页正常；带关键词还能按标题筛选。
+ * 这个接口文档原话是"功能基本相同，暂未发现风控校验" —— 和投稿接口形成鲜明对比。
+ *
+ * ## 备选方案（也是实测可用的）
  *
  * `seasons_series_list` **免签名**就能列出某个 UP 的全部合集与系列：
  * ```json
@@ -176,6 +186,76 @@ export async function spaceOverview(mid: string, maxPages = 5, signal?: AbortSig
     }
   }
   return { mid, name, seasons, series, truncated }
+}
+
+/** UP 的一个投稿视频。 */
+export interface SpaceVideo {
+  bvid: string
+  title: string
+  durationSec: number | null
+  views: number | null
+  pubdate: string | null
+  cover: string | null
+}
+
+export interface SpaceVideos {
+  mid: string
+  total: number | null
+  videos: SpaceVideo[]
+  /** 是否还有下一页没取。 */
+  hasMore: boolean
+}
+
+/**
+ * 列某个 UP 的投稿视频。
+ *
+ * `keywords` 留空 = 全部投稿；给了就按标题模糊筛（B 站那侧做的筛选，不是本地过滤）。
+ * `limit` 控制最多取多少条，内部自动翻页。
+ */
+export async function spaceVideos(mid: string, keywords: string, limit: number, signal?: AbortSignal): Promise<SpaceVideos> {
+  const pageSize = Math.min(100, Math.max(1, limit))
+  const videos: SpaceVideo[] = []
+  let total: number | null = null
+  let hasMore = false
+  for (let pn = 1; videos.length < limit && pn <= 50; pn += 1) {
+    const url =
+      `https://api.bilibili.com/x/series/recArchivesByKeywords?mid=${encodeURIComponent(mid)}` +
+      `&keywords=${encodeURIComponent(keywords)}&ps=${pageSize}&pn=${pn}`
+    const data = await getJson<{
+      code: number
+      message?: string
+      data?: { archives?: { bvid?: string; title?: string; duration?: number; pubdate?: number; pic?: string; stat?: { view?: number } }[]; page?: { total?: number } }
+    }>(url, 'UP 投稿', signal)
+    if (data.code !== 0) {
+      throw new AstraError('BILI_SPACE_VIDEOS_ERROR', `UP 投稿读取失败（code=${data.code}${data.message ? `：${data.message}` : ''}）`, {
+        exitCode: codeExit(data.code),
+      })
+    }
+    total = data.data?.page?.total ?? total
+    const batch = data.data?.archives ?? []
+    for (const a of batch) {
+      if (!a.bvid) continue
+      videos.push({
+        bvid: a.bvid,
+        title: a.title ?? a.bvid,
+        durationSec: typeof a.duration === 'number' ? a.duration : null,
+        views: typeof a.stat?.view === 'number' ? a.stat.view : null,
+        pubdate: typeof a.pubdate === 'number' ? new Date(a.pubdate * 1000).toISOString().slice(0, 10) : null,
+        cover: toCover(a.pic),
+      })
+      if (videos.length >= limit) break
+    }
+    if (batch.length === 0) break
+    if (total !== null) {
+      if (videos.length >= total) break
+      hasMore = videos.length < total
+    }
+  }
+  return { mid, total, videos, hasMore }
+}
+
+function codeExit(code: number): 4 | 5 {
+  return code === -404 ? 4 : 5
 }
 
 /** 从 UP 空间页的合集页面 URL 里抽 mid（用于 `astra bili space <url>`）。 */
