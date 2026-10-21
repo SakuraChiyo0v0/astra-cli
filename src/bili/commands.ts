@@ -15,7 +15,7 @@ import { downloadPage } from './download.ts'
 import { probe } from './ffmpeg.ts'
 import { QUALITY_NAMES, QUALITY_ORDER, qualityName } from './sign.ts'
 import { parseBiliTarget } from './target.ts'
-import { parseCollectionRef, fetchFavorite, readSeason } from './collection.ts'
+import { parseCollectionRef, fetchFavorite, fetchSeasonArchives, readSeason } from './collection.ts'
 import { danmakuToAss, fetchDanmaku } from './danmaku.ts'
 import { popular as fetchPopular, weeklyIssues as fetchWeeklyIssues, weeklyOne as fetchWeeklyOne } from './discover.ts'
 import { httpRequest } from '../core/http.ts'
@@ -371,9 +371,10 @@ const doctor: Command = {
 const bulk: Command = {
   name: 'bili bulk',
   summary: '批量下载：收藏夹 / 视频合集 / 一个视频的多个分 P',
-  usage: 'astra bili bulk <fav:id|链接> [--limit 50] [--quality 1080p] [--all-pages]',
+  usage: 'astra bili bulk <fav:id|收藏夹链接|合集链接> [--limit 50] [--quality 1080p] [--all-pages]',
   notes: [
-    '收藏夹用 `fav:<id>` 或 space.bilibili.com 的 favlist 链接；需要登录才看得到私密收藏夹',
+    '收藏夹：`fav:<id>` 或 favlist 链接（需登录看私密收藏夹）',
+    '合集：space.bilibili.com/<mid>/channel/collectiondetail?sid=<id> 链接，或 `season:<mid>/<sid>`',
     '给普通视频链接时，--all-pages 会把它的所有分 P 都排进任务',
     '开的是后台任务，用 `astra bili job <id>` 看进度',
     '**不支持按 UP 主主页批量**：B 站的 UP 投稿接口会返回风控页，硬啃只会一直失败',
@@ -391,18 +392,23 @@ const bulk: Command = {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw invalidInput('--limit 必须是 1..500')
     const quality = parseQuality(values.quality)
 
-    // 收藏夹
+    // 收藏夹 / 合集：两种"一组视频"，先看是哪一种
     const ref = parseCollectionRef(input)
-    if (ref.kind === 'fav') {
-      const collection = await fetchFavorite(ref.id, limit, signal)
-      const items = collection.items.flatMap((v) => [{
+    if (ref.kind === 'fav' || ref.kind === 'season') {
+      const collection = ref.kind === 'fav'
+        ? await fetchFavorite(ref.id, limit, signal)
+        : await fetchSeasonArchives(ref.mid, ref.seasonId, limit, signal)
+      const label = ref.kind === 'fav' ? '收藏夹' : '合集'
+      const items = collection.items.map((v) => ({
         id: v.bvid,
         title: v.title,
         subtitle: collection.title,
         meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true },
-      }])
-      if (items.length === 0) throw new AstraError('EMPTY_COLLECTION', `收藏夹「${collection.title}」里没有可下载的视频`, { exitCode: 4 })
-      const job = createJob({ domain: BILI_DOMAIN, kind: 'fav', title: `收藏夹「${collection.title}」`, profile: qualityName(quality), items })
+      }))
+      if (items.length === 0) {
+        throw new AstraError('EMPTY_COLLECTION', `${label}「${collection.title}」里没有可下载的视频`, { exitCode: 4 })
+      }
+      const job = createJob({ domain: BILI_DOMAIN, kind: ref.kind === 'fav' ? 'fav' : 'season', title: `${label}「${collection.title}」`, profile: qualityName(quality), items })
       spawnWorker(BILI_DOMAIN, job.id)
       return {
         data: {

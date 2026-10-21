@@ -2,6 +2,14 @@
 
 ## 0.8.1 — 2026-10-21
 
+- 修：`bili bulk` 的 help 说支持合集链接，实际只认 BV / av / 视频链接，传
+  `space.bilibili.com/<mid>/channel/collectiondetail?sid=xxx` 会报 `BILI_BAD_TARGET`。
+  现在支持 collectiondetail 与新版 lists 链接，以及 `season:<mid>/<sid>`
+- 合集拉取需要 **mid + season_id 两个参数**，只给 sid 接口会 404（实测）
+
+
+## 0.8.1 — 2026-10-21
+
 - 新增 VRChat 域（`astra vr ...`）：登录（含两步验证）、账号、好友、通知、世界、实例、群组、头像、收藏、余额
 - 写操作（加/删好友、收藏、邀请、改状态、通知已读）统一走**预览 + 一次性令牌**二次确认
 - 抽出 `core/confirm.ts` 作为通用的写操作确认机制，音乐域的红心也走同一套规矩
