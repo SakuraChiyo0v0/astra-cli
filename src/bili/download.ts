@@ -17,7 +17,8 @@ import { httpRequest } from '../core/http.ts'
 import { progress } from '../core/output.ts'
 import { loadBiliSession, cookieHeader } from './auth.ts'
 import { playInfo, videoInfo, type DashStream, type PlayInfo, type VideoInfo } from './api.ts'
-import { extractAudio, mux, probe } from './ffmpeg.ts'
+import { mux, probe } from './ffmpeg.ts'
+import { audioTargetFormat, processBiliAudio } from './audio-tag.ts'
 import { qualityName } from './sign.ts'
 import { renderTemplate, resolveInside } from '../core/template.ts'
 
@@ -50,6 +51,8 @@ export interface DownloadResult {
   height: number | null
   videoCodec: string | null
   audioCodec: string | null
+  /** 音频文件里内嵌了封面（ffprobe 会把它报成视频流）。 */
+  coverEmbedded: boolean
   bytes: number
   warnings: string[]
 }
@@ -132,7 +135,7 @@ export async function downloadPage(
     page: String(page.page),
     bvid: info.bvid,
     quality: qualityName(actualQuality),
-    ext: options.audioOnly ? 'm4a' : 'mp4',
+    ext: options.audioOnly ? audioTargetFormat() : 'mp4',
   }
   const template = getConfig('bili.template')
   const relative = renderTemplate(template, vars)
@@ -140,7 +143,7 @@ export async function downloadPage(
   await mkdir(path.dirname(target), { recursive: true })
   const tmpVideo = `${target}.v-${process.pid}.tmp`
   const tmpAudio = `${target}.a-${process.pid}.tmp`
-  const tmpOut = `${target}.out-${process.pid}.tmp${options.audioOnly ? '.m4a' : '.mp4'}`
+  const tmpOut = `${target}.out-${process.pid}.tmp${options.audioOnly ? `.${audioTargetFormat()}` : '.mp4'}`
 
   try {
     const ffmpegConfigured = getConfig('music.ffmpeg')
@@ -169,7 +172,21 @@ export async function downloadPage(
       }
 
       if (options.audioOnly) {
-        await extractAudio(tmpAudio, tmpOut, ffmpegConfigured, signal)
+        // 一条龙：音频流 → 目标格式 → 写标签 → 内嵌封面
+        const audioResult = await processBiliAudio({
+          source: tmpAudio,
+          output: tmpOut,
+          info: {
+            // 多分 P 时用分 P 名 —— 那才是"这首"的名字
+            title: info.pages.length > 1 ? page.part : info.title,
+            uploader: info.owner.name || '未知UP',
+            coverUrl: info.pic,
+            pubdate: info.pubdate || null,
+            bvid: info.bvid,
+          },
+          ...(signal ? { signal } : {}),
+        })
+        warnings.push(...audioResult.warnings)
       } else {
         await mux(tmpVideo, audioStream ? tmpAudio : null, tmpOut, ffmpegConfigured, signal)
         if (!audioStream) warnings.push('这个视频没有音频流，成品是无声的')
@@ -184,6 +201,9 @@ export async function downloadPage(
       warnings.push(`成品 ${Math.round(probed.durationSec)} 秒，与分 P 记录 ${expectedSec} 秒不一致`)
     }
     if (!options.audioOnly && probed.videoCodec === null) warnings.push('成品里没有视频流')
+    // 只下音频时，内嵌封面会被 ffprobe 报成一条 mjpeg 视频流。这不是问题，但要说清楚，
+    // 否则 AI 看到 videoCodec 会以为"不是说只要音频吗，怎么下了个视频"
+    const coverStream = options.audioOnly && probed.videoCodec !== null && ['mjpeg', 'png', 'bmp', 'gif', 'webp'].includes(probed.videoCodec)
 
     return {
       status: 'downloaded',
@@ -197,10 +217,12 @@ export async function downloadPage(
       actualQualityLabel: qualityName(actualQuality),
       downgraded,
       durationSec: probed.durationSec,
-      width: probed.width,
-      height: probed.height,
-      videoCodec: probed.videoCodec,
+      width: coverStream ? null : probed.width,
+      height: coverStream ? null : probed.height,
+      videoCodec: coverStream ? null : probed.videoCodec,
       audioCodec: probed.audioCodec,
+      /** 音频文件里内嵌了封面（ffprobe 会把它报成视频流）。 */
+      coverEmbedded: coverStream === true,
       bytes: (await stat(target)).size,
       warnings,
     }

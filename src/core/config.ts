@@ -39,6 +39,12 @@ export const CONFIG_KEYS: ConfigKey[] = [
     default: '{uploader}/{title}/{page:02} {part}.{ext}' },
   { key: 'bili.quality', description: '默认请求画质：4k / 1080p60 / 1080p / 720p / 480p / 360p（未登录会被服务端封顶 360P）', default: '1080p',
     validate: (v) => ([...Object.values(QUALITY_NAMES)].includes(v) || /^\d+$/.test(v) ? null : '画质名或 qn 数字') },
+  { key: 'bili.audio-format', description: '--audio-only 的输出格式：mp3（默认，能写标签）/ flac / m4a（不能写标签）', default: 'mp3',
+    validate: (v) => (['mp3', 'flac', 'm4a'].includes(v) ? null : '只能是 mp3 / flac / m4a') },
+  { key: 'bili.audio-bitrate', description: '转 mp3 时的码率（kbps）', default: '320',
+    validate: (v) => (/^\d+$/.test(v) && Number(v) >= 96 && Number(v) <= 320 ? null : '只能是 96..320') },
+  { key: 'bili.tag', description: '--audio-only 是否自动写标签并内嵌封面：true / false', default: 'true',
+    validate: (v) => (['true', 'false'].includes(v) ? null : '只能是 true / false') },
   // 视频文件大、CDN 也更容易被并发限速，默认比音乐保守
   { key: 'bili.concurrency', description: 'B 站批量任务并发数 1..3', default: '1',
     validate: (v) => (/^[1-3]$/.test(v) ? null : '只能是 1..3') },

@@ -22,6 +22,7 @@ import { mediaCommands } from './media/commands.ts'
 import { vrCommands } from './vr/commands.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
+import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
 
 declare const ASTRA_VERSION: string | undefined
 
@@ -76,6 +77,85 @@ const configCmd: Command = {
       return { data: { key, value: getConfig(key), reset: true } }
     }
     throw new AstraError('INVALID_INPUT', '用法不对', { exitCode: 2, hint: configCmd.usage })
+  },
+}
+
+/**
+ * 跨域的统一任务入口。
+ *
+ * 为什么要它：音乐和 B 站各有一套 `job` 命令，VRChat 没有任务。用户问"有什么在跑"
+ * 得挨个域问一遍。这个命令一次列全，带 domain 标签；子命令也能直接操作任意域的任务。
+ */
+const jobsCmd: Command = {
+  name: 'jobs',
+  summary: '所有域的后台任务，一次列全（音乐 / B 站 …）',
+  usage: 'astra jobs [--active] [--domain music|bili] [--limit 10]',
+  notes: [
+    '各域也有自己的 `music jobs` / `bili jobs`，内容一样；这个是不用记域名的入口',
+    '任务 id 在所有域里唯一，`astra job <id>` 可以直接查任意域的任务',
+  ],
+  options: {
+    active: { type: 'boolean', description: '只看进行中的' },
+    domain: { type: 'string', description: '只看某个域', valueName: 'name' },
+    limit: { type: 'string', short: 'n', description: '默认 10', valueName: 'n' },
+  },
+  maxArgs: 0,
+  async run({ values }) {
+    const limit = Number(values.limit ?? 10)
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new AstraError('INVALID_INPUT', '--limit 必须是 1..100 的整数', { exitCode: 2 })
+    const domain = typeof values.domain === 'string' ? values.domain : undefined
+    const jobs = listJobs(limit, values.active === true, domain)
+    return {
+      data: {
+        total: jobs.length,
+        byDomain: jobs.reduce<Record<string, number>>((acc, j) => { acc[j.domain] = (acc[j.domain] ?? 0) + 1; return acc }, {}),
+        jobs: jobs.map((j) => ({
+          id: j.id, domain: j.domain, kind: j.kind, title: j.title,
+          status: j.status, statusLabel: statusLabel(j.status),
+          progress: `${j.done + j.skipped}/${j.total}`, failed: j.failed,
+          createdAt: j.createdAt,
+        })),
+      },
+    }
+  },
+}
+
+/** `astra job <id>`：不用先知道它属于哪个域。 */
+const jobCmd: Command = {
+  name: 'job',
+  summary: '看任意域的任务进度 / 取消 / 继续（不用记域名）',
+  usage: 'astra job <id> | astra job cancel <id> | astra job resume <id> [--items] [--wait 60]',
+  notes: ['任务 id 跨域唯一。加 --items 看每一项，--wait 阻塞等待完成'],
+  options: {
+    items: { type: 'boolean', description: '列出每一项的状态' },
+    failed: { type: 'boolean', description: '只列失败的' },
+    wait: { type: 'string', description: '最多等待秒数（≤600）', valueName: 's' },
+  },
+  minArgs: 1,
+  async run({ positionals, values, signal }) {
+    const [first, second] = positionals
+    if (!first) throw new AstraError('INVALID_INPUT', '需要任务 id', { exitCode: 2, hint: '`astra jobs` 看有哪些' })
+    if (first === 'cancel' || first === 'resume') {
+      if (!second) throw new AstraError('INVALID_INPUT', `astra job ${first} 需要任务 id`, { exitCode: 2 })
+      const j = first === 'cancel' ? cancelJob(second) : resumeJob(second)
+      return { data: { ...j, statusLabel: statusLabel(j.status) } }
+    }
+    const waitSeconds = Number(values.wait ?? 0)
+    const deadline = Date.now() + (Number.isFinite(waitSeconds) ? waitSeconds : 0) * 1000
+    let snapshot = getJob(first, false)
+    while (waitSeconds > 0 && Date.now() < deadline && !signal.aborted && ['queued', 'running'].includes(snapshot.job.status)) {
+      await new Promise((r) => setTimeout(r, 2000))
+      snapshot = getJob(first, false)
+    }
+    const full = getJob(first, values.items === true || values.failed === true)
+    const items = values.failed === true ? full.items?.filter((i) => i.status === 'failed') : full.items
+    return {
+      data: {
+        ...full.job,
+        statusLabel: statusLabel(full.job.status),
+        ...(values.items === true || values.failed === true ? { items } : {}),
+      },
+    }
   },
 }
 
@@ -145,7 +225,7 @@ const loginCmd: Command = {
   },
 }
 
-const commands: Command[] = [help, versionCmd, doctor, configCmd, loginCmd, notifyTest, ...musicCommands, ...biliCommands, ...mediaCommands, ...vrCommands]
+const commands: Command[] = [help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, notifyTest, ...musicCommands, ...biliCommands, ...mediaCommands, ...vrCommands]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
 export function route(argv: string[]): { command: Command; rest: string[] } | null {

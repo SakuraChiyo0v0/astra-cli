@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.9.1 — 2026-10-21
+
+按实际使用反馈补的两项（合集链接的 P0 已由 20a6827 修复）。
+
+- **`bili get --audio-only` 一条龙**：转码 → 写标签（title/artist/album/date）→ 内嵌封面。
+  新配置 `bili.audio-format`（mp3 默认）/ `bili.audio-bitrate` / `bili.tag`。
+  分 P 视频用分 P 名当 title；结果里 `coverEmbedded` 标明封面已内嵌，`videoCodec` 不再把封面误报成视频流
+- **`music upgrade [--scan N] [--apply]`**：先问"现在能拿到什么"，确实更好才列入。
+  与 `have --low` 的区别：低规格 ≠ 能升级 —— 实测曲库里 12 首"低于 24bit"，
+  逐首问官方后没有一首真能升（母带就是 16bit）。并区分"查不了"与"升不了"
+
+
+## 0.9.0 — 2026-10-21
+
+按实际使用反馈补的三项。
+
+**P0 修：合集链接**
+- `bili bulk` 现在认 `collectiondetail?sid=` / `seriesdetail?sid=` / `lists/<id>` 链接，
+  以及 `season:<sid>` / `collection:<sid>` / `series:<mid>/<sid>` 简写
+- 实测发现 **mid 其实可省略**（`seasons_archives_list` 只给 season_id 也能返回）；
+  之前那次 404 是 sid 本身不存在，被误读成"缺 mid"
+
+**P1 音频下载一条龙**
+- `--audio-only` 现在自动完成：转码 → 写标签（title/artist/album/date）→ 内嵌封面
+- 新配置 `bili.audio-format`（mp3 默认 / flac / m4a）、`bili.audio-bitrate`、`bili.tag`
+- 分 P 视频用分 P 名当 title（那才是"这首"的名字）
+- 结果里 `coverEmbedded` 标明封面已内嵌，`videoCodec` 不再把封面误报成视频流
+
+**P1 音质升级**
+- `music upgrade [--scan N] [--apply]`：先问"现在能拿到什么"，**确实更好**才列入
+- 与 `have --low` 的关键区别：低规格 ≠ 能升级。实测曲库里 12 首"低于 24bit"，
+  逐首问官方后没有一首真能升（母带就是 16bit）
+- 区分"查不了"（未登录/网络）与"升不了"（母带就这样）
+
+
 ## 0.9.0 — 2026-10-21
 
 补完 B 站、媒体、音乐三处缺口。

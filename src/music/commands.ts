@@ -27,6 +27,7 @@ import { probeUrl } from './audio.ts'
 import { accountStatus, beginLogin, logout as logoutSession, pollLogin, waitLogin } from './login.ts'
 import { loadSession, myPlaylists } from './auth.ts'
 import { likedIds, likedStatus, recommendDaily, requireSession, weapiPost } from './account-api.ts'
+import { loadCandidateTracks, scanUpgradable } from './upgrade.ts'
 import { applyLike, prepareLike } from './like.ts'
 import { toTrack } from './netease.ts'
 
@@ -894,10 +895,68 @@ const m3uCmd: Command = {
   },
 }
 
+const upgrade: Command = {
+  name: 'music upgrade',
+  summary: '找出真正能升级音质的歌，并可批量重下',
+  usage: 'astra music upgrade [--scan 20] [--apply] [--limit 20]',
+  notes: [
+    '与 `have --low` 的区别：`--low` 只按库里的规格列（会被"母带本来就是 16bit"误导），',
+    '这里会真的问一次"现在能拿到什么"，确实更好才算可升级',
+    '扫描每首要打一次接口（不下载），所以 --scan 控制最多查几首',
+    '--apply 把找到的候选开成后台任务重下；不加只列清单',
+  ],
+  options: {
+    scan: { type: 'string', description: '最多扫多少首，默认 20', valueName: 'n' },
+    apply: { type: 'boolean', description: '把找到的开成下载任务' },
+    limit: { type: 'string', short: 'n', description: '最多列几条，默认 20', valueName: 'n' },
+    quality: { type: 'string', short: 'q', description: '配合 --apply 的请求音质', valueName: 'q' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const scanLimit = intOf(values.scan, 20, 1, 500, 'scan')
+    const listLimit = intOf(values.limit, 20, 1, 500, 'limit')
+    const result = await scanUpgradable(scanLimit, signal)
+
+    if (values.apply === true) {
+      if (result.candidates.length === 0) {
+        return {
+          data: { status: 'nothing_to_do', scanned: result.scanned, candidates: [], noUpgrade: result.noUpgrade.slice(0, listLimit) },
+          warnings: ['扫描下来没有可升级的歌'],
+        }
+      }
+      const quality = qualityOf(values.quality)
+      const tracks = await loadCandidateTracks(result.candidates, signal)
+      const started = startBatch('upgrade', `音质升级 ${tracks.length} 首`, quality, tracks)
+      return {
+        data: { ...started.data, scanned: result.scanned, upgrading: result.candidates },
+        warnings: started.warnings,
+      }
+    }
+
+    return {
+      data: {
+        status: 'scanned',
+        scanned: result.scanned,
+        upgradable: result.candidates.length,
+        candidates: result.candidates.slice(0, listLimit),
+        truncated: result.candidates.length > listLimit,
+        // 没升上去的原因也给出来，免得用户以为漏了
+        noUpgrade: result.noUpgrade.slice(0, Math.min(listLimit, 10)),
+        // "查不了"（未登录 / 网络）和"升不了"（母带就这样）是两回事，不能都说成后者
+        next: result.candidates.length > 0
+          ? '确认后加 --apply 重下'
+          : result.noUpgrade.every((n) => /未登录|失败|拿不到/.test(n.reason))
+            ? '这轮没查成（多半是没登录或网络问题），登录后重试：`astra music login start`'
+            : '这些歌的母带就这样，换源也不会更好',
+      },
+    }
+  },
+}
+
 export const musicCommands: Command[] = [
   get, search, info, batch, have, forget,
   job, jobs, jobCancel, jobResume, worker,
-  loginPlain, loginStart, loginPoll, loginWait, account, logout, playlists, daily, liked,
+  loginPlain, loginStart, loginPoll, loginWait, account, logout, playlists, daily, liked, upgrade,
   subscribeAdd, subscribeList, subscribeSet, subscribeRemove, subscribeRun,
   sourceList, sourceAdd, sourceRemove, sourceToggle(true), sourceToggle(false), sourceTest,
   coversCmd, m3uCmd,
