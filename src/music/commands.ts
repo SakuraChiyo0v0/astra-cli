@@ -12,13 +12,14 @@ import { decide, scoreTrack, type Candidate } from './match.ts'
 import { artistTopTracks, albumInfo, playlistTracks, searchCollection, searchSongs, songDetail, songDetails, type Track } from './netease.ts'
 import { resolveTarget } from './target.ts'
 import { downloadTrack } from './download.ts'
-import { allTracks, findTrack, forgetTrack, libraryStats, searchLibrary, type LibraryTrack } from './library.ts'
+import { allTracks, backfillFingerprints, findTrack, forgetTrack, libraryStats, searchLibrary, type LibraryTrack } from './library.ts'
 import { refreshLibrarySpecs } from './maintain.ts'
 import {
   addSubscription, dueSubscriptions, fetchSubscriptionTracks, findSubscription, listSubscriptions,
   recentRuns, removeSubscription, runSubscription, setSubscription, type SubscribeKind,
 } from './subscribe.ts'
-import { cancelJob, createJob, getJob, listJobs, qualitySummary, resumeJob, runWorker, spawnWorker, statusLabel } from './jobs.ts'
+import { jobItemsFor, MUSIC_DOMAIN, qualitySummary } from './jobs.ts'
+import { cancelJob, createJob, getJob, listJobs, resumeJob, runWorker, spawnWorker, statusLabel } from '../core/jobs.ts'
 import { addSource, listSources, loadEnabledSources, orphanScripts, removeSource, setSourceEnabled } from '../lx/store.ts'
 import { musicInfoOf } from './resolve.ts'
 import { probeUrl } from './audio.ts'
@@ -90,8 +91,8 @@ async function collectionTracks(kind: 'album' | 'playlist' | 'artist', id: strin
 
 function startBatch(kind: string, title: string, quality: Quality, tracks: Track[]) {
   if (tracks.length === 0) throw new AstraError('EMPTY', `${title} 里没有歌曲`, { exitCode: 4 })
-  const job = createJob(kind, title, quality, tracks)
-  spawnWorker(job.id)
+  const job = createJob({ domain: MUSIC_DOMAIN, kind, title, profile: quality, items: jobItemsFor(tracks, quality) })
+  spawnWorker(MUSIC_DOMAIN, job.id)
   const inLibrary = tracks.filter((t) => findTrack('wy', t.id) !== null).length
   return {
     data: {
@@ -276,8 +277,11 @@ const have: Command = {
   async run({ positionals, values }) {
     const limit = intOf(values.limit, 20, 1, 500, 'limit')
     if (values.refresh === true) {
+      // 先补指纹再回读规格：指纹是"老记录才缺"的，补它不需要读文件
+      // 全量重算：指纹算法会变，旧的留着重算不出来就会一直匹配不上
+      const fingerprinted = backfillFingerprints(true)
       const refreshed = await refreshLibrarySpecs()
-      return { data: { refreshed, stats: libraryStats() } }
+      return { data: { refreshed, fingerprinted, stats: libraryStats() } }
     }
     if (values.low === true) {
       const low = allTracks().filter((t) => !t.missing && (t.quality === '128k' || t.quality === '320k' || (t.spec.bitsPerSample !== null && t.spec.bitsPerSample <= 16)))
@@ -321,19 +325,19 @@ const job: Command = {
     const id = positionals[0]!
     const waitSeconds = intOf(values.wait, 0, 0, 600, 'wait')
     const deadline = Date.now() + waitSeconds * 1000
-    let snapshot = getJob(id, false)
+    let snapshot = getJob(id, false, MUSIC_DOMAIN)
     while (waitSeconds > 0 && Date.now() < deadline && !signal.aborted && ['queued', 'running'].includes(snapshot.job.status)) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
-      snapshot = getJob(id, false)
+      snapshot = getJob(id, false, MUSIC_DOMAIN)
     }
-    const full = getJob(id, true)
+    const full = getJob(id, true, MUSIC_DOMAIN)
     const items = values.failed === true ? full.items?.filter((i) => i.status === 'failed') : full.items
     return {
       data: {
         ...full.job,
         statusLabel: statusLabel(full.job.status),
         quality: qualitySummary(full.items ?? []) || null,
-        requestedQuality: full.job.quality,
+        requestedQuality: full.job.profile,
         ...(values.items === true || values.failed === true ? { items } : {}),
       },
     }
@@ -350,7 +354,7 @@ const jobs: Command = {
   },
   maxArgs: 0,
   async run({ values }) {
-    return { data: { jobs: listJobs(intOf(values.limit, 10, 1, 100, 'limit'), values.active === true).map((j) => ({ ...j, statusLabel: statusLabel(j.status) })) } }
+    return { data: { jobs: listJobs(intOf(values.limit, 10, 1, 100, 'limit'), values.active === true, MUSIC_DOMAIN).map((j) => ({ ...j, statusLabel: statusLabel(j.status) })) } }
   },
 }
 
@@ -361,7 +365,7 @@ const jobCancel: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const j = cancelJob(positionals[0]!)
+    const j = cancelJob(positionals[0]!, MUSIC_DOMAIN)
     return { data: { ...j, statusLabel: statusLabel(j.status) } }
   },
 }
@@ -373,7 +377,7 @@ const jobResume: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const j = resumeJob(positionals[0]!)
+    const j = resumeJob(positionals[0]!, MUSIC_DOMAIN)
     return { data: { ...j, statusLabel: statusLabel(j.status) } }
   },
 }
@@ -386,8 +390,8 @@ const worker: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    await runWorker(positionals[0]!)
-    return { data: getJob(positionals[0]!, false).job }
+    await runWorker(MUSIC_DOMAIN, positionals[0]!)
+    return { data: getJob(positionals[0]!, false, MUSIC_DOMAIN).job }
   },
 }
 

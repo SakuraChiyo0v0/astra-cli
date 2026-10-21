@@ -39,6 +39,9 @@ export const CONFIG_KEYS: ConfigKey[] = [
     default: '{uploader}/{title}/{page:02} {part}.{ext}' },
   { key: 'bili.quality', description: '默认请求画质：4k / 1080p60 / 1080p / 720p / 480p / 360p（未登录会被服务端封顶 360P）', default: '1080p',
     validate: (v) => ([...Object.values(QUALITY_NAMES)].includes(v) || /^\d+$/.test(v) ? null : '画质名或 qn 数字') },
+  // 视频文件大、CDN 也更容易被并发限速，默认比音乐保守
+  { key: 'bili.concurrency', description: 'B 站批量任务并发数 1..3', default: '1',
+    validate: (v) => (/^[1-3]$/.test(v) ? null : '只能是 1..3') },
   { key: 'music.concurrency', description: '批量下载并发数 1..4', default: '2',
     validate: (v) => (/^[1-4]$/.test(v) ? null : '只能是 1..4') },
   { key: 'notify.feishu_webhook', description: '后台任务结束时推送到飞书群机器人的 webhook 地址；环境变量 ASTRA_FEISHU_WEBHOOK 优先', default: '',

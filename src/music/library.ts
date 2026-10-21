@@ -100,6 +100,32 @@ export function findTrack(platform: string, id: string): LibraryTrack | null {
   return row ? fromRow(row) : null
 }
 
+/**
+ * 跨 id 的"其实是同一首歌"指纹：标题 + 歌手 + 时长（取整到秒）。
+ *
+ * 为什么需要：曲库原来只按 `platform + native_id` 去重。同一首歌换个 id 出现
+ * （重发版、不同专辑、单曲与精选）就会被当成新歌再下一遍，覆盖同名文件。
+ *
+ * 标题和歌手都做归一化（去空格标点、小写、去括号附注），时长取整到秒 ——
+ * 平台之间差一两秒是常态，差太多就该当两首歌。
+ */
+export function trackFingerprint(title: string, artists: string[], durationMs: number | null): string {
+  const clean = (text: string): string =>
+    text.toLowerCase().normalize('NFKC').replace(/[(（[【].*?[)）\]】]/g, '').replace(/[\s·・\-_'"“”‘’`~!！?？,，.。:：;；()（）[\]【】<>《》/\|]+/g, '')
+  const parts = [clean(title), artists.map(clean).sort().join(',')]
+  // 时长按 5 秒分桶，而不是精确到秒。
+  // 精确到秒看着合理，实测不行：213.2s / 212.5s / 213.9s 都是"同一首"，但取整后会落进
+  // 213 / 212 / 214 三个不同值。分桶能容忍来源间一两秒的偏差，又足够区分片段（30s）与全曲。
+  parts.push(durationMs && durationMs > 0 ? String(Math.floor(durationMs / 5000)) : '0')
+  return parts.join('|')
+}
+
+/** 按指纹找已下载的同一首歌（跨 id）。 */
+export function findByFingerprint(platform: string, fingerprint: string): LibraryTrack | null {
+  const row = db().prepare('select * from tracks where platform = ? and fingerprint = ? limit 1').get(platform, fingerprint) as Row | undefined
+  return row ? fromRow(row) : null
+}
+
 export interface SaveEntry {
   platform: string
   id: string
@@ -124,14 +150,15 @@ export function saveTrack(entry: SaveEntry): void {
   db()
     .prepare(
       `insert into tracks (platform, native_id, title, artists, album, duration_ms, file_path, format, quality, bytes, bps,
-                           audio_sha256, source_id, created_at, sample_rate, bits_per_sample, channels, has_cover, has_lyric, has_word_lyric)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           audio_sha256, source_id, created_at, sample_rate, bits_per_sample, channels, has_cover, has_lyric, has_word_lyric, fingerprint)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        on conflict (platform, native_id) do update set
          title = excluded.title, artists = excluded.artists, album = excluded.album, duration_ms = excluded.duration_ms,
          file_path = excluded.file_path, format = excluded.format, quality = excluded.quality, bytes = excluded.bytes,
          bps = excluded.bps, audio_sha256 = excluded.audio_sha256, source_id = excluded.source_id, created_at = excluded.created_at,
          sample_rate = excluded.sample_rate, bits_per_sample = excluded.bits_per_sample, channels = excluded.channels,
-         has_cover = excluded.has_cover, has_lyric = excluded.has_lyric, has_word_lyric = excluded.has_word_lyric`,
+         has_cover = excluded.has_cover, has_lyric = excluded.has_lyric, has_word_lyric = excluded.has_word_lyric,
+         fingerprint = excluded.fingerprint`,
     )
     .run(
       entry.platform, entry.id, entry.title, JSON.stringify(entry.artists), entry.album, entry.durationMs, entry.path,
@@ -140,6 +167,7 @@ export function saveTrack(entry: SaveEntry): void {
       entry.hasCover === undefined ? null : entry.hasCover ? 1 : 0,
       entry.hasLyric === undefined ? null : entry.hasLyric ? 1 : 0,
       entry.hasWordLyric === undefined ? null : entry.hasWordLyric ? 1 : 0,
+      trackFingerprint(entry.title, entry.artists, entry.durationMs),
     )
 }
 
@@ -164,6 +192,36 @@ export function updateTrackSpec(
   if (sets.length === 0) return
   values.push(platform, id)
   db().prepare(`update tracks set ${sets.join(', ')} where platform = ? and native_id = ?`).run(...values)
+}
+
+/**
+ * 回填指纹。老记录（加列之前存的）没有指纹，去重就用不上。
+ *
+ * 单独一个函数、单独一步，是因为它和"规格有没有变"无关：
+ * 文件完全没变老记录也要补指纹，不能塞进 refresh 的"有变化才写"分支里。
+ */
+export function backfillFingerprints(force = false): number {
+  // 默认只补 null；`force` 时全量重算 —— 算法一旦调整（比如从"取整到秒"改成"5 秒分桶"，
+  // 同一首歌的新旧指纹会不一样），旧指纹就是错的，必须整体重写。
+  const where = force ? '1 = 1' : 'fingerprint is null'
+  const rows = db().prepare(`select platform, native_id, title, artists, duration_ms from tracks where ${where}`).all() as {
+    platform: string; native_id: string; title: string; artists: string; duration_ms: number | null
+  }[]
+  if (rows.length === 0) return 0
+  const update = db().prepare('update tracks set fingerprint = ? where platform = ? and native_id = ?')
+  let n = 0
+  for (const row of rows) {
+    let artists: string[] = []
+    try {
+      const parsed = JSON.parse(row.artists) as unknown
+      if (Array.isArray(parsed)) artists = parsed.filter((x): x is string => typeof x === 'string')
+    } catch {
+      artists = []
+    }
+    update.run(trackFingerprint(row.title, artists, row.duration_ms), row.platform, row.native_id)
+    n += 1
+  }
+  return n
 }
 
 export function forgetTrack(platform: string, id: string): boolean {

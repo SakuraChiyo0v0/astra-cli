@@ -15,6 +15,9 @@ import { downloadPage } from './download.ts'
 import { probe } from './ffmpeg.ts'
 import { QUALITY_NAMES, QUALITY_ORDER, qualityName } from './sign.ts'
 import { parseBiliTarget } from './target.ts'
+import { parseCollectionRef, fetchFavorite, readSeason } from './collection.ts'
+import { BILI_DOMAIN, biliJobItems, qualitySummary } from './jobs.ts'
+import { cancelJob, createJob, getJob, listJobs, resumeJob, runWorker, spawnWorker, statusLabel } from '../core/jobs.ts'
 import { readFileSync, writeFileSync, existsSync, rmSync, chmodSync } from 'node:fs'
 
 const PENDING_TTL_MS = 3 * 60 * 1000
@@ -353,5 +356,165 @@ const doctor: Command = {
   },
 }
 
-export const biliCommands: Command[] = [get, info, subtitle, loginStart, loginPoll, account, logout, doctor]
+const bulk: Command = {
+  name: 'bili bulk',
+  summary: '批量下载：收藏夹 / 视频合集 / 一个视频的多个分 P',
+  usage: 'astra bili bulk <fav:id|链接> [--limit 50] [--quality 1080p] [--all-pages]',
+  notes: [
+    '收藏夹用 `fav:<id>` 或 space.bilibili.com 的 favlist 链接；需要登录才看得到私密收藏夹',
+    '给普通视频链接时，--all-pages 会把它的所有分 P 都排进任务',
+    '开的是后台任务，用 `astra bili job <id>` 看进度',
+    '**不支持按 UP 主主页批量**：B 站的 UP 投稿接口会返回风控页，硬啃只会一直失败',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '最多取几个视频，默认 50', valueName: 'n' },
+    quality: { type: 'string', short: 'q', description: '画质', valueName: 'q' },
+    'all-pages': { type: 'boolean', description: '普通视频：把所有分 P 都加进任务' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const input = positionals[0]!
+    const limit = Number(values.limit ?? '50')
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw invalidInput('--limit 必须是 1..500')
+    const quality = parseQuality(values.quality)
+
+    // 收藏夹
+    const ref = parseCollectionRef(input)
+    if (ref.kind === 'fav') {
+      const collection = await fetchFavorite(ref.id, limit, signal)
+      const items = collection.items.flatMap((v) => [{
+        id: v.bvid,
+        title: v.title,
+        subtitle: collection.title,
+        meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true },
+      }])
+      if (items.length === 0) throw new AstraError('EMPTY_COLLECTION', `收藏夹「${collection.title}」里没有可下载的视频`, { exitCode: 4 })
+      const job = createJob({ domain: BILI_DOMAIN, kind: 'fav', title: `收藏夹「${collection.title}」`, profile: qualityName(quality), items })
+      spawnWorker(BILI_DOMAIN, job.id)
+      return {
+        data: {
+          status: 'job_started',
+          job: { id: job.id, title: collection.title, total: items.length, platformTotal: collection.total },
+          preview: collection.items.slice(0, 5).map((v) => ({ bvid: v.bvid, title: v.title })),
+        },
+      }
+    }
+
+    // 普通视频：可选全部分 P
+    const target = await parseBiliTarget(input, signal)
+    if (target.kind !== 'video') throw invalidInput('认不出这是什么', '收藏夹用 `fav:<id>`，或者给视频链接')
+    const info = await videoInfo(target.bvid, signal)
+
+    // 视频合集：详情里自带 ugc_season
+    const season = (info as unknown as { ugc_season?: unknown }).ugc_season
+    if (season) {
+      const parsed = readSeason({ ugc_season: info as never })
+      if (parsed) {
+        const items = parsed.items.slice(0, limit).map((v) => ({
+          id: v.bvid, title: v.title, subtitle: parsed.title,
+          meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true },
+        }))
+        const job = createJob({ domain: BILI_DOMAIN, kind: 'season', title: `合集「${parsed.title}」`, profile: qualityName(quality), items })
+        spawnWorker(BILI_DOMAIN, job.id)
+        return { data: { status: 'job_started', job: { id: job.id, title: parsed.title, total: items.length }, preview: parsed.items.slice(0, 5).map((v) => ({ bvid: v.bvid, title: v.title })) } }
+      }
+    }
+
+    if (values['all-pages'] !== true) {
+      throw invalidInput('这个视频没有合集，也不是收藏夹', '想要它的全部分 P 就加 --all-pages')
+    }
+    const items = (await biliJobItems(info.bvid, info.pages.map((_, i) => i), quality))
+    const job = createJob({ domain: BILI_DOMAIN, kind: 'pages', title: info.title, profile: qualityName(quality), items })
+    spawnWorker(BILI_DOMAIN, job.id)
+    return { data: { status: 'job_started', job: { id: job.id, title: info.title, total: items.length }, preview: items.slice(0, 5).map((i) => ({ title: i.title })) } }
+  },
+}
+
+const jobCmd: Command = {
+  name: 'bili job',
+  summary: '看 B 站批量任务进度',
+  usage: 'astra bili job <id> [--items] [--failed] [--wait 60]',
+  options: {
+    items: { type: 'boolean', description: '列出每一项' },
+    failed: { type: 'boolean', description: '只列失败的' },
+    wait: { type: 'string', description: '最多等待秒数（≤600）', valueName: 's' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const id = positionals[0]!
+    const waitSeconds = Number(values.wait ?? '0')
+    const deadline = Date.now() + (Number.isFinite(waitSeconds) ? waitSeconds : 0) * 1000
+    let snapshot = getJob(id, false, BILI_DOMAIN)
+    while (waitSeconds > 0 && Date.now() < deadline && !signal.aborted && ['queued', 'running'].includes(snapshot.job.status)) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      snapshot = getJob(id, false, BILI_DOMAIN)
+    }
+    const full = getJob(id, true, BILI_DOMAIN)
+    const items = values.failed === true ? full.items?.filter((i) => i.status === 'failed') : full.items
+    return {
+      data: {
+        ...full.job,
+        statusLabel: statusLabel(full.job.status),
+        quality: qualitySummary(full.items ?? []) || null,
+        ...(values.items === true || values.failed === true ? { items } : {}),
+      },
+    }
+  },
+}
+
+const jobList: Command = {
+  name: 'bili jobs',
+  summary: '最近的 B 站批量任务',
+  usage: 'astra bili jobs [--active] [--limit 10]',
+  options: {
+    active: { type: 'boolean', description: '只看进行中的' },
+    limit: { type: 'string', short: 'n', description: '默认 10', valueName: 'n' },
+  },
+  maxArgs: 0,
+  async run({ values }) {
+    const limit = Number(values.limit ?? '10')
+    return { data: { jobs: listJobs(limit, values.active === true, BILI_DOMAIN).map((j) => ({ ...j, statusLabel: statusLabel(j.status) })) } }
+  },
+}
+
+const jobCancel: Command = {
+  name: 'bili job cancel',
+  summary: '取消 B 站批量任务',
+  usage: 'astra bili job cancel <id>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    const j = cancelJob(positionals[0]!, BILI_DOMAIN)
+    return { data: { ...j, statusLabel: statusLabel(j.status) } }
+  },
+}
+
+const jobResume: Command = {
+  name: 'bili job resume',
+  summary: '继续 / 重试 B 站批量任务',
+  usage: 'astra bili job resume <id>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    const j = resumeJob(positionals[0]!, BILI_DOMAIN)
+    return { data: { ...j, statusLabel: statusLabel(j.status) } }
+  },
+}
+
+const workerCmd: Command = {
+  name: 'bili _worker',
+  summary: '（内部）B 站批量任务执行体',
+  usage: 'astra bili _worker <id>',
+  hidden: true,
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    await runWorker(BILI_DOMAIN, positionals[0]!)
+    return { data: getJob(positionals[0]!, false, BILI_DOMAIN).job }
+  },
+}
+
+export const biliCommands: Command[] = [get, info, subtitle, bulk, jobCmd, jobList, jobCancel, jobResume, workerCmd, loginStart, loginPoll, account, logout, doctor]
 export { QUALITY_ORDER }

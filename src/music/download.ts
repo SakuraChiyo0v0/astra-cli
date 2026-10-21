@@ -22,7 +22,7 @@ import { resolveUrl } from './resolve.ts'
 import { audioPayload, writeTags, type TagData } from './tags.ts'
 import { renderTemplate, resolveInside } from './paths.ts'
 import { kugouWordLyric, toEnhancedLrc } from './kugou-lyric.ts'
-import { findTrack, saveTrack, type LibraryTrack } from './library.ts'
+import { findTrack, findByFingerprint, saveTrack, trackFingerprint, type LibraryTrack } from './library.ts'
 
 export interface DownloadOptions {
   quality: Quality
@@ -140,8 +140,15 @@ export function mergeLrc(original: string, translation: string | null): string {
 
 export async function downloadTrack(track: Track, options: DownloadOptions): Promise<DownloadResult> {
   const { quality, signal } = options
-  const hit = findTrack('wy', track.id)
-  if (hit && !hit.missing && !options.force) return existingResult(hit, quality)
+  // 先按 id 找，再按"标题 + 歌手 + 时长"指纹找。
+  // 同一首歌换 id 出现（重发版 / 不同专辑 / 单曲与精选）很常见，只认 id 会重下一遍并覆盖同名文件。
+  const byId = findTrack('wy', track.id)
+  const hit = byId ?? findByFingerprint('wy', trackFingerprint(track.title, track.artists, track.durationMs))
+  if (hit && !hit.missing && !options.force) {
+    // 指纹命中但 id 不同：告诉调用方"这首其实已经有了"，路径指向已有文件
+    if (hit.id !== track.id) progress('music.dedup', { wanted: track.id, existing: hit.id, title: track.title })
+    return existingResult(hit, quality)
+  }
 
   const warnings: string[] = []
   const resolved = await resolveUrl(track, quality, signal)

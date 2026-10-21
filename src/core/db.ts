@@ -88,6 +88,15 @@ const MIGRATIONS: string[] = [
      note text,
      primary key (subscription_id, ran_at)
    )`,
+  // 任务表原本是音乐专用的（quality 列存音质、artists 列存歌手）。
+  // B 站也要批量，但它的"业务字段"完全不同（画质 / 分 P / UP 主）。
+  // 加一列 meta 存各域自己的 JSON，表结构就不必跟着每个能力域改。
+  `alter table jobs add column meta text`,
+  `alter table job_items add column meta text`,
+  // 同一首歌可能以不同 id 出现（重发版、不同专辑），只认 id 会重下一遍。
+  // 指纹 = 标题 + 歌手 + 时长（秒），用于跨 id 的"其实已经有了"判断。
+  `alter table tracks add column fingerprint text`,
+  `create index tracks_fingerprint on tracks (fingerprint)`,
 ]
 
 export function db(): DatabaseSync {

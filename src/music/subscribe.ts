@@ -15,7 +15,8 @@ import { db } from '../core/db.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
 import { artistTopTracks, albumInfo, playlistTracks, type Track } from './netease.ts'
-import { createJob, spawnWorker } from './jobs.ts'
+import { createJob, spawnWorker } from '../core/jobs.ts'
+import { jobItemsFor, MUSIC_DOMAIN } from './jobs.ts'
 import { findTrack } from './library.ts'
 import type { Quality } from './audio.ts'
 
@@ -160,8 +161,9 @@ export async function runSubscription(sub: Subscription, options: { baselineOnly
   let jobId: string | null = null
   let note: string | null = null
   if (toDownload.length > 0) {
-    const job = createJob('subscription', `订阅「${sub.title}」新增 ${toDownload.length} 首`, sub.quality ?? 'flac', toDownload)
-    spawnWorker(job.id)
+    const quality = (sub.quality ?? 'flac') as Quality
+    const job = createJob({ domain: MUSIC_DOMAIN, kind: 'subscription', title: `订阅「${sub.title}」新增 ${toDownload.length} 首`, profile: quality, items: jobItemsFor(toDownload, quality) })
+    spawnWorker(MUSIC_DOMAIN, job.id)
     jobId = job.id
     note = `开了后台任务 ${job.id}`
   } else if (newTracks.length > 0) {

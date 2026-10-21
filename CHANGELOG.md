@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0 — 2026-10-21
+
+- 任务体系抽到 `core/jobs.ts`，音乐与 B 站共用：各域只注册"一项怎么处理"，生命周期（起进程、并发、取消、恢复、通知）统一管
+- B 站批量任务：`bili bulk`（收藏夹 / 合集 / 一个视频的全部 P），`bili job / jobs / job cancel / job resume`
+- 修复重复判定只认 id 的问题：新增"标题 + 歌手 + 时长分桶"指纹，同一首歌换 id 出现时不再重下覆盖
+- `music have --refresh` 顺带全量重算指纹
+- 新配置 `bili.concurrency`（1..3，默认 1）
+- 不支持按 UP 主主页批量：B 站投稿接口返回风控页
+
+
 ## 0.6.0 — 2026-10-21
 
 - 新增红心 / 取消红心：`music liked --like <ref>` / `--unlike <ref>`
