@@ -87,13 +87,30 @@ export function identityMismatch(probe: Probe, track: Track): string | null {
   return title
 }
 
-/** a 是否比 b 好：先比档位，同档位比码率。 */
+/**
+ * a 是否比 b 好。排序依据（从重要到次要）：
+ *   1. 档位（24bit > flac > 320k > 128k）
+ *   2. 同为无损时看**母带规格**：采样率高的优先，再看位深（96k/24 > 48k/24 > 44.1k/16）
+ *   3. 码率高的
+ *   4. FLAC 优先于其它格式
+ *
+ * 只看码率会选错：44.1kHz 的一首 FLAC 平均码率可能比 48kHz 的高，但规格更低。
+ */
 export function better(a: Probe, b: Probe | undefined): boolean {
   if (!b) return true
   const ra = qualityRank(a.quality)
   const rb = qualityRank(b.quality)
   if (ra !== rb) return ra < rb
-  return (a.bps ?? 0) > (b.bps ?? 0)
+  const sa = a.flac?.sampleRate ?? 0
+  const sb = b.flac?.sampleRate ?? 0
+  if (sa !== sb) return sa > sb
+  const ba = a.flac?.bitsPerSample ?? 0
+  const bb = b.flac?.bitsPerSample ?? 0
+  if (ba !== bb) return ba > bb
+  const pa = a.bps ?? 0
+  const pb = b.bps ?? 0
+  if (pa !== pb) return pa > pb
+  return a.format === 'flac' && b.format !== 'flac'
 }
 
 interface Route {
@@ -112,14 +129,16 @@ async function tryRoute(
   state: { best: ResolvedUrl | null },
   signal?: AbortSignal,
 ): Promise<ResolvedUrl | null> {
+  // 音源路线同样往最高档问：只要比现有的好就收，跑不过现有档位就停
   for (const { record, source } of sources) {
     const declared = source.sources[route.platform]?.qualitys
     if (!declared) continue
     // 只有"能用的"地址才记下来去重：坏地址（404 等）换档位后可能指向别的东西，不能据此提前放弃
     const seenUrls = new Set<string>()
     let rejected = false
-    for (const q of ladder(requested)) {
+    for (const q of ladder('24bit')) {
       if (rejected) break
+      // 现有的已经比这一档还高，再问没意义
       if (state.best && qualityRank(q) > qualityRank(state.best.probe.quality)) break
       for (const alias of qualityAliases(q, declared)) {
         if (signal?.aborted) throw new AstraError('CANCELLED', '已取消', { exitCode: 130 })
@@ -170,7 +189,6 @@ async function tryRoute(
         const candidate: ResolvedUrl = {
           url, sourceId: record.id, route: route.platform, requested, probe, downgraded: !qualitySatisfied(requested, probe.quality),
         }
-        if (!candidate.downgraded) return candidate
         if (better(probe, state.best?.probe)) state.best = candidate
         break
       }
@@ -199,8 +217,9 @@ export async function resolveUrl(track: Track, requested: Quality, signal?: Abor
         downgraded: !qualitySatisfied(requested, official.probe.quality),
         officialLevel: official.level,
       }
-      if (!candidate.downgraded) return candidate
-      state.best = candidate
+      if (better(candidate.probe, state.best?.probe)) state.best = candidate
+      // 官方已经给到 24bit 就是天花板了，不用再问音源
+      if (official.probe.quality === '24bit') return candidate
     }
   } catch (err) {
     attempts.push(`official: ${(err as Error).message.slice(0, 160)}`)
@@ -217,8 +236,7 @@ export async function resolveUrl(track: Track, requested: Quality, signal?: Abor
     })
   }
 
-  const wy = await tryRoute({ platform: 'wy', info: musicInfoOf(track) }, loaded, requested, track, attempts, state, signal)
-  if (wy) return wy
+  await tryRoute({ platform: 'wy', info: musicInfoOf(track) }, loaded, requested, track, attempts, state, signal)
 
   if (loaded.some((l) => l.source.sources.kw)) {
     let hit = null
@@ -232,8 +250,7 @@ export async function resolveUrl(track: Track, requested: Quality, signal?: Abor
         source: 'kw', name: track.title, singer: track.artists.join('、'), albumName: hit.album ?? '',
         songmid: hit.rid, hash: hit.rid, id: hit.rid, interval: hit.durationSec ?? Math.round((track.durationMs ?? 0) / 1000),
       }
-      const kw = await tryRoute({ platform: 'kw', info }, loaded, requested, track, attempts, state, signal)
-      if (kw) return kw
+      await tryRoute({ platform: 'kw', info }, loaded, requested, track, attempts, state, signal)
     } else {
       attempts.push('kw: 没找到确定是同一首的歌')
     }

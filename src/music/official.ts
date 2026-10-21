@@ -14,7 +14,7 @@
 import { AstraError } from '../core/errors.ts'
 import { httpRequest } from '../core/http.ts'
 import { loadSession, type Session } from './auth.ts'
-import { probeUrl, qualitySatisfied, type Probe, type Quality } from './audio.ts'
+import { probeUrl, qualityRank, qualitySatisfied, type Probe, type Quality } from './audio.ts'
 import type { Track } from './netease.ts'
 import { progress } from '../core/output.ts'
 
@@ -71,10 +71,34 @@ function reasonFor(row: OfficialRow): string {
 }
 
 /**
- * 向官方要一次地址。
- * 返回 null 表示"这条路走不通"（无版权 / 未登录 / 下架），不是错误。
+ * 向官方要一次地址，并一路往最高档位找。
+ *
+ * 实测（2026-10-21）：同一首歌请求 320k 与请求 flac 拿到的是**不同文件**，
+ * 所以不能"拿到就收"：要按 24bit → flac 的顺序问，官方给什么就是最高给什么。
+ * 请求档位只在**用户明确要低档**时才限制上限。
+ *
+ * 返回 `{skip}` 表示这条路走不通（无版权 / 未登录 / 下架），不是错误。
  */
 export async function officialUrl(track: Track, requested: Quality, signal?: AbortSignal): Promise<OfficialUrl | { skip: string }> {
+  const session = sessionOrNull()
+  if (!session) return { skip: '未登录' }
+  // 从最高档问起：官方按 br 给不同的文件，问低了只会拿到低档。
+  // 第一次拿到地址就是官方能给的最高档（再往下只会更低），直接返回。
+  const ladder: Quality[] = (['24bit', 'flac', '320k', '128k'] as Quality[]).filter((q) => qualityRank(q) >= qualityRank(requested))
+  let firstSkip: string | null = null
+  for (const q of ladder) {
+    const result = await askOfficial(track, q, signal)
+    if ('skip' in result) {
+      firstSkip ??= result.skip
+      continue
+    }
+    return result
+  }
+  return { skip: firstSkip ?? '官方没有可用地址' }
+}
+
+/** 问一个具体档位。 */
+async function askOfficial(track: Track, requested: Quality, signal?: AbortSignal): Promise<OfficialUrl | { skip: string }> {
   const session = sessionOrNull()
   if (!session) return { skip: '未登录' }
   const br = QUALITY_TO_BR[requested]

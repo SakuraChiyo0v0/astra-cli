@@ -28,6 +28,30 @@ astra 是单文件 `dist/astra.mjs`，Hermes 官方镜像自带 Node（≥ 24，
 
 音乐目录单独用 `astra/` 子目录，不和 music-web 的 `wy/` 混在一起。
 
+## 这台机器上实际开的权限（2026-10-21）
+
+Hermes 的 terminal 是 local 后端，agent 能在容器里跑任意命令。真正决定影响面的是挂了什么：
+
+| 挂载 | 权限 | 说明 |
+|-|-|-|
+| `/home` → `/host-root/home` | 读写 | 和 Kura 的 WebDAV 暴露范围一致 |
+| `/volume1` → `/host-root/volume1` | 读写 | 主存储：曲库、docker 配置、各项目目录都在里面 |
+| `/var/run/docker.sock` + `group_add: 121` | 控制 | **等价宿主机 root**：能起特权容器反向挂宿主根目录 |
+| `<部署根>/hermes/data` → `/opt/data` | 读写 | Hermes 自己的配置与密钥 |
+| `<音乐目录>/astra` → `/music` | 读写 | astra 下载目标 |
+| `<部署根>/astra/home` → `/opt/astra/home` | 读写 | astra 的曲库数据库、音源脚本 |
+| `<部署根>/astra/bin`、`/skills` | 只读 | CLI 与技能 |
+
+配置侧的约束：
+
+- `approvals.mode: manual` —— 危险命令（`rm -rf`、`docker stop`、写系统文件）弹飞书卡片，点确认才执行。
+  但普通的 `mv`、`>` 重定向、改配置文件**不一定**被判为危险、会直接执行。
+- 飞书：DM 只认 `FEISHU_ALLOWED_USERS` 里的人；群里 `default_group_policy: admin_only`，只有 `platforms.feishu.extra.admins` 能用。
+- 容器里没有 `sudo`，agent 以 `hermes`（uid 1000）身份跑，不是 root。
+
+回收方式：删掉 compose 里对应的那行挂载，`docker compose up -d` 重建即生效。
+`/volume1/音乐` 下有 `#recycle`，删文件会先进回收站，算一层缓冲。
+
 ## 镜像：为什么要自己 build
 
 官方镜像**装不了**飞书 SDK，必须用同目录的 Dockerfile 派生一层：
