@@ -1,0 +1,37 @@
+# Hermes Agent + astra（NAS 部署）
+# 落点：<部署根>/hermes/docker-compose.yml，同目录放 .env（只放 compose 变量，见 compose.env.example）
+#
+# - 飞书走 WebSocket 长连接，只有出站连接，不发布任何宿主端口
+# - 模型走同机的 WorkBuddy2API（OpenAI 兼容），通过 workbuddy2api_default 网络按容器名直连
+# - astra 单文件 CLI 与 skill 只读挂进来；astra 的状态目录、音乐目录单独挂载
+# - 模型 key、飞书密钥都在 data/.env（Hermes 自己的配置），这里不写明文
+services:
+  hermes:
+    image: nousresearch/hermes-agent:${HERMES_TAG:-latest}
+    container_name: hermes
+    restart: unless-stopped
+    command: ["gateway", "run"]
+    environment:
+      - TZ=Asia/Shanghai
+      # 容器内 hermes 用户映射成这个 UID/GID；要对 data、astra/home、音乐目录有写权限
+      - HERMES_UID=${HERMES_UID:?在 .env 里设 HERMES_UID}
+      - HERMES_GID=${HERMES_GID:?在 .env 里设 HERMES_GID}
+      - ASTRA_HOME=/opt/astra/home
+      - ASTRA_MUSIC_DIR=/music
+    volumes:
+      - ${DEPLOY_ROOT:?}/hermes/data:/opt/data
+      - ${DEPLOY_ROOT}/astra/bin:/opt/astra/bin:ro
+      - ${DEPLOY_ROOT}/astra/skills:/opt/astra/skills:ro
+      - ${DEPLOY_ROOT}/astra/home:/opt/astra/home
+      # astra 包装脚本放进 Hermes 默认 PATH 里的 ~/.local/bin（PATH 不能经 .env 改）
+      - ${DEPLOY_ROOT}/astra/bin/astra:/opt/data/.local/bin/astra:ro
+      - ${MUSIC_DIR:?}:/music
+    networks:
+      - workbuddy2api_default
+    labels:
+      # 镜像升级可能带 SQLite / 配置迁移，不要无人在场时自动升级
+      - com.centurylinklabs.watchtower.enable=false
+
+networks:
+  workbuddy2api_default:
+    external: true

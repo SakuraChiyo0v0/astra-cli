@@ -1,7 +1,7 @@
 ---
 name: astra-music
 description: Download songs, albums and playlists to the NAS.
-version: 0.1.1
+version: 0.1.2
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -11,6 +11,14 @@ metadata:
     category: media
 prerequisites:
   commands: [astra]
+# 让 terminal 子进程拿到 astra 的数据目录（Hermes 默认会过滤子进程环境变量）
+required_environment_variables:
+  - name: ASTRA_HOME
+    prompt: astra 数据目录
+    help: 部署时在容器环境里设好，例如 /opt/astra/home
+  - name: ASTRA_MUSIC_DIR
+    prompt: 音乐下载目录
+    help: 部署时在容器环境里设好，例如 /music
 ---
 
 # Astra Music Skill

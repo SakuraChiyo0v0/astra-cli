@@ -1,0 +1,27 @@
+# <部署根>/hermes/data/config.yaml 的初始内容。
+# Hermes 首次启动会补全其余默认项；这里只写和 astra / 模型相关的部分。
+# 字段依据 hermes-agent 仓库 cli-config.yaml.example（2026-10-21 main）。
+model:
+  # 同机 WorkBuddy2API；key 走 .env 的 OPENAI_API_KEY
+  provider: "custom"
+  base_url: "http://workbuddy2api:7863/v1"
+  # 2026-10-21 实测：deepseek-v4-pro / glm-5.3 / kimi-k3-1 / minimax-m3 等都能正确调 terminal 并遵守"歧义时先问"。
+  # 换模型：飞书里发 /model，或改这里
+  default: "cn:deepseek-v4-pro"
+
+terminal:
+  backend: local
+  # 单曲 FLAC 下载 + 写标签可能要几十秒；歌单走后台任务，不靠这个等
+  timeout: 300
+  # Hermes 会过滤子进程环境变量，astra 的两个目录要显式放行
+  env_passthrough:
+    - ASTRA_HOME
+    - ASTRA_MUSIC_DIR
+
+skills:
+  # astra 的 skill 从 astra/bin 一起只读挂进来，不和 Hermes 自己的 skills 混放
+  external_dirs:
+    - /opt/astra/skills
+
+# 共享群聊里每人一份会话
+group_sessions_per_user: true
