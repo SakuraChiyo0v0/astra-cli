@@ -82,6 +82,7 @@ stderr 是进度日志，不用管。
 | 订阅歌单 / 歌手 | `astra music subscribe add <链接>`；`subscribe list/run/set/remove` |
 | 哪些歌音质还能升 | `astra music have --low` |
 | 补齐曲库规格 | `astra music have --refresh` |
+| 按新规则重排存量文件 | `astra music retag --dry-run` 看影响面，再 `retag` → `--confirm <token>` |
 
 ## Procedure
 1. 用户给关键词时，原样交给 `astra music get`，例如 `astra music get 晴天 周杰伦`。
@@ -118,6 +119,31 @@ stderr 是进度日志，不用管。
 4. 用户没确认就不要自己往下走；令牌过期要重新生成预览。
 
 **不要**尝试自己拼令牌、也不要跳过确认环节。`willChange` 为 0 时说明没有需要改的，直接告诉用户即可。
+
+## 重排存量文件（`music retag`，会动真实文件）
+
+用户说"把以前下好的按新规则整理一下 / 我那几千首目录还是乱的"时用。它会**移动文件并重写标签**，
+和红心一样必须二次确认：
+
+1. 先跑 `astra music retag --dry-run` 看影响面。**这一步绝不落盘**，返回：
+   - `summary`：`moves`（要搬几个）、`tagsChange`、`unchanged`、`problems`
+   - `sample`：每条的 `from` → `to`，改到哪一目了然
+   - `conflicts`：有冲突就执行不了，先解决（通常是目标位置已有同名文件）
+2. 把 `summary` 和几条 `from → to` 给用户看，问一句"要搬吗"。
+   **几千首的批一定要让用户先看数字**，别直接确认。
+3. 用户同意后跑 `astra music retag`（不带 `--dry-run`）拿 `token`，再用
+   `astra music retag --confirm <token>` 执行。令牌 5 分钟、只能用一次。
+4. 执行后告诉用户 `moved` / `tagged` / `failed` 各多少。`failed` 里的文件**保持原样**，可以重跑。
+
+**判成 `problems` 的条目不会被动。** 最常见的原因是
+「曲库记录的 id 对不上」：曲库里的 `native_id` 和网易云同名 id 的其实是两首歌
+（id 会被复用）。这种情况**不要自己改 id 硬来**，让用户先跑 `astra music have --refresh` 核对。
+
+其它要说的：
+- 有冲突就整批不执行，不做"改了一半" —— 这是故意的，别绕
+- 写标签前后比对音频哈希，改到音频字节会中止
+- 同目录的 `.lrc` / `.word.lrc` 会跟着文件一起搬
+- 曲库记录会同步更新，搬完 `music have` 不会报"文件缺失"
 
 ## Pitfalls
 
