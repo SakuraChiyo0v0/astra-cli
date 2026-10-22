@@ -15,7 +15,7 @@
  */
 import { getConfig } from '../core/config.ts'
 import { lyric as neteaseLyric, searchSongs, songDetail, type Track } from './netease.ts'
-import { kugouWordLyric, toEnhancedLrc } from './kugou-lyric.ts'
+import { isCreditLine, kugouWordLyric, toEnhancedLrc } from './kugou-lyric.ts'
 import { mergeLrc } from './download.ts'
 import { resolveTarget } from './target.ts'
 
@@ -119,21 +119,33 @@ function artistScore(trackArtists: string[], want: string): number {
  * 从排好序的候选里定一个。
  *
  * - 只有一个 → 就是它
- * - 有明确的领先者 → 选它（见下）
- * - 并列 → 返回 null，由调用方报歧义
+ * - 查询串完整匹配（歌名 + 歌手都对上）且只有一个 → 选它
+ * - 给了基准时长、且有一个**明显更接近** → 选它
+ * - 否则 → 返回 null，由调用方报歧义
  *
- * "明确领先"的判据：**查询串完整匹配**（歌名 + 歌手都对上，score=1）
- * 且这样的候选只有一个。这正是"年轮 张碧晨"的情形 ——
- * 张碧晨原版完全匹配，其余都是翻唱/伴奏/拼接，不该因为它们存在就报歧义。
+ * 第三条是给"同一首歌多个版本、都落在 ±3s 容差内"的情形兜底的：
+ * 比如「Cry For Me」有 Echo艾歌 302s 和 DJ阿哲 299s 两个候选，
+ * 用户传了 `--duration 302` 就说明他知道自己那版是哪个 —— 此时按"时长最接近"
+ * 决胜是合理的，不该再让他从提示里手工挑。
  *
- * 只给歌名时（"年轮"）：多个候选的 score 都是 1，没有领先者 → 报歧义，
- * 让用户补歌手或 --duration。**不替用户选版本**。
+ * 但如果两个候选的时长一样近（差 0 秒），仍然报歧义 —— 那种情况下
+ * 时长不构成任何证据，替用户选就是瞎猜。
+ *
+ * 只给歌名、没给 `--duration` 时：多个候选 score 都是 1，没有领先者 → 报歧义。
+ * **不替用户选版本**。
  */
 export function pickUnique(candidates: LyricCandidate[]): LyricCandidate | null {
   if (candidates.length === 0) return null
   if (candidates.length === 1) return candidates[0]!
   const perfect = candidates.filter((c) => c.titleScore >= 1)
   if (perfect.length === 1) return perfect[0]!
+  // 有时长基准时按"最接近"决胜 —— 但必须明显领先（第二名至少差 1 秒）
+  const timed = [...candidates].filter((c) => c.durationDeltaMs !== null)
+  if (timed.length >= 2) {
+    timed.sort((a, b) => a.durationDeltaMs! - b.durationDeltaMs!)
+    const [best, runnerUp] = timed as [LyricCandidate, LyricCandidate]
+    if (best.durationDeltaMs! + 1000 <= runnerUp.durationDeltaMs!) return best
+  }
   return null
 }
 
@@ -214,7 +226,9 @@ export async function fetchLyric(input: LyricFetchInput): Promise<LyricFetchResu
 
   // 3) 逐行（网易云，含翻译合并）
   const lr = await neteaseLyric(track.id, input.signal)
-  let line = lr.lrc ? mergeLrc(lr.lrc, lr.translation) : ''
+  // 网易云 LRC 会在开头带「作词 : xxx / 作曲 : xxx」和一行「歌名 - 歌手」，
+  // 播放器会把它们当歌词滚出来 —— 先剔掉再合并翻译
+  let line = lr.lrc ? stripNonLyricLines(mergeLrc(lr.lrc, lr.translation), { title: track.title, artists: track.artists }) : ''
 
   // 4) 逐字（酷狗，自带三道时长闸门）
   let word: string | null = null
@@ -228,9 +242,16 @@ export async function fetchLyric(input: LyricFetchInput): Promise<LyricFetchResu
       try {
         const krc = await kugouWordLyric(verifyTrack, input.signal)
         if (krc) {
-          word = toEnhancedLrc(krc)
+          // 逐字同样要滤歌名行（KRC 里的制作信息在 parseKrc 已挡掉，
+          // 但「年轮 - 张碧晨 (Diamond)」这种首行还在）
+          word = stripNonLyricLines(toEnhancedLrc(krc), { title: track.title, artists: track.artists })
           // 逐字拿到了但逐行是空（网易云没这首）时，从逐字剥一份逐行
-          if (!line) line = krc.lines.map((l) => `[${stamp(l.startMs)}]${l.text}`).join('\n')
+          if (!line) {
+            line = stripNonLyricLines(
+              krc.lines.map((l) => `[${stamp(l.startMs)}]${l.text}`).join('\n'),
+              { title: track.title, artists: track.artists },
+            )
+          }
         } else {
           wordUnavailableReason = '酷狗没有时长能对上的逐字歌词（差超过 3 秒就丢弃，避免整段错位）'
         }
@@ -255,6 +276,60 @@ export async function fetchLyric(input: LyricFetchInput): Promise<LyricFetchResu
     word,
     wordUnavailableReason,
   }
+}
+
+/**
+ * 去掉"不是歌词的歌词行"。
+ *
+ * 两种来源都会混进来，播放器一律当歌词滚出来：
+ * - **制作信息**：`[00:00.000] 作词 : 汪苏泷` / `作曲` / `编曲` —— 网易云 LRC
+ *   和酷狗 KRC 都带（KRC 那边在 parseKrc 里已经滤过，这里兜网易云）
+ * - **歌名行**：`[00:00.00]年轮 - 张碧晨 (Diamond)` —— 有的歌词文件把标题塞在第一行
+ *
+ * 判据只看**行文本本身**，不依赖时间戳：真实歌词也可能正好在 0 秒开始。
+ * 歌名行用"和已知的 title/artists 对上"来判断，对不上就不动 —— 宁可留下
+ * 一行可疑的，也不要误删开头的第一句歌词。
+ */
+export function stripNonLyricLines(
+  lrc: string,
+  meta: { title?: string; artists?: string[] },
+): string {
+  const norm = (s: string): string => s.toLowerCase().replace(/[\s\-_·・.,，。!！?？'"“”‘’/\\()（）\[\]【】]/g, '')
+  const title = norm(meta.title ?? '')
+  const artists = (meta.artists ?? []).map(norm).filter(Boolean)
+
+  return lrc
+    .split(/\r?\n/)
+    .filter((raw) => {
+      if (!raw.trim()) return false
+      // 取出这一行的时间戳，剩下的才是正文
+      const m = raw.match(/^((?:\[[\d:.]+\])+)(.*)$/)
+      // 逐字行带着 `<mm:ss.xx>` 标签，判断"这行是什么文字"要先剥掉它们，
+      // 否则 norm 之后会混进一长串时间戳数字，什么判据都不准
+      const body = (m?.[2] ?? raw).replace(/<\d+:\d+(?:\.\d+)?>/g, '').trim()
+      if (!body) return false
+      if (isCreditLine(body)) return false
+      // 歌名行：正文里能同时找到 title 和所有 artist，且没有多余的实质内容。
+      //
+      // 逐字那版长这样：`年轮 - 张碧晨 (Diamond)`。`norm` 已经把括号和标点剥掉了，
+      // 剩下的就是 `年轮张碧晨diamond` —— 剥掉 title 和 artists 后还剩 `diamond`。
+      // 判据用"剩多少"而不是"总长多少"：附注长短不影响判断，只有混进真正的歌词才会超。
+      if (title && artists.length > 0) {
+        let rest = norm(body)
+        // 正文里根本没有歌名 —— 那就是一句歌词，别动它
+        if (!rest.includes(title)) return true
+        rest = rest.replace(title, '')
+        for (const a of artists) rest = rest.replace(a, '')
+        // 剩下的部分是"附注"而不是歌词。判据两条，满足其一就算歌名行：
+        // - 很短（≤4 字）：`年轮 - 张碧晨` 这种纯标题
+        // - 不含中文且 ≤12 字符：`年轮 - 张碧晨 (Diamond)` 的英文版名
+        // 真正的歌词行剥掉歌名和歌手后必然还剩一整句中文，两条都不满足。
+        const hasCjk = /[一-龥]/.test(rest)
+        if (rest.length <= 4 || (!hasCjk && rest.length <= 12)) return false
+      }
+      return true
+    })
+    .join('\n')
 }
 
 /** LRC 时间戳（`mm:ss.xx`），与 kugou-lyric / netease 的写法保持一致。 */

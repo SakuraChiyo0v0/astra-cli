@@ -375,7 +375,7 @@ const templateCmd: Command = {
 const lyricCmd: Command = {
   name: 'music lyric',
   summary: '只取歌词，不下载音频（库里已有音频、想补歌词时用这个）',
-  usage: 'astra music lyric <关键词|ref> [--word] [--out <路径>] [--duration <秒>]',
+  usage: 'astra music lyric <关键词|ref> [--word] [--out <路径>] [--duration <秒>] [--with-text]',
   notes: [
     '**不会下载音频**，也不会动曲库记录 —— 只取歌词',
     '默认返回逐行 LRC（[mm:ss.xx]文本）；--word 额外取逐字增强 LRC（[mm:ss.xx]<mm:ss.xx>字…）',
@@ -388,7 +388,7 @@ const lyricCmd: Command = {
     word: { type: 'boolean', description: '同时取逐字增强 LRC（从酷狗，带逐字时间戳）' },
     out: { type: 'string', description: '写进这个路径（自动按 .lrc / .line.lrc 约定拆成两份）', valueName: 'path' },
     duration: { type: 'string', description: '用这个时长（秒）做校验，代替网易云记录；B 站音频必填', valueName: 'sec' },
-    json: { type: 'boolean', description: '把歌词正文也放进 data（默认只给行数，避免超长输出）' },
+    'with-text': { type: 'boolean', description: '把歌词正文也放进 data（默认只给行数，避免超长输出）。注意不是 --json —— 那是全局标志，会被入口剥掉' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -454,7 +454,7 @@ const lyricCmd: Command = {
         hasWord: result.word !== null,
         lines: { line: lineCount, word: wordCount },
         written,
-        ...(values.json === true ? { lyrics: { line: result.line, word: result.word } } : {}),
+        ...(values['with-text'] === true ? { lyrics: { line: result.line, word: result.word } } : {}),
       },
       ...(warnings.length > 0 ? { warnings } : {}),
     }

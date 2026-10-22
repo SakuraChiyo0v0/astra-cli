@@ -85,3 +85,55 @@ test('制作人员行不算歌词', () => {
   assert.equal(isCreditLine('[00:18.81] 圆圈勾勒成指纹'), false)
   assert.equal(isCreditLine('回忆苦涩的吻痕'), false)
 })
+
+// ---- 用户实测反馈的三条（v0.12.11） ----
+
+test('制作信息行和歌名行都要滤掉，真实歌词不能误伤', async () => {
+  const { stripNonLyricLines } = await import('../src/music/lyric-cmd.ts')
+  const lrc = [
+    '[00:00.000] 作词 : 汪苏泷',
+    '[00:01.000] 作曲 : 汪苏泷',
+    '[00:02.000] 编曲 : 汪苏泷',
+    '[00:00.00]年轮 - 张碧晨 (Diamond)',
+    '[00:18.739]圆圈勾勒成指纹',
+    '[00:22.268]印在我的嘴唇',
+  ].join('\n')
+  const out = stripNonLyricLines(lrc, { title: '年轮', artists: ['张碧晨'] })
+  assert.equal(out.split('\n').length, 2, `只该剩两句歌词，实际：${out}`)
+  assert.match(out, /圆圈勾勒成指纹/)
+  assert.doesNotMatch(out, /作词|作曲|编曲|Diamond/)
+})
+
+test('逐字行同样要滤歌名行（带 <mm:ss.xx> 标签时也要认得出）', async () => {
+  const { stripNonLyricLines } = await import('../src/music/lyric-cmd.ts')
+  const word = '[00:00.00]<00:00.00>年<00:00.39>轮<00:00.78> <00:01.17>-<00:01.56> <00:01.95>张<00:02.34>碧<00:02.73>晨'
+  const body = '[00:18.81]<00:18.81>圆<00:19.15>圈<00:19.57>勾<00:19.97>勒<00:20.34>成<00:20.71>指<00:21.16>纹'
+  const out = stripNonLyricLines(`${word}\n${body}`, { title: '年轮', artists: ['张碧晨'] })
+  assert.equal(out, body, '只留下正文那句，且逐字标签原样保留')
+})
+
+test('开头第一句歌词不能被当成歌名行删掉', async () => {
+  const { stripNonLyricLines } = await import('../src/music/lyric-cmd.ts')
+  // 《年轮》里的歌名是个常见词，但这一句是歌词
+  const lrc = '[00:00.00]年轮转了一圈又一圈'
+  const out = stripNonLyricLines(lrc, { title: '年轮', artists: ['张碧晨'] })
+  assert.equal(out, lrc, '剥掉歌名后还剩一整句中文，不能判成歌名行')
+})
+
+test('--duration 能在时长明显更近时决胜歧义', async () => {
+  const { pickUnique } = await import('../src/music/lyric-cmd.ts')
+  const candidates = pickLyricCandidates(
+    [track('1', 'Cry For Me', ['Echo艾歌'], 301802), track('2', 'Cry For Me', ['DJ阿哲'], 299331)],
+    { title: 'Cry For Me', durationMs: 302000 },
+  )
+  assert.equal(pickUnique(candidates)?.track.id, '1', '302s 明显更接近 302000ms')
+})
+
+test('两个候选一样近时不瞎猜，仍报歧义', async () => {
+  const { pickUnique } = await import('../src/music/lyric-cmd.ts')
+  const candidates = pickLyricCandidates(
+    [track('1', 'Cry For Me', ['Echo艾歌'], 301300), track('2', 'Cry For Me', ['DJ阿哲'], 301500)],
+    { title: 'Cry For Me', durationMs: 301400 },
+  )
+  assert.equal(pickUnique(candidates), null, '各差 100ms/100ms，时长不构成证据')
+})
