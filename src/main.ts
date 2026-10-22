@@ -342,6 +342,23 @@ const commands: Command[] = [
 ]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
+/**
+ * 把入口剥掉的全局标志，在命令自己声明了同名选项时补回去。
+ *
+ * `--json` 是个 no-op 的全局标志（输出本来就是 JSON），入口会无条件把它从
+ * argv 里过滤掉。代价是**命令永远收不到同名的 `--json`** ——
+ * `music lyric` 就踩过：帮助里写了 `--json`、实际传了没有任何效果，
+ * 因为它在到达命令之前就没了。
+ *
+ * 只在两件事同时成立时补回去：用户确实传了、命令自己声明了这个选项。
+ * 抽成纯函数是为了能直接测这段判断，不用起进程。
+ */
+export function restoreCommandFlags(rawArgv: string[], command: Command, rest: string[]): string[] {
+  const userPassed = rawArgv.includes('--json')
+  const commandDeclares = Boolean(command.options?.json)
+  return userPassed && commandDeclares ? [...rest, '--json'] : rest
+}
+
 export function route(argv: string[]): { command: Command; rest: string[] } | null {
   const words = argv.filter((a) => !a.startsWith('-'))
   for (let n = Math.min(3, words.length); n > 0; n -= 1) {
@@ -377,7 +394,7 @@ async function main(): Promise<number> {
   process.once('SIGINT', onSignal)
   process.once('SIGTERM', onSignal)
   try {
-    const parsed = parseCommandArgs(routed.command, routed.rest)
+    const parsed = parseCommandArgs(routed.command, restoreCommandFlags(argv, routed.command, routed.rest))
     const result = await routed.command.run({ ...parsed, signal: controller.signal })
     writeJson(okResult(result.data, result.warnings ?? []), pretty)
     return 0

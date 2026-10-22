@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.14 — 2026-10-22
+
+**`--json` 真正可用；歧义时给结构化候选**
+
+- **修（我上一轮的误判）**：0.12.11 我把 `music lyric` 的 `--json` 改名成 `--with-text`，
+  理由是"`--json` 是全局标志、入口会剥掉它"。改名能绕过问题，但**没解决根因** ——
+  `main.ts` 无条件剥掉 `--json`，导致任何命令都不能用这个名字。现在入口改为
+  "命令自己声明了 `--json` 就补回去"（`restoreCommandFlags`），命令名恢复成 `--json`
+- 返回键名对齐契约：`data.lrc` / `data.word`（原先是 `data.lyrics.line` / `data.lyrics.word`）
+- **`LYRIC_AMBIGUOUS` 带 `details.candidates`**：排好序的候选数组
+  （`ref` / `title` / `artists` / `durationMs` / `durationDeltaMs`），
+  调用方直接取第一个重试即可，不必解析错误文案
+- **修**：`music subscribe list` 新增 `qualityResolved` —— 实际会用的档位。
+  `quality` 仍是原始的 null（"没指定过"本身是信息），脚本不用自己去读 config
+- 测试：`restoreCommandFlags` 抽成纯函数并有测试；`--json` 那条验过"撤掉修复会变红"
+
 ## 0.12.13 — 2026-10-22
 
 **`music covers` 改成以目录为准 —— 曲库没收录的专辑不再静默漏掉**

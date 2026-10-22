@@ -31,6 +31,31 @@ export interface LyricCandidate {
 /** 逐字校验允许的时长容差，与 kugou-lyric 的搜索闸门保持一致。 */
 const DURATION_TOLERANCE_MS = 3000
 
+/** 一个可程序化选择的候选。 */
+export interface LyricCandidateView {
+  ref: string
+  title: string
+  artists: string[]
+  durationMs: number | null
+  /** 与 `--duration` 的差（毫秒）；没给基准时是 null。排序依据。 */
+  durationDeltaMs: number | null
+}
+
+/**
+ * 多个版本都能匹配上。
+ *
+ * 用专门的类型而不是往消息里塞 JSON：调用方要的是结构化数据，
+ * 塞进文案里逼着人去正则解析，正是这个错误要避免的事。
+ */
+export class AmbiguousLyricError extends Error {
+  readonly candidates: LyricCandidateView[]
+  constructor(message: string, candidates: LyricCandidateView[]) {
+    super(`AMBIGUOUS:${message}`)
+    this.name = 'AmbiguousLyricError'
+    this.candidates = candidates
+  }
+}
+
 function normalize(text: string): string {
   return text
     .toLowerCase()
@@ -211,9 +236,17 @@ export async function fetchLyric(input: LyricFetchInput): Promise<LyricFetchResu
     // 搜"年轮"第一条是汪苏泷 4:06，张碧晨原版 4:35 排第二，取第一条就是错的版本。
     const unique = pickUnique(candidates)
     if (!unique) {
-      throw new Error(
-        `AMBIGUOUS:「${target.keyword}」有 ${candidates.length} 个版本，需要指定：`
+      // 机器可读的候选列表挂到 details 上：调用方要程序化选择时不值得去解析错误文案
+      throw new AmbiguousLyricError(
+        `「${target.keyword}」有 ${candidates.length} 个版本，需要指定：`
         + candidates.slice(0, 5).map((c) => `${c.track.title} - ${c.track.artists.join('/')}（wy:${c.track.id}，${Math.round((c.track.durationMs ?? 0) / 1000)}s）`).join('；'),
+        candidates.map((c) => ({
+          ref: `wy:${c.track.id}`,
+          title: c.track.title,
+          artists: c.track.artists,
+          durationMs: c.track.durationMs,
+          durationDeltaMs: c.durationDeltaMs,
+        })),
       )
     }
     track = unique.track

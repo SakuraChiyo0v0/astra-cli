@@ -137,3 +137,27 @@ test('两个候选一样近时不瞎猜，仍报歧义', async () => {
   )
   assert.equal(pickUnique(candidates), null, '各差 100ms/100ms，时长不构成证据')
 })
+
+test('--json 真的能拿到正文（它曾被 main.ts 当全局标志剥掉）', async () => {
+  const { parseCommandArgs } = await import('../src/core/command.ts')
+  const { musicCommands } = await import('../src/music/commands.ts')
+  const cmd = musicCommands.find((c) => c.name === 'music lyric')!
+  // 命令自己声明了 --json，入口才该把它补回来
+  assert.ok(cmd.options?.json, 'music lyric 必须自己声明 --json，否则永远收不到')
+  const parsed = parseCommandArgs(cmd, ['wy:1', '--json'])
+  assert.equal(parsed.values.json, true)
+})
+
+test('入口会把命令声明的 --json 补回去（否则命令永远收不到）', async () => {
+  const { restoreCommandFlags } = await import('../src/main.ts')
+  const { musicCommands } = await import('../src/music/commands.ts')
+  const lyric = musicCommands.find((c) => c.name === 'music lyric')!
+  const noJson = musicCommands.find((c) => c.name === 'music get')!
+
+  // 用户传了 + 命令声明了 → 补回去
+  assert.deepEqual(restoreCommandFlags(['music', 'lyric', '--json'], lyric, ['x']), ['x', '--json'])
+  // 用户没传 → 不能凭空加
+  assert.deepEqual(restoreCommandFlags(['music', 'lyric'], lyric, ['x']), ['x'])
+  // 命令没声明 → 保持全局 no-op 的语义（剥掉）
+  assert.deepEqual(restoreCommandFlags(['music', 'get', '--json'], noJson, ['x']), ['x'])
+})

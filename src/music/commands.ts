@@ -33,7 +33,7 @@ import { loadCandidateTracks, scanUpgradable } from './upgrade.ts'
 import { applyLike, prepareLike, readPending as readLikePending } from './like.ts'
 import { audited } from '../core/audit.ts'
 import { toTrack } from './netease.ts'
-import { fetchLyric, lyricFilePaths } from './lyric-cmd.ts'
+import { AmbiguousLyricError, fetchLyric, lyricFilePaths } from './lyric-cmd.ts'
 import { consume, prepare, clearPending, bindingMatches } from '../core/confirm.ts'
 import { executeRetag, planRetag, type RetagPlan } from './retag.ts'
 import { createHash } from 'node:crypto'
@@ -377,7 +377,7 @@ const templateCmd: Command = {
 const lyricCmd: Command = {
   name: 'music lyric',
   summary: '只取歌词，不下载音频（库里已有音频、想补歌词时用这个）',
-  usage: 'astra music lyric <关键词|ref> [--word] [--out <路径>] [--duration <秒>] [--with-text]',
+  usage: 'astra music lyric <关键词|ref> [--word] [--out <路径>] [--duration <秒>] [--json]',
   notes: [
     '**不会下载音频**，也不会动曲库记录 —— 只取歌词',
     '默认返回逐行 LRC（[mm:ss.xx]文本）；--word 额外取逐字增强 LRC（[mm:ss.xx]<mm:ss.xx>字…）',
@@ -390,7 +390,7 @@ const lyricCmd: Command = {
     word: { type: 'boolean', description: '同时取逐字增强 LRC（从酷狗，带逐字时间戳）' },
     out: { type: 'string', description: '写进这个路径（自动按 .lrc / .line.lrc 约定拆成两份）', valueName: 'path' },
     duration: { type: 'string', description: '用这个时长（秒）做校验，代替网易云记录；B 站音频必填', valueName: 'sec' },
-    'with-text': { type: 'boolean', description: '把歌词正文也放进 data（默认只给行数，避免超长输出）。注意不是 --json —— 那是全局标志，会被入口剥掉' },
+    json: { type: 'boolean', description: '把歌词正文也放进 data（默认只给行数，避免超长输出）' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -420,6 +420,8 @@ const lyricCmd: Command = {
         throw new AstraError('LYRIC_AMBIGUOUS', message.slice('AMBIGUOUS:'.length), {
           exitCode: 2,
           hint: '把歌手名也带上（如 "年轮 张碧晨"），或直接用 wy:<id>；也可以加 --duration <秒> 用实际时长筛',
+          // candidates 是排好序的（时长差小的在前），调用方可以直接取第一个重试
+          details: { candidates: err instanceof AmbiguousLyricError ? err.candidates : [] },
         })
       }
       if (/只能按单曲取歌词/.test(message)) {
@@ -456,7 +458,7 @@ const lyricCmd: Command = {
         hasWord: result.word !== null,
         lines: { line: lineCount, word: wordCount },
         written,
-        ...(values['with-text'] === true ? { lyrics: { line: result.line, word: result.word } } : {}),
+        ...(values.json === true ? { lrc: result.line, word: result.word } : {}),
       },
       ...(warnings.length > 0 ? { warnings } : {}),
     }
@@ -888,7 +890,11 @@ function subView(s: ReturnType<typeof listSubscriptions>[number]) {
     title: s.title,
     everyHours: s.everyHours,
     quality: s.quality,
-    // 没指定档位时实际继承 music.quality，只回 null 的话调用方没法判断会用哪个
+    // 实际会用的档位：订阅自己指定的，或继承 music.quality。
+    // `quality` 保留原始的 null（"没指定过"本身是信息），
+    // 而 `qualityResolved` 是脚本真正该看的值 —— 不用自己去读 config。
+    qualityResolved: s.quality ?? getConfig('music.quality'),
+    // 人眼看的说明；脚本用上面的字段，别解析这句话
     qualityNote: s.quality === null ? `未指定，继承 music.quality（当前 ${getConfig('music.quality')}）` : null,
     enabled: s.enabled,
     lastCheckedAt: s.lastCheckedAt,
