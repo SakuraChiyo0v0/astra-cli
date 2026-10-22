@@ -7,9 +7,15 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import path from 'node:path'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { filterByExclude } from '../src/bili/audio-sync.ts'
 import { biliAudioRoot, getConfig, setConfig } from '../src/core/config.ts'
 import { targetPathFor } from '../src/bili/download.ts'
+
+// 隔离 ASTRA_HOME：下面有用例调 setConfig，不隔离会写进真实的 ~/.astra/config.json
+process.env.ASTRA_HOME = mkdtempSync(path.join(tmpdir(), 'astra-audiosync-home-'))
 import { renderTemplate } from '../src/core/template.ts'
 import type { VideoInfo } from '../src/bili/api.ts'
 

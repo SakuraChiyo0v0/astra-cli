@@ -12,8 +12,12 @@
  *   《xxx》…​.jpg
  *   《xxx》…​.Danmaku.ass
  *
- * 也就是说扩展名**追加**在视频文件名后面，不是替换 —— `a.mp4` → `a.mp4.Metadata.nfo`。
- * 一开始容易写成 `a.Metadata.nfo`（替换扩展名），那样播放器认不出是同一条。
+ * 也就是**替换**最后一个扩展名：`a.mp4` → `a.Metadata.nfo` / `a.jpg` / `a.Danmaku.ass`。
+ *
+ * 这条我一开始写反了 —— 注释里理直气壮地写着"扩展名追加，不是替换"，
+ * 于是产出 `暗香.mp3.jpg`。刮削器的规则是 `<stem>.<ext>`（同目录同名、不同扩展），
+ * `暗香.mp3.jpg` 不会被当成 `暗香.mp3` 的封面，它是个孤儿文件。
+ * 实测被 Hermes 抓出来。**注释写得太肯定，反而掩盖了错误。**
  *
  * 默认不生成（`bili.sidecar` 默认为空）：多数视频不需要弹幕，而弹幕要额外请求接口。
  */
@@ -38,7 +42,16 @@ export function sidecarKinds(raw: string | null | undefined): SidecarKind[] {
 /** 给视频路径算出伴生文件的路径：扩展名追加，不替换。 */
 export function sidecarPath(videoPath: string, kind: SidecarKind): string {
   const suffix = kind === 'nfo' ? '.Metadata.nfo' : kind === 'cover' ? '.jpg' : '.Danmaku.ass'
-  return `${videoPath}${suffix}`
+  // **替换**最后一个扩展名，不是追加。
+  //
+  // Emby / Jellyfin / Kodi 的刮削规则是 `<stem>.<ext>`：同目录下同名、
+  // 不同扩展名的文件才被认成同一条。`暗香.mp3.jpg` 不会被当成 `暗香.mp3` 的封面，
+  // 它是个孤儿文件 —— 刮削器根本不去看它。
+  //
+  // 一开始我写成了追加（`${videoPath}${suffix}`），注释还理直气壮地写着
+  // "扩展名追加，不是替换" —— 那条注释是**错的**，实测被 Hermes 抓出来。
+  const stem = videoPath.replace(/\.[^.\\/]+$/, '')
+  return `${stem}${suffix}`
 }
 
 function escapeXml(text: string): string {

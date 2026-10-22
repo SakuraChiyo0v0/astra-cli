@@ -8,9 +8,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { buildNfo, sidecarKinds, sidecarPath } from '../src/bili/sidecar.ts'
 import { targetPathFor } from '../src/bili/download.ts'
+import { getConfig, setConfig } from '../src/core/config.ts'
 import type { VideoInfo } from '../src/bili/api.ts'
+
+// **必须隔离 ASTRA_HOME。** 有几个用例会调 `setConfig` 验证配置优先级，
+// 没隔离的话会写进真实的 `~/.astra/config.json` —— 之前就污染过一次
+// （`bili.audio-dir` 被写成 `/m/bili-audio`，之后所有测试的落盘断言全挂）。
+process.env.ASTRA_HOME = mkdtempSync(path.join(tmpdir(), 'astra-sidecar-home-'))
 
 const INFO: VideoInfo = {
   bvid: 'BV1GEn26uEDT',
@@ -27,11 +35,19 @@ const INFO: VideoInfo = {
   ],
 }
 
-test('伴生文件是扩展名追加，不是替换', () => {
-  // 播放器认的是「同名 + 不同后缀」，替换扩展名就认不出来了
-  assert.equal(sidecarPath('/v/01 绿色.mp4', 'nfo'), '/v/01 绿色.mp4.Metadata.nfo')
-  assert.equal(sidecarPath('/v/01 绿色.mp4', 'cover'), '/v/01 绿色.mp4.jpg')
-  assert.equal(sidecarPath('/v/01 绿色.mp4', 'danmaku'), '/v/01 绿色.mp4.Danmaku.ass')
+test('伴生文件替换扩展名，不是追加', () => {
+  // Emby/Jellyfin/Kodi 的规则是 `<stem>.<ext>`：同目录同名、不同扩展名才算同一条。
+  // `暗香.mp3.jpg` 不会被当成 `暗香.mp3` 的封面 —— 它是孤儿文件，刮削器根本不看。
+  assert.equal(sidecarPath('/v/01 绿色.mp4', 'nfo'), '/v/01 绿色.Metadata.nfo')
+  assert.equal(sidecarPath('/v/01 绿色.mp4', 'cover'), '/v/01 绿色.jpg')
+  assert.equal(sidecarPath('/v/01 绿色.mp4', 'danmaku'), '/v/01 绿色.Danmaku.ass')
+  // 音频同理：`暗香.mp3` → `暗香.jpg`
+  assert.equal(sidecarPath('/m/暗香.mp3', 'cover'), '/m/暗香.jpg')
+  assert.equal(sidecarPath('/m/暗香.mp3', 'nfo'), '/m/暗香.Metadata.nfo')
+})
+
+test('文件名里有多个点也只在最后一个扩展名上替换', () => {
+  assert.equal(sidecarPath('/m/a.b.c.mp3', 'cover'), '/m/a.b.c.jpg')
 })
 
 test('配置解析：逗号 / 空格 / 中文逗号都认，all 是全集', () => {
@@ -90,22 +106,33 @@ test('音频默认落音乐库，--to bili 才回视频目录', () => {
   assert.equal(musicP2.vars.title, '纯享版')
 })
 
-test('音频落盘的根目录是音乐库，视频是视频库', () => {
+test('音频落盘的根目录：默认音乐库，配了 audio-dir 就独立，--to bili 进视频库', () => {
   const prevMusic = process.env.ASTRA_MUSIC_DIR
   const prevVideo = process.env.ASTRA_VIDEO_DIR
-  // 这两个是纯函数里读的 env，统一给个可识别的值。
+  const prevAudioDir = getConfig('bili.audio-dir')
   // 断言用 path.resolve 后的形状做比较 —— 这些函数内部就 resolve 过，
   // 在 Windows 上 `/m/music` 会变成 `C:\m\music`，直接比字面量会假失败。
   const music = path.resolve('/m/music')
   const video = path.resolve('/m/video')
+  const audioDir = path.resolve('/m/bili-audio')
   process.env.ASTRA_MUSIC_DIR = music
   process.env.ASTRA_VIDEO_DIR = video
+  const base: { audioOnly?: boolean; audioTo?: 'music' | 'bili' } = {}
   try {
-    const base: { audioOnly?: boolean; audioTo?: 'music' | 'bili' } = {}
+    // 没配 bili.audio-dir：音频落音乐库
+    setConfig('bili.audio-dir', '')
     assert.equal(targetPathFor(INFO, INFO.pages[0]!, { ...base, audioOnly: true }, 80).root, music)
+
+    // 配了：音频落独立根，音乐库不新增
+    setConfig('bili.audio-dir', audioDir)
+    assert.equal(targetPathFor(INFO, INFO.pages[0]!, { ...base, audioOnly: true }, 80).root, audioDir)
+
+    // --to bili：仍进视频库
     assert.equal(targetPathFor(INFO, INFO.pages[0]!, { ...base, audioOnly: true, audioTo: 'bili' }, 80).root, video)
+    // 视频永远进视频库
     assert.equal(targetPathFor(INFO, INFO.pages[0]!, { ...base }, 80).root, video)
   } finally {
+    setConfig('bili.audio-dir', prevAudioDir)
     if (prevMusic === undefined) delete process.env.ASTRA_MUSIC_DIR
     else process.env.ASTRA_MUSIC_DIR = prevMusic
     if (prevVideo === undefined) delete process.env.ASTRA_VIDEO_DIR
