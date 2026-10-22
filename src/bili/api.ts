@@ -172,12 +172,26 @@ export async function playInfo(bvid: string, cid: number, qn: number, signal?: A
   }
 }
 
-/** 字幕列表（需要登录；UP 主没传字幕就是空）。 */
+/**
+ * 字幕列表（需要登录；UP 主没传字幕就是空）。
+ *
+ * **必须走 `/x/player/wbi/v2`，不能用 `/x/player/v2`。** 实测（2026-10-22）：
+ * 同一个 bvid+cid，不带 wbi 签名的那条会时好时坏 —— 6 次里 1 次返回**空 subtitle_url**、
+ * 1 次丢掉 zh-CN，URL 也停在过期值上不刷新（wbi 版每次给的是新签名的 CDN 链接）。
+ * 调用方拿到空 URL 后 `fetch('')` 抛错被跳过，于是"有时有字幕、有时没有"，
+ * 甚至读到 CDN 上已经换给别人内容的旧路径 —— 表现就是"返回别的视频的字幕"。
+ */
 export async function subtitleList(bvid: string, cid: number, signal?: AbortSignal): Promise<{ lan: string; lanDoc: string; url: string }[]> {
+  const keys = await wbiKeys(signal)
+  // wbi 签名只需要 bvid/cid 参与；与播放地址是同一套密钥
+  const query = signParams({ bvid, cid }, keys)
   const data = await get<{ subtitle?: { subtitles?: { lan: string; lan_doc: string; subtitle_url: string }[] } }>(
-    `https://api.bilibili.com/x/player/v2?bvid=${encodeURIComponent(bvid)}&cid=${cid}`,
+    `https://api.bilibili.com/x/player/wbi/v2?${query}`,
     '字幕列表',
     signal,
   )
-  return (data.subtitle?.subtitles ?? []).map((s) => ({ lan: s.lan, lanDoc: s.lan_doc, url: s.subtitle_url.startsWith('//') ? `https:${s.subtitle_url}` : s.subtitle_url }))
+  return (data.subtitle?.subtitles ?? [])
+    .map((s) => ({ lan: s.lan, lanDoc: s.lan_doc, url: s.subtitle_url.startsWith('//') ? `https:${s.subtitle_url}` : s.subtitle_url }))
+    // 空 URL 的条目没有任何用处，留着只会让调用方 fetch('') 抛错
+    .filter((s) => s.url.length > 0)
 }

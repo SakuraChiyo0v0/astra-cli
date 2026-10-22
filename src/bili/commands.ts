@@ -309,23 +309,46 @@ const subtitle: Command = {
     if (!page) throw invalidInput(`没有第 ${index + 1} 个分 P`, `这个视频有 ${info.pages.length} 个分 P`)
     const subs = await subtitleList(info.bvid, page.cid, signal)
     if (subs.length === 0) {
-      return { data: { bvid: info.bvid, page: page.page, subtitles: [] }, warnings: ['这个分 P 没有字幕（UP 主没传，或需要登录）'] }
+      return { data: { bvid: info.bvid, page: page.page, cid: page.cid, subtitles: [] }, warnings: ['这个分 P 没有字幕（UP 主没传，或需要登录）'] }
     }
+    // 人工字幕优先：zh-CN 这类是 UP 传的，ai-zh 是 ASR 生成的，后者质量低且可能对不上
+    // 把人工字幕排前面，但两份都写出来（覆盖会丢信息）
+    const ordered = [...subs].sort((a, b) => Number(a.lan.startsWith('ai-')) - Number(b.lan.startsWith('ai-')))
     const dir = typeof values.out === 'string' && values.out ? values.out : homePath('video', 'subtitles')
     const { mkdir, writeFile } = await import('node:fs/promises')
     await mkdir(dir, { recursive: true })
-    const written: { lan: string; name: string; path: string; cues: number }[] = []
-    for (const sub of subs) {
+    const written: { lan: string; name: string; path: string; cues: number; lastCueSec: number }[] = []
+    const warnings: string[] = []
+    for (const sub of ordered) {
       const response = await fetch(sub.url, { signal: signal ?? undefined })
-      if (!response.ok) continue
+      if (!response.ok) {
+        warnings.push(`${sub.lan} 字幕下载失败（HTTP ${response.status}）`)
+        continue
+      }
       const body = (await response.json()) as { body?: { from: number; to: number; content: string }[] }
       const cues = body.body ?? []
+      if (cues.length === 0) {
+        warnings.push(`${sub.lan} 字幕是空的`)
+        continue
+      }
+      const fit = subtitleFits(cues, page.duration)
+      const lastCueSec = fit.lastCueSec
+      if (!fit.ok) {
+        warnings.push(
+          `${sub.lan} 字幕末时间 ${lastCueSec.toFixed(0)}s 超过本分 P 时长 ${page.duration}s，`
+          + '疑似取到了别的视频的字幕，已丢弃',
+        )
+        continue
+      }
       const file = `${info.bvid}-P${page.page}-${sub.lan}.srt`
       const path = `${dir}/${file}`
       await writeFile(path, toSrt(cues), 'utf8')
-      written.push({ lan: sub.lan, name: sub.lanDoc, path, cues: cues.length })
+      written.push({ lan: sub.lan, name: sub.lanDoc, path, cues: cues.length, lastCueSec })
     }
-    return { data: { bvid: info.bvid, page: page.page, subtitles: written } }
+    return {
+      data: { bvid: info.bvid, page: page.page, cid: page.cid, durationSec: page.duration, subtitles: written },
+      ...(warnings.length > 0 ? { warnings } : {}),
+    }
   },
 }
 
@@ -336,6 +359,23 @@ function srtTime(sec: number): string {
   const s = Math.floor((ms % 60_000) / 1000)
   const milli = ms % 1000
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(milli).padStart(3, '0')}`
+}
+
+/**
+ * 字幕内容像不像"这个视频的"。
+ *
+ * 只卡上限：末条时间**超过**视频时长，说明拿到的是别的视频的字幕
+ * （P0#10 的实际形态：2 分 37 秒的视频配上了 28 分 36 秒的旅游 vlog 字幕）。
+ *
+ * **不卡下限。** 字幕一般不会覆盖到片尾黑屏 / 纯音乐尾奏：
+ * 《年轮》4:32 的视频字幕止于 4:01，差 31s 却完全正常。
+ * 早先按 ±10s 双向卡，把这类正确字幕误判成串台。
+ */
+export function subtitleFits(cues: { to: number }[], durationSec: number): { ok: boolean; lastCueSec: number } {
+  const lastCueSec = cues.length > 0 ? cues[cues.length - 1]!.to : 0
+  if (durationSec <= 0) return { ok: true, lastCueSec }
+  // 容 2 秒：字幕的 to 可能正好压在片尾
+  return { ok: lastCueSec <= durationSec + 2, lastCueSec }
 }
 
 export function toSrt(cues: { from: number; to: number; content: string }[]): string {

@@ -105,6 +105,20 @@ function safeName(text: string): string {
   return text.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 100) || '_'
 }
 
+/**
+ * 一个"只取音频"的请求该怎么落到磁盘上。
+ *
+ * 抽成纯函数是因为这里踩过一次：durl（非 DASH 的整段流）分支忘了过音频管道，
+ * 直接把**带画面的整段流**按 `.mp3` 存下来 —— 扩展名说谎，也没有标签和 BV 号。
+ * 只测 `processBiliAudio` 抓不到这种错：它本来就是对的，错在调用方没调它。
+ */
+export type AudioPath = 'pipeline' | 'raw'
+
+/** 只取音频时，无论整段流还是 DASH 分轨，都要走管道（转码 + 写标签）。 */
+export function audioPlan(audioOnly: boolean): AudioPath {
+  return audioOnly ? 'pipeline' : 'raw'
+}
+
 export async function downloadPage(
   info: VideoInfo,
   pageIndex: number,
@@ -149,10 +163,41 @@ export async function downloadPage(
     const ffmpegConfigured = getConfig('music.ffmpeg')
     let bytes = 0
 
+    // 只取音频时的"一条龙"：源流 → 目标格式 → 写标签 → 内嵌封面。
+    // durl 与 DASH 两条路都要用它 —— durl 下来的是**带画面的整段流**，
+    // 直接当 mp3 存会得到扩展名说谎的文件，也没有标签和 BV 号。
+    const toAudio = async (source: string): Promise<void> => {
+      const audioResult = await processBiliAudio({
+        source,
+        output: tmpOut,
+        info: {
+          // 多分 P 时用分 P 名 —— 那才是"这首"的名字
+          title: info.pages.length > 1 ? page.part : info.title,
+          uploader: info.owner.name || '未知UP',
+          coverUrl: info.pic,
+          pubdate: info.pubdate || null,
+          bvid: info.bvid,
+        },
+        ...(signal ? { signal } : {}),
+      })
+      warnings.push(...audioResult.warnings)
+    }
+
     if (play.durl.length > 0) {
-      // 非 DASH：直接下整段
+      // 非 DASH：整段流（flv/mp4），画面和声音在同一个文件里。
       const durl = play.durl[0]!
-      bytes = await downloadFile(durl.url, tmpOut, signal)
+      if (audioPlan(options.audioOnly === true) === 'pipeline') {
+        // 番剧、部分老视频全走这条路，跳过管道就拿不到 BV 号
+        const tmpDurl = `${target}.d-${process.pid}.tmp`
+        try {
+          bytes = await downloadFile(durl.url, tmpDurl, signal)
+          await toAudio(tmpDurl)
+        } finally {
+          await rm(tmpDurl, { force: true })
+        }
+      } else {
+        bytes = await downloadFile(durl.url, tmpOut, signal)
+      }
       await rename(tmpOut, target)
     } else {
       const videoStream = pickCodec(play.videos)
@@ -172,21 +217,7 @@ export async function downloadPage(
       }
 
       if (options.audioOnly) {
-        // 一条龙：音频流 → 目标格式 → 写标签 → 内嵌封面
-        const audioResult = await processBiliAudio({
-          source: tmpAudio,
-          output: tmpOut,
-          info: {
-            // 多分 P 时用分 P 名 —— 那才是"这首"的名字
-            title: info.pages.length > 1 ? page.part : info.title,
-            uploader: info.owner.name || '未知UP',
-            coverUrl: info.pic,
-            pubdate: info.pubdate || null,
-            bvid: info.bvid,
-          },
-          ...(signal ? { signal } : {}),
-        })
-        warnings.push(...audioResult.warnings)
+        await toAudio(tmpAudio)
       } else {
         await mux(tmpVideo, audioStream ? tmpAudio : null, tmpOut, ffmpegConfigured, signal)
         if (!audioStream) warnings.push('这个视频没有音频流，成品是无声的')
