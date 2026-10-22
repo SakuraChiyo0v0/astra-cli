@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { db } from '../core/db.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
+import { getConfig } from '../core/config.ts'
 import { artistTopTracks, albumInfo, playlistTracks, type Track } from './netease.ts'
 import { createJob, spawnWorker } from '../core/jobs.ts'
 import { jobItemsFor, MUSIC_DOMAIN } from './jobs.ts'
@@ -161,7 +162,9 @@ export async function runSubscription(sub: Subscription, options: { baselineOnly
   let jobId: string | null = null
   let note: string | null = null
   if (toDownload.length > 0) {
-    const quality = (sub.quality ?? 'flac') as Quality
+    // 订阅没指定档位时继承 `music.quality`，不是写死 flac ——
+    // 用户把默认改成 320k 省流量，订阅却还按 flac 下，等于配置没生效
+    const quality = (sub.quality ?? getConfig('music.quality')) as Quality
     const job = createJob({ domain: MUSIC_DOMAIN, kind: 'subscription', title: `订阅「${sub.title}」新增 ${toDownload.length} 首`, profile: quality, items: jobItemsFor(toDownload, quality) })
     spawnWorker(MUSIC_DOMAIN, job.id)
     jobId = job.id

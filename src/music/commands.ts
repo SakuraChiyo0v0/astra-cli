@@ -5,7 +5,7 @@
  * 拿得准就直接下完返回结果，拿不准就返回候选让 AI 回去问用户。
  */
 import { AstraError, invalidInput } from '../core/errors.ts'
-import { getConfig } from '../core/config.ts'
+import { getConfig, setConfig } from '../core/config.ts'
 import type { Command } from '../core/command.ts'
 import { isQuality, type Quality } from './audio.ts'
 import { decide, scoreTrack, type Candidate } from './match.ts'
@@ -31,6 +31,10 @@ import { loadCandidateTracks, scanUpgradable } from './upgrade.ts'
 import { applyLike, prepareLike, readPending as readLikePending } from './like.ts'
 import { audited } from '../core/audit.ts'
 import { toTrack } from './netease.ts'
+import { consume, prepare, clearPending, bindingMatches } from '../core/confirm.ts'
+import { executeRetag, planRetag, type RetagPlan } from './retag.ts'
+import { createHash } from 'node:crypto'
+import { progress } from '../core/output.ts'
 
 function qualityOf(value: unknown): Quality {
   const q = typeof value === 'string' && value ? value : getConfig('music.quality')
@@ -295,6 +299,74 @@ const have: Command = {
       data: positionals.length > 0
         ? { keyword: positionals.join(' '), total, tracks: tracks.map(trackViewOfLib) }
         : { stats: libraryStats(), recent: tracks.map(trackViewOfLib) },
+    }
+  },
+}
+
+/**
+ * 模板变量表。
+ *
+ * 单独开一个命令，是因为这些变量散在 `config list` 的一行描述里放不下，
+ * 而且光有变量名不够 —— `{albumartist}` 在不同专辑上取值差别很大
+ * （群星合辑是 Various Artists、合作曲是主歌手），必须带示例才说得清。
+ */
+const templateCmd: Command = {
+  name: 'music template',
+  summary: '列出落盘模板的全部变量和取值示例',
+  usage: 'astra music template [--set 模板] [--preview <歌曲ref>]',
+  notes: [
+    '当前模板和合辑目录从 config 读（music.template / music.compilation-dir），下面列出可用变量',
+    '--preview 会用真实歌曲算一遍，看到实际的落盘路径',
+  ],
+  options: {
+    set: { type: 'string', description: '把 music.template 改成这个值', valueName: '模板' },
+    preview: { type: 'string', description: '用一首歌试算落盘路径（关键词或 ref）', valueName: 'ref' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    if (values.set !== undefined) {
+      const next = String(values.set)
+      if (!next.includes('{')) throw invalidInput('模板里至少要有一个变量', '例如 {albumartist}/{album}/{track:02} {title}.{ext}')
+      setConfig('music.template', next)
+      return { data: { status: 'updated', template: next }, warnings: ['只影响之后新下载的歌；已有文件不会移动'] }
+    }
+
+    const vars = [
+      { name: '{artist}', example: 'Lady Gaga, Bruno Mars', note: '全部歌手，逗号分隔' },
+      { name: '{artist_list}', example: 'Lady Gaga;Bruno Mars', note: '全部歌手，分号分隔（和标签里的多值写法一致）' },
+      { name: '{primary_artist}', example: 'Lady Gaga', note: '第一位歌手，多歌手时不会拼成一长串' },
+      { name: '{albumartist}', example: 'Various Artists', note: '专辑艺术家，永远只有一位；群星合辑是 Various Artists，合作曲是主歌手' },
+      { name: '{album}', example: '那些年的华语情歌', note: '专辑名，没有时是「未知专辑」' },
+      { name: '{title}', example: '雪中莲', note: '歌名' },
+      { name: '{year}', example: '2005', note: '发行年份，没有时为空' },
+      { name: '{track}', example: '1', note: '曲目号；写 {track:02} 会补零成 01' },
+      { name: '{disc}', example: '1', note: '碟号，没有时为空' },
+      { name: '{source}', example: 'official / qdy@wy', note: '音源标识，想按来源分目录时用' },
+      { name: '{ext}', example: 'flac', note: '扩展名，由实测格式决定' },
+    ]
+
+    let preview: Record<string, string> | null = null
+    if (values.preview !== undefined) {
+      const target = await resolveTarget(String(values.preview))
+      if (target.kind !== 'song') throw invalidInput('--preview 只支持单曲', '给歌名或 wy:<id>')
+      const track = target.kind === 'song' ? await songDetail(target.id, signal) : null
+      if (!track) throw invalidInput('找不到这首歌')
+      preview = {
+        ref: `wy:${track.id}`,
+        title: track.title,
+        artists: track.artists.join(' / '),
+        album: track.album ?? '未知专辑',
+      }
+    }
+
+    return {
+      data: {
+        template: getConfig('music.template'),
+        compilationDir: getConfig('music.compilation-dir'),
+        variables: vars,
+        ...(preview ? { preview } : {}),
+        note: '合辑（专辑歌手是群星）会忽略模板里的歌手一层，固定落到 <compilationDir>/<专辑>/',
+      },
     }
   },
 }
@@ -724,6 +796,8 @@ function subView(s: ReturnType<typeof listSubscriptions>[number]) {
     title: s.title,
     everyHours: s.everyHours,
     quality: s.quality,
+    // 没指定档位时实际继承 music.quality，只回 null 的话调用方没法判断会用哪个
+    qualityNote: s.quality === null ? `未指定，继承 music.quality（当前 ${getConfig('music.quality')}）` : null,
     enabled: s.enabled,
     lastCheckedAt: s.lastCheckedAt,
     knownTracks: s.lastSeen?.length ?? null,
@@ -960,11 +1034,134 @@ const upgrade: Command = {
   },
 }
 
+const retag: Command = {
+  name: 'music retag',
+  summary: '按当前规则重写已下好的歌：标签 + 落盘路径（先预览，确认后才动）',
+  usage: 'astra music retag [--keyword 关键词] [--dry-run] [--confirm <token>]',
+  notes: [
+    '用于把落盘规则的历史改动补到存量文件上（合作曲归主艺术家、群星合辑归到合辑目录）',
+    '**第一次调用不会动任何文件**，只返回「哪些要改、改到哪」和一次性令牌；',
+    '  把预览给用户看过、用户同意后，再用 `--confirm <token>` 执行。令牌 5 分钟有效',
+    '有冲突就整批拒绝（目标被占用 / 两首歌算出同一路径），不做"改了一半"',
+    '写标签前后比对音频哈希，改到音频字节就中止；原文件里的歌词和封面会保留',
+    '搬文件时同名的 .lrc / .word.lrc 跟着走，曲库记录同步更新',
+    '--dry-run 只看计划，不生成令牌（适合先估一下影响面）',
+  ],
+  options: {
+    keyword: { type: 'string', description: '只处理匹配的曲目（同 `have` 的模糊匹配）', valueName: 'kw' },
+    'dry-run': { type: 'boolean', description: '只算计划，不生成确认令牌' },
+    confirm: { type: 'string', description: '执行之前预览生成的令牌', valueName: 'token' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    if (typeof values.confirm === 'string') {
+      const pending = consume('retag', values.confirm, 'retag')
+      const plan = await planRetag()
+      if (!bindingMatches(pending, { plan: planDigest(plan) })) {
+        throw invalidInput('这次的曲库计划和生成令牌时不一样了', '重新不带 --confirm 调一次，重新预览')
+      }
+      if (plan.conflicts.length > 0) {
+        throw new AstraError('RETAG_CONFLICTS', '计划里有冲突，不能执行', {
+          exitCode: 2,
+          hint: '先解决冲突（通常是目标位置已有同名文件），再重新预览',
+          details: { conflicts: plan.conflicts.slice(0, 20) },
+        })
+      }
+      clearPending('retag')
+      const result = await executeRetag(plan, { signal })
+      return {
+        data: {
+          status: 'retagged',
+          moved: result.moved,
+          tagged: result.tagged,
+          skipped: result.skipped,
+          failed: result.failed,
+        },
+        warnings: result.failed.length > 0
+          ? [`${result.failed.length} 首失败，已跳过；失败的文件保持原样，可以重跑`]
+          : [],
+      }
+    }
+
+    const scope = typeof values.keyword === 'string' && values.keyword.trim()
+      ? searchLibrary(values.keyword.trim(), 100000).tracks
+      : allTracks()
+    if (scope.length === 0) {
+      return { data: { status: 'empty', total: 0, message: '曲库里没有可处理的歌' } }
+    }
+
+    progress('music.retag.plan', { total: scope.length })
+    const plan = await planRetag({ tracks: scope, signal })
+
+    // 预览只列"真要动的"，全量几千条没法看
+    const changing = plan.items.filter((i) => !i.problem && (i.moves || i.tagsChange))
+    const preview = {
+      summary: plan.summary,
+      conflicts: plan.conflicts.slice(0, 20),
+      conflictCount: plan.conflicts.length,
+      sample: changing.slice(0, values['dry-run'] === true ? 50 : 30).map((i) => ({
+        title: i.title,
+        artists: i.artists,
+        albumArtist: i.albumArtist,
+        compilation: i.compilation,
+        from: i.from,
+        to: i.to,
+        moves: i.moves,
+      })),
+      problems: plan.items.filter((i) => i.problem).slice(0, 10).map((i) => ({ title: i.title, from: i.from, problem: i.problem })),
+      changingCount: changing.length,
+    }
+
+    if (values['dry-run'] === true) {
+      return {
+        data: { status: 'preview', ...preview },
+        warnings: plan.conflicts.length > 0 ? [`有 ${plan.conflicts.length} 处冲突，带 --confirm 也执行不了`] : [],
+      }
+    }
+    if (changing.length === 0) {
+      return { data: { status: 'up_to_date', ...preview }, warnings: ['所有文件已经符合当前规则，不需要改'] }
+    }
+
+    const prepared = prepare(
+      'retag',
+      'retag',
+      { plan: planDigest(plan) },
+      preview,
+      '把这份预览给用户看过（重点：会移动哪些文件、有没有冲突），用户同意后再带 --confirm 执行。',
+    )
+    // `prepare` 自带一个 `preview` 字段（里面就是上面这份 preview），
+    // 直接 `...prepared` 会把它摊到顶层，和我们的预览字段撞车。
+    // 这里明确展开成「令牌 + 计划」两层，别让调用方去猜。
+    return {
+      data: {
+        status: 'needs_confirmation',
+        token: prepared.token,
+        expiresInSeconds: prepared.expiresInSeconds,
+        action: prepared.action,
+        next: prepared.next,
+        ...preview,
+      },
+    }
+  },
+}
+
+/**
+ * 计划指纹：令牌绑定的是"这次算出来的计划"，而不是曲库里的全部内容。
+ * 用路径 + 是否移动拼起来，顺序无关（并集排序），这样重复预览得到同一个值。
+ */
+function planDigest(plan: RetagPlan): string {
+  const lines = plan.items
+    .filter((i) => !i.problem)
+    .map((i) => `${i.from}\u0000${i.to}`)
+    .sort()
+  return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 24)
+}
+
 export const musicCommands: Command[] = [
-  get, search, info, batch, have, forget,
+  get, search, info, batch, have, forget, templateCmd,
   job, jobs, jobCancel, jobResume, worker,
   loginPlain, loginStart, loginPoll, loginWait, account, logout, playlists, daily, liked, upgrade,
   subscribeAdd, subscribeList, subscribeSet, subscribeRemove, subscribeRun,
   sourceList, sourceAdd, sourceRemove, sourceToggle(true), sourceToggle(false), sourceTest,
-  coversCmd, m3uCmd,
+  coversCmd, m3uCmd, retag,
 ]

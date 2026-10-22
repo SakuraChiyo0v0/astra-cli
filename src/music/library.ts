@@ -224,6 +224,14 @@ export function backfillFingerprints(force = false): number {
   return n
 }
 
+/**
+ * 改一条记录的文件路径与大小。`music retag` 搬完文件后调它，
+ * 不更新的话 `music have` 会把每一首搬过的都报成"文件缺失"。
+ */
+export function updateTrackPath(platform: string, id: string, filePath: string, bytes: number | null): void {
+  db().prepare('update tracks set file_path = ?, bytes = ? where platform = ? and native_id = ?').run(filePath, bytes, platform, id)
+}
+
 export function forgetTrack(platform: string, id: string): boolean {
   return db().prepare('delete from tracks where platform = ? and native_id = ?').run(platform, id).changes > 0
 }

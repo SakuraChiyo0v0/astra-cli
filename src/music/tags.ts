@@ -276,6 +276,105 @@ export function retagFlac(file: Buffer, tags: TagData): Buffer {
   return Buffer.concat(parts)
 }
 
+export interface ExistingTags {
+  title: string | null
+  artists: string[]
+  album: string | null
+  albumArtists: string[]
+  lyrics: string | null
+}
+
+/**
+ * 读回已有的标签。**只读这里用得上的几项**，不是通用的标签解析器。
+ *
+ * 用途只有一个：`music retag` 重写标签时，把歌词原样留下来 ——
+ * 写标签是整块替换（FLAC 的 VORBIS_COMMENT / MP3 的整个 ID3v2 头），
+ * 不显式带过去就会丢。封面同理，所以那边用 `extractCoverArt` 单独取。
+ *
+ * 读不出来就返回空，不抛异常：老文件、手改过的文件都可能不合规范，
+ * 那种情况下"少保留一点"比"直接失败"好。
+ */
+export function readTags(file: Buffer): ExistingTags {
+  const empty: ExistingTags = { title: null, artists: [], album: null, albumArtists: [], lyrics: null }
+  const format = file.subarray(0, 4).toString('latin1') === 'fLaC' ? 'flac' : file.subarray(0, 3).toString('latin1') === 'ID3' ? 'mp3' : null
+  try {
+    if (format === 'flac') {
+      const block = parseFlacBlocks(file).blocks.find((b) => b.type === FLAC_VORBIS_COMMENT)
+      if (!block) return empty
+      const entries = parseVorbisComment(block.data)
+      return {
+        title: entries.get('TITLE')?.[0] ?? null,
+        artists: entries.get('ARTIST') ?? [],
+        album: entries.get('ALBUM')?.[0] ?? null,
+        albumArtists: entries.get('ALBUMARTIST') ?? [],
+        lyrics: entries.get('LYRICS')?.[0] ?? null,
+      }
+    }
+    if (format === 'mp3') {
+      const end = id3v2End(file)
+      const version = file[3]!
+      const out: ExistingTags = { ...empty, artists: [], albumArtists: [] }
+      let p = 10
+      while (p + 10 <= end) {
+        const id = file.subarray(p, p + 4).toString('latin1')
+        if (!/^[A-Z0-9]{4}$/.test(id)) break
+        const size = version >= 4
+          ? ((file[p + 4]! & 0x7f) << 21) | ((file[p + 5]! & 0x7f) << 14) | ((file[p + 6]! & 0x7f) << 7) | (file[p + 7]! & 0x7f)
+          : file.readUInt32BE(p + 4)
+        const body = file.subarray(p + 10, p + 10 + size)
+        if (id === 'USLT') {
+          // 编码(1) 语言(3) 内容描述( 结尾) 歌词
+          const descEnd = body.indexOf(0, 4)
+          if (descEnd >= 0) out.lyrics = decodeTextFrame(body.subarray(descEnd + 1), body[0]!)
+        } else if (id === 'TIT2' || id === 'TALB' || id === 'TPE1' || id === 'TPE2') {
+          const values = decodeTextFrame(body, body[0]!).split('\u0000').map((v) => v.trim()).filter(Boolean)
+          if (id === 'TIT2') out.title = values[0] ?? null
+          else if (id === 'TALB') out.album = values[0] ?? null
+          else if (id === 'TPE1') out.artists = values
+          else out.albumArtists = values
+        }
+        p += 10 + size
+      }
+      return out
+    }
+  } catch {
+    return empty
+  }
+  return empty
+}
+
+/** ID3 文本帧正文 -> 字符串。只处理写标签时会写出的两种编码（UTF-8 / UTF-16）。 */
+function decodeTextFrame(body: Buffer, encoding: number): string {
+  const text = body.subarray(1)
+  if (encoding === 1) return text.toString('utf16le').replace(/^﻿/, '')
+  if (encoding === 2) return text.swap16().toString('utf16le')
+  return text.toString('utf8')
+}
+
+/** VORBIS_COMMENT 正文 -> 大写键到多值的映射。 */
+function parseVorbisComment(data: Buffer): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  let p = 0
+  const vendorLen = data.readUInt32LE(p)
+  p += 4 + vendorLen
+  const count = data.readUInt32LE(p)
+  p += 4
+  for (let i = 0; i < count; i += 1) {
+    if (p + 4 > data.length) break
+    const length = data.readUInt32LE(p)
+    p += 4
+    const entry = data.subarray(p, p + length).toString('utf8')
+    p += length
+    const eq = entry.indexOf('=')
+    if (eq <= 0) continue
+    const key = entry.slice(0, eq).toUpperCase()
+    const list = out.get(key) ?? []
+    list.push(entry.slice(eq + 1))
+    out.set(key, list)
+  }
+  return out
+}
+
 /** 音频数据在文件里的起点（用于"写标签前后音频字节一致"的校验）。 */
 export function audioPayload(file: Buffer, format: AudioFormat): Buffer {
   if (format === 'mp3') return file.subarray(id3v2End(file))

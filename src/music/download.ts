@@ -123,6 +123,32 @@ export function templateFor(options: { template: string; compilationDir: string;
   return `${options.compilationDir}/{album}/${file}`
 }
 
+/** 这个 `music.lyric` 取值要不要往文件里写歌词。 */
+export function embedsLyric(mode: string): boolean {
+  return mode === 'embed' || mode === 'embed-synced' || mode === 'embed-plain' || mode === 'both'
+}
+
+/** 这个取值要不要另外存一份 `.lrc`。 */
+export function writesLrcFile(mode: string): boolean {
+  return mode === 'lrc' || mode === 'both'
+}
+
+/**
+ * 挑内嵌用哪份歌词。
+ *
+ * `embed-plain` 要纯文本（老播放器不认时间戳），其余取值有带时间戳的就用带时间戳的：
+ * 逐字 `<mm:ss.xx>` 优先，其次普通 `[mm:ss.xx]`。剥掉时间戳的纯文本播放器解析不出滚动歌词，
+ * Navidrome 会直接当成"无歌词"。
+ */
+export function pickEmbeddedLyrics(
+  mode: string,
+  synced: { enhanced?: string | null; lrc?: string | null; plain?: string | null },
+): string | null {
+  if (!embedsLyric(mode)) return null
+  if (mode === 'embed-plain') return synced.plain ?? null
+  return synced.enhanced ?? synced.lrc ?? synced.plain ?? null
+}
+
 function lyricText(lrc: string): string {
   return lrc
     .split(/\r?\n/)
@@ -233,6 +259,31 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       }
     }
 
+    // 逐字歌词必须在**写标签之前**拿到 —— 内嵌要用它。
+    // 原先这段在最后，所以 embed 永远只能拿到剥掉时间戳的纯文本，
+    // Navidrome 因此显示"无歌词"。
+    const wordLyricText = await (async (): Promise<{ enhanced: string; plain: string } | null> => {
+      if (getConfig('music.wordLyric') === 'off') return null
+      try {
+        const krc = await kugouWordLyric(track, signal)
+        if (!krc) return null
+        const enhanced = toEnhancedLrc(krc)
+        return { enhanced, plain: lyricText(enhanced) }
+      } catch (err) {
+        warnings.push(`逐字歌词获取失败：${(err as Error).message}`)
+        return null
+      }
+    })()
+
+    // 内嵌用哪份：优先逐字（带 <mm:ss.xx>），否则普通 LRC（带 [mm:ss.xx]），都没有才退回纯文本。
+    // 播放器没有时间戳就解析不出"滚动歌词"，只当成一段文字 —— 这就是 Navidrome 显示"无歌词"的原因。
+    // `embed-plain` 是给不认时间戳的老播放器留的退路。
+    const embeddedLyrics = pickEmbeddedLyrics(lyricMode, {
+      enhanced: wordLyricText?.enhanced,
+      lrc: lyricBody?.lrc,
+      plain: lyricBody?.text ?? wordLyricText?.plain,
+    })
+
     // 封面
     let cover: TagData['cover'] = null
     const coverUrl = track.coverUrl ?? album?.coverUrl ?? null
@@ -255,7 +306,7 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       trackTotal: album?.size ?? null,
       discNo: track.discNo ? Number.parseInt(track.discNo, 10) || null : null,
       publisher: album?.company ?? null,
-      lyrics: lyricBody && (lyricMode === 'embed' || lyricMode === 'both') ? lyricBody.text : null,
+      lyrics: embedsLyric(lyricMode) ? embeddedLyrics : null,
       cover,
       source: { platform: 'netease', id: track.id },
     }
@@ -279,24 +330,18 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
     await rename(tmp, target)
 
     let lyricFile: string | null = null
-    if (lyricBody && (lyricMode === 'lrc' || lyricMode === 'both')) {
+    if (lyricBody && writesLrcFile(lyricMode)) {
       lyricFile = target.replace(/\.[^.]+$/, '.lrc')
       await writeFile(lyricFile, lyricBody.lrc, 'utf8')
     }
 
-    // 逐字歌词单独存 .word.lrc：网易云没有逐字，从酷狗取；取不到就安静跳过。
-    // 单独的扩展名，这样普通播放器用 .lrc，支持增强 LRC 的用 .word.lrc，互不干扰。
+    // 逐字歌词单独存 .word.lrc：普通的给不支持增强 LRC 的播放器，
+    // 支持 `<mm:ss.xx>` 的用 .word.lrc，互不干扰。
+    // 内容在写标签之前就取好了（内嵌要用），这里只落盘。
     let wordLyricFile: string | null = null
-    if (getConfig('music.wordLyric') !== 'off') {
-      try {
-        const krc = await kugouWordLyric(track, signal)
-        if (krc) {
-          wordLyricFile = target.replace(/\.[^.]+$/, '.word.lrc')
-          await writeFile(wordLyricFile, toEnhancedLrc(krc), 'utf8')
-        }
-      } catch (err) {
-        warnings.push(`逐字歌词获取失败：${(err as Error).message}`)
-      }
+    if (wordLyricText) {
+      wordLyricFile = target.replace(/\.[^.]+$/, '.word.lrc')
+      await writeFile(wordLyricFile, wordLyricText.enhanced, 'utf8')
     }
 
     saveTrack({
