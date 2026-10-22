@@ -146,3 +146,59 @@ test('复现 P0#1b：set --rescan-pages 之后 run 能补回 P2', () => {
   assert.equal(tasks.length, 2, `清空后应当把两个分 P 都排上，实际 ${tasks.length}`)
   assert.deepEqual(tasks.map((t) => t.page), [1, 2])
 })
+
+// ---- P0#1c：--rescan-pages 不能触发全量重下 ----
+
+test('核对模式以磁盘为准：文件都在就不排任何任务', () => {
+  // 0.12.16 的回归：--rescan-pages 清空记录 → 201 个视频全被判"没下过" → 重下 209 项
+  const videos = Array.from({ length: 5 }, (_, i) => ({ bvid: `BV${i}`, title: `v${i}` }))
+  const pagesByBvid = new Map(videos.map((v) => [v.bvid, pagesOf(v.bvid, 2)]))
+  const lastSeen = videos.map((v) => v.bvid)
+
+  const { tasks } = planPages(videos, pagesByBvid, lastSeen, {}, {
+    pagesMode: 'all',
+    // 磁盘上两个分 P 都在
+    existsOnDisk: () => true,
+  })
+  assert.deepEqual(tasks, [], `文件都在就不该重下，实际排了 ${tasks.length} 项`)
+})
+
+test('核对模式只补磁盘上缺的那些分 P', () => {
+  const videos = [{ bvid: 'BV1GEn26uEDT', title: 'x' }]
+  const pagesByBvid = new Map([['BV1GEn26uEDT', pagesOf('BV1GEn26uEDT', 2)]])
+  const { tasks } = planPages(videos, pagesByBvid, ['BV1GEn26uEDT'], {}, {
+    pagesMode: 'all',
+    // 只有 P1 在磁盘上
+    existsOnDisk: (_bvid, page) => page === 1,
+  })
+  assert.deepEqual(tasks.map((t) => t.page), [2], '只该补 P2 —— 这正是验收要的结果')
+})
+
+test('核对模式覆盖"手动删了某个分 P"的情况', () => {
+  const { tasks } = planPages(
+    current('BV1x'),
+    new Map([['BV1x', pagesOf('BV1x', 3)]]),
+    ['BV1x'],
+    { BV1x: [1, 2, 3] },   // 基线说都下过
+    { pagesMode: 'all', existsOnDisk: (_b, page) => page !== 2 },  // 但 P2 被删了
+  )
+  assert.deepEqual(tasks.map((t) => t.page), [2], '以磁盘为准就该把被删的补回来')
+})
+
+test('核对模式用的是历史下载记录，不是磁盘路径', () => {
+  // 为什么不用磁盘：路径取决于**下载当时**的模板。模板改过一次
+  // （{uploader}/{title}/ → Bilibili/{uploader}/），按现模板算老文件全对不上，
+  // 核对就变成"全都没下过"→ 整个合集中下，正是 P0#1c 要避免的事。
+  //
+  // makeHistoryProbe 的判据是 job_items 里真实下成功过的项，
+  // 这里用一个等价的存在性函数验证 planPages 的对接是对的。
+  const videos = [{ bvid: 'BV1GEn26uEDT', title: 'x' }]
+  const pagesByBvid = new Map([['BV1GEn26uEDT', pagesOf('BV1GEn26uEDT', 2)]])
+
+  // 线上真实状态：历史里只有 P1
+  const { tasks } = planPages(videos, pagesByBvid, ['BV1GEn26uEDT'], {}, {
+    pagesMode: 'all',
+    existsOnDisk: (b, p) => b === 'BV1GEn26uEDT' && p === 1,
+  })
+  assert.deepEqual(tasks.map((t) => t.page), [2], '只补 P2 —— 与 NAS 真实数据一致')
+})

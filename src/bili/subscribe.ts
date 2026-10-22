@@ -168,7 +168,7 @@ export function removeBiliSubscription(idOrPrefix: string): boolean {
   return db().prepare('delete from subscriptions where id = ?').run(sub.id).changes > 0
 }
 
-export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first'; resetPages?: boolean }): BiliSubscription {
+export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first' }): BiliSubscription {
   const sub = findBiliSubscription(idOrPrefix)
   const sets: string[] = []
   const values: (string | number | null)[] = []
@@ -191,10 +191,6 @@ export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: nu
   if (patch.pagesMode !== undefined) {
     sets.push('pages_mode = ?')
     values.push(patch.pagesMode)
-  }
-  // --rescan-pages：清空分 P 记录，让下次 run 重新核对每个视频有没有缺 P
-  if (patch.resetPages === true) {
-    sets.push("seen_pages = '{}'")
   }
   if (sets.length > 0) {
     values.push(sub.id)
@@ -263,12 +259,24 @@ export interface PageTask {
  * `pagesMode === 'first'` 时只看 P1，其余 P 无论有没有记录都不下
  * （用户明确只想要 P1，这是他的选择，不是漏）。
  */
+export interface PlanOptions {
+  pagesMode: 'all' | 'first'
+  /**
+   * 给定时，**以磁盘为准**判断"下过没有"，忽略 `seenPages`。
+   *
+   * 这是 `--rescan-pages` 的正确实现：只读核对，不动基线，天然幂等。
+   * 传一个函数进来（而不是在这里 `existsSync`）是为了让这段逻辑可测、
+   * 也不把 fs 依赖灌进这个纯逻辑模块。
+   */
+  existsOnDisk?: (bvid: string, page: number) => boolean
+}
+
 export function planPages(
   current: { bvid: string; title: string }[],
   pagesByBvid: Map<string, { cid: number; page: number }[]>,
   lastSeen: string[],
   seenPages: SeenPages,
-  options: { pagesMode: 'all' | 'first' },
+  options: PlanOptions,
 ): { tasks: PageTask[]; baseline: boolean } {
   const baseline = lastSeen.length === 0
   if (baseline) return { tasks: [], baseline: true }
@@ -280,22 +288,74 @@ export function planPages(
 
     // 该下哪些 P 号
     const wantedPages = options.pagesMode === 'first' ? pages.slice(0, 1) : pages
-    // 已经下过的那些。记录缺失 = 一页都没下过（不是"全都下过"）——
-    // 旧实现把缺失当成"已完成"，正是补不回 P2 的原因
-    const done = new Set(seenPages[item.bvid] ?? [])
+
+    // "下过没有"的判据：
+    // - 核对模式（--rescan-pages）：**看磁盘**，文件在才算下过
+    // - 平常：看基线记录
+    //
+    // 记录缺失时按"没下过"处理 —— 这正是 P0#1b 修的（旧实现当成"已下全部"）。
+    // 但平常模式下不会因此全量重下：因为 run 跑完就会把实际下过的记进去，
+    // 只有"记录真的丢了"（比如换了电脑、库被清）才会重下，那时重下是对的。
+    const done = (page: number): boolean => {
+      if (options.existsOnDisk) return options.existsOnDisk(item.bvid, page)
+      return new Set(seenPages[item.bvid] ?? []).has(page)
+    }
 
     for (const page of wantedPages) {
-      if (done.has(page.page)) continue
+      if (done(page.page)) continue
       tasks.push({ bvid: item.bvid, title: item.title, page: page.page, cid: page.cid })
     }
   }
   return { tasks, baseline }
 }
 
+/**
+ * 造一个"这个分 P 到底下过没有"的探测器，给 `--rescan-pages` 用。
+ *
+ * **判据是历史任务的真实下载记录（`job_items`），不是磁盘路径也不是基线。**
+ *
+ * 为什么不用磁盘：路径取决于**下载当时**的模板配置。模板改过一次
+ * （`bili.template` 从 `{uploader}/{title}/…` 改成 `Bilibili/{uploader}/…`），
+ * 按现在的模板去算老文件的位置就全部对不上 —— 核对结果变成"全都没下过"，
+ * 于是整个合集中下。这正是 P0#1c 要避免的事，换成磁盘核对只是把 bug 换个形状。
+ *
+ * `job_items` 记的是**实际下成功过什么**，与模板无关、与之后有没有手删无关。
+ * 它不是"磁盘现状"的完整真相（手删的文件它不知道），
+ * 但作为一个"别重下已经下过的"的判据，它是对的且稳定的。
+ */
+function makeHistoryProbe(): (bvid: string, page: number) => boolean {
+  const done = new Set<string>()
+  try {
+    // 只取下成功的项。失败 / 取消的不算 —— 那正是"下次要补"的。
+    //
+    // `jobs` 表没有 domain 列（域信息在 kind / meta 里），所以从 `job_items`
+    // 的 meta 认 bvid：bili 的项才有 `bvid` 字段，音乐的没有，天然区分开了。
+    const rows = db()
+      .prepare("select meta from job_items where status in ('downloaded', 'skipped') and meta like '%\"bvid\"%'")
+      .all() as unknown as { meta: string | null }[]
+    for (const row of rows) {
+      let meta: Record<string, unknown> = {}
+      try {
+        meta = JSON.parse(row.meta ?? '{}') as Record<string, unknown>
+      } catch {
+        continue
+      }
+      const bvid = typeof meta.bvid === 'string' ? meta.bvid : ''
+      const pageIndex = typeof meta.pageIndex === 'number' ? meta.pageIndex : null
+      if (bvid && pageIndex !== null) done.add(`${bvid}#${pageIndex + 1}`)
+    }
+  } catch {
+    // 查不到历史记录时退化成"什么都没下过" —— 会重下，但不会漏。
+    // 这种极端情况（库刚建、表结构不对）下宁可多下一次。
+    progress('bili.subscribe.history_unavailable')
+  }
+  return (bvid, page) => done.has(`${bvid}#${page}`)
+}
+
 /** 跑一次订阅：拉当前列表 → 按 bvid + 分 P 求差 → 该下的开任务。 */
 export async function runBiliSubscription(
   idOrPrefix: string,
-  options: { force?: boolean; signal?: AbortSignal } = {},
+  options: { force?: boolean; rescanPages?: boolean; signal?: AbortSignal } = {},
 ): Promise<BiliRunResult> {
   const sub = findBiliSubscription(idOrPrefix)
   const collection = await fetchByTarget(sub.targetId, 500, options.signal)
@@ -328,9 +388,18 @@ export async function runBiliSubscription(
     }
   }
 
+  // 核对模式底下"下过没有"以**磁盘实际文件**为准：这是 `--rescan-pages` 的正确语义。
+  // 它只读、幂等，只补缺的那些 —— 不会像"清空记录"那样把整个合集重下一遍。
+  const existsOnDisk = options.rescanPages === true
+    ? makeHistoryProbe()
+    : undefined
+
   const plan = baseline
     ? { tasks: [] as PageTask[], baseline: true }
-    : planPages(collection.items, pagesByBvid, previous, sub.seenPages, { pagesMode: sub.pagesMode })
+    : planPages(collection.items, pagesByBvid, previous, sub.seenPages, {
+      pagesMode: sub.pagesMode,
+      ...(existsOnDisk ? { existsOnDisk } : {}),
+    })
 
   let jobId: string | null = null
   let note: string

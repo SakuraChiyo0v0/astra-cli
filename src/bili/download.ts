@@ -78,6 +78,28 @@ export interface DownloadResult {
 }
 
 /**
+ * 从视频标题里挑出"歌名"。
+ *
+ * 背景（P0#2c）：B 站音频的 `TIT2` 原来取的是**分 P 名**，
+ * 而分 P 名经常是「绿色」这种短标签，真正的歌名在视频标题里的《》中：
+ *
+ *   视频标题: ⚡《鳄鱼摇の小曲》🐊《绿色DJ》完整版…⚡
+ *   分 P 名:  绿色
+ *   应该是:   绿色DJ
+ *
+ * 优先级（清单定的）：
+ * 1. 标题里《…》的**最后一个** —— 前面常是副标题 / 系列名
+ * 2. 没有《》时用分 P 名
+ * 3. 都没有时用视频标题
+ */
+export function songTitleOf(info: Pick<VideoInfo, 'title'>, page: Pick<VideoInfo['pages'][number], 'part'>): string {
+  const bracketed = [...info.title.matchAll(/《([^》]+)》/g)].map((m) => m[1]!.trim()).filter(Boolean)
+  if (bracketed.length > 0) return bracketed[bracketed.length - 1]!
+  if (page.part && page.part.trim()) return page.part.trim()
+  return info.title
+}
+
+/**
  * 落盘用哪个根目录、哪个模板、哪些变量。
  *
  * 抽成纯函数是因为这里的规则容易搞错，而且错了很难发现（文件会安静地
@@ -98,25 +120,38 @@ export function targetPathFor(
   const multiPart = info.pages.length > 1
 
   if (toMusic) {
-    // 音乐模板的变量集和视频那套不同（{artist}/{album}/...）。
-    // B 站没有"歌手/专辑"概念，用 UP 主当艺术家、视频标题当专辑 ——
-    // 与 `bili get --audio-only` 写进标签的归属保持一致（TIT2/TPE1/TALB）。
+    // B 站没有"歌手 / 专辑"概念：UP 主当艺术家、视频标题当专辑，
+    // 与写进标签的 TPE1 / TALB 保持一致。
+    const uploader = safeName(info.owner.name || '未知UP')
+    const shared = {
+      uploader,
+      title: safeName(songTitleOf(info, page)),
+      part: multiPart ? safeName(page.part) : '',
+      page: String(page.page),
+      bvid: info.bvid,
+      quality: qualityName(actualQuality),
+      ext: audioTargetFormat(),
+      // 音乐模板那套变量也一并给，用户可能把 audio-template 写成 music 的风格
+      artist: uploader,
+      artist_list: uploader,
+      primary_artist: uploader,
+      albumartist: uploader,
+      album: safeName(info.title),
+      year: String(new Date((info.pubdate || 0) * 1000).getUTCFullYear() || ''),
+      track: String(page.page),
+      disc: '1',
+      source: 'bilibili',
+    }
+
+    // `bili.audio-template` 优先。没配就用 music.template（保持向后兼容）。
+    //
+    // 为什么要单独一条：music.template 把"视频标题"当专辑名，于是一个视频一个目录。
+    // 订阅一开就是 201 个子目录，跟用户想要的平铺结构冲突。
+    const dedicated = (getConfig('bili.audio-template') || '').trim()
     return {
       root: musicRoot(),
-      template: getConfig('music.template'),
-      vars: {
-        artist: safeName(info.owner.name || '未知UP'),
-        artist_list: safeName(info.owner.name || '未知UP'),
-        primary_artist: safeName(info.owner.name || '未知UP'),
-        albumartist: safeName(info.owner.name || '未知UP'),
-        album: safeName(info.title),
-        title: safeName(multiPart ? page.part : info.title),
-        year: String(new Date((info.pubdate || 0) * 1000).getUTCFullYear() || ''),
-        track: String(page.page),
-        disc: '1',
-        source: 'bilibili',
-        ext: audioTargetFormat(),
-      },
+      template: dedicated || getConfig('music.template'),
+      vars: shared,
     }
   }
 
@@ -239,8 +274,9 @@ export async function downloadPage(
         source,
         output: tmpOut,
         info: {
-          // 多分 P 时用分 P 名 —— 那才是"这首"的名字
-          title: info.pages.length > 1 ? page.part : info.title,
+          // TIT2 用**歌名**（标题里《》的最后一个），不是分 P 名。
+          // 分 P 名常是「绿色」这种短标签，播放器里跟别的歌对不上（P0#2c）。
+          title: songTitleOf(info, page),
           uploader: info.owner.name || '未知UP',
           coverUrl: info.pic,
           pubdate: info.pubdate || null,

@@ -112,3 +112,47 @@ test('音频落盘的根目录是音乐库，视频是视频库', () => {
     else process.env.ASTRA_VIDEO_DIR = prevVideo
   }
 })
+
+// ---- P0#2c：TIT2 取歌名，不是分 P 名 ----
+
+test('歌名从《》里取最后一个，不是分 P 名', async () => {
+  const { songTitleOf } = await import('../src/bili/download.ts')
+  // 线上原样：分 P 名「绿色」，歌名在标题的第二个《》里
+  const real = { title: '⚡《鳄鱼摇の小曲》🐊《绿色DJ》完整版“若不是你突然闯进我生活~”⚡/AI東 雪蓮' }
+  assert.equal(songTitleOf(real, { part: '绿色' }), '绿色DJ', '要取最后一个《》——前面常是副标题')
+})
+
+test('没有《》时退回分 P 名', async () => {
+  const { songTitleOf } = await import('../src/bili/download.ts')
+  assert.equal(songTitleOf({ title: '某个视频标题' }, { part: '第一集' }), '第一集')
+})
+
+test('分 P 名也空时用视频标题', async () => {
+  const { songTitleOf } = await import('../src/bili/download.ts')
+  assert.equal(songTitleOf({ title: '标题' }, { part: '' }), '标题')
+})
+
+test('只有一个《》时正常取到', async () => {
+  const { songTitleOf } = await import('../src/bili/download.ts')
+  assert.equal(songTitleOf({ title: '《年轮》官方MV' }, { part: '年轮' }), '年轮')
+})
+
+// ---- P0#2b：B 站音频专用模板 ----
+
+test('配了 bili.audio-template 时用它，不再一个视频一个目录', async () => {
+  const { getConfig, setConfig } = await import('../src/core/config.ts')
+  const { targetPathFor } = await import('../src/bili/download.ts')
+  const { renderTemplate } = await import('../src/core/template.ts')
+  const prev = getConfig('bili.audio-template')
+  try {
+    setConfig('bili.audio-template', 'Bilibili/{uploader}/{title}.{ext}')
+    const { root, template, vars } = targetPathFor(INFO, INFO.pages[0]!, { audioOnly: true }, 80)
+    const rel = renderTemplate(template, vars)
+    // 平铺：Bilibili/<UP>/<歌名>.mp3，中间不再有视频标题那层
+    assert.match(rel, /^Bilibili\/东洋雪莲\//, `实际：${rel}`)
+    assert.doesNotMatch(rel, /《鳄鱼摇の小曲》/, '不该再有视频标题当目录')
+    assert.equal(root.length > 0, true)
+  } finally {
+    setConfig('bili.audio-template', prev)
+  }
+})

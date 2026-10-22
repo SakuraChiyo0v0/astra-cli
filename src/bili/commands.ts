@@ -1013,10 +1013,10 @@ const subList: Command = {
 const subSet: Command = {
   name: 'bili subscribe set',
   summary: '改订阅：间隔 / 启停 / 画质',
-  usage: 'astra bili subscribe set <id> [--every 12] [--enable|--disable] [--quality 1080p] [--audio-only on|off] [--pages all|first] [--rescan-pages]',
+  usage: 'astra bili subscribe set <id> [--every 12] [--enable|--disable] [--quality 1080p] [--audio-only on|off] [--pages all|first]',
   notes: [
     '--audio-only on|off 切换"只下音频"',
-    '--rescan-pages 清空分 P 记录，下次 run 重新核对每个视频有没有缺 P（补历史遗漏用）',
+    '想补历史遗漏的分 P 用 `astra bili subscribe run --rescan-pages`（只读核对，只补缺的）',
   ],
   options: {
     every: { type: 'string', description: '每隔几小时', valueName: 'h' },
@@ -1025,13 +1025,12 @@ const subSet: Command = {
     quality: { type: 'string', short: 'q', description: '画质', valueName: 'q' },
     'audio-only': { type: 'string', description: 'on / off：只下音频', valueName: 'mode' },
     pages: { type: 'string', description: 'all / first：下哪些分 P', valueName: 'mode' },
-    'rescan-pages': { type: 'boolean', description: '清空分 P 记录，下次重新核对' },
   },
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals, values }) {
     if (values.enable === true && values.disable === true) throw invalidInput('--enable 与 --disable 不能同时给')
-    const patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first'; resetPages?: boolean } = {}
+    const patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first' } = {}
     if (values.every !== undefined) {
       const n = Number(values.every)
       if (!Number.isInteger(n) || n < 1 || n > 720) throw invalidInput('--every 必须是 1..720 的整数')
@@ -1045,7 +1044,6 @@ const subSet: Command = {
     }
     const pagesMode = parsePagesMode(values.pages)
     if (pagesMode) patch.pagesMode = pagesMode
-    if (values['rescan-pages'] === true) patch.resetPages = true
     return { data: setBiliSubscription(positionals[0]!, patch) }
   },
 }
@@ -1074,7 +1072,7 @@ const subRun: Command = {
   options: {
     id: { type: 'string', description: '只跑这一个订阅', valueName: 'id' },
     force: { type: 'boolean', description: '忽略间隔，立刻检查' },
-    'rescan-pages': { type: 'boolean', description: '对存量基线重新核对分 P' },
+    'rescan-pages': { type: 'boolean', description: '只读核对：按磁盘实际文件判断哪些分 P 没下，只补缺的' },
   },
   maxArgs: 0,
   async run({ values, signal }) {
@@ -1088,6 +1086,7 @@ const subRun: Command = {
       try {
         results.push(await runBiliSubscription(sub.id, {
           ...(values.force === true ? { force: true } : {}),
+          ...(values['rescan-pages'] === true ? { rescanPages: true } : {}),
           ...(signal ? { signal } : {}),
         }))
       } catch (err) {

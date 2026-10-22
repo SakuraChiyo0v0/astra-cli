@@ -53,6 +53,10 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (/^[\s,，a-zA-Z]*$/.test(v) ? null : '只能是 nfo / cover / danmaku / all 的组合') },
   { key: 'bili.subscribe.pages', description: '订阅下载哪些分 P：all（默认，完整拿到）/ first（只下 P1，返回 partial: true）', default: 'all',
     validate: (v) => (['all', 'first'].includes(v) ? null : '只能是 all / first') },
+  // B 站音频专用模板。留空则用 music.template。
+  // 为什么单独一条：音乐模板会把"视频标题"当专辑名，于是一个视频一个目录 ——
+  // 订阅开起来就是 201 个子目录。B 站音频本来就该平铺在 UP 主目录下。
+  { key: 'bili.audio-template', description: 'B 站音频的落盘模板（留空用 music.template）；变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}，如 Bilibili/{uploader}/{title}.{ext}', default: '' },
   // —— 代理 ——
   // NAS 上 Steam 全域名不通，但有 mihomo 容器提供 http://mihomo:7890。
   // 用 include/exclude 按域名控制，别让 B 站、网易云也绕一圈。
