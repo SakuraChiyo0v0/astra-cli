@@ -129,6 +129,17 @@ export function decodeKrc(raw: Buffer, key: number[] = KRC_KEY): string {
   return inflateSync(body).toString('utf8')
 }
 
+/**
+ * 制作人员行（作词 / 作曲 / 编曲…）。
+ *
+ * 酷狗 KRC 常把这几行当成歌词正文带出来，时间戳还挤在开头几秒。
+ * 播放器会把它当第一句"歌词"高亮 —— 用户看到的是"作词: 汪苏泷"在闪。
+ * 逐字歌词里尤其明显，因为每个字都带时间戳。
+ */
+export function isCreditLine(text: string): boolean {
+  return /^[\s[\]\d:.]*(作词|作曲|编曲|词|曲|制作人|录音|混音|母带|吉他|贝斯|鼓|和声|监制|出品|发行|监制|OP|SP)\s*[:：]/i.test(text)
+}
+
 /** 解析 `[start,duration]<off,dur,0>字<off,dur,0>字…`。 */
 export function parseKrc(text: string): KrcResult {
   const lines: KrcLine[] = []
@@ -149,7 +160,7 @@ export function parseKrc(text: string): KrcResult {
     // 没有逐字标签就是纯文本行，words 保持为空（下游据此判断"这行没有逐字"）
     if (!hasTags) {
       const text = rest.trim()
-      if (text) lines.push({ startMs, durationMs, text, words })
+      if (text && !isCreditLine(text)) lines.push({ startMs, durationMs, text, words })
       continue
     }
     // 第一个标签**之前**的文字也算内容（KRC 里确实出现过 `a<0,100,0>b` 这种写法），
@@ -165,6 +176,8 @@ export function parseKrc(text: string): KrcResult {
     }
     const lineText = words.map((w) => w.text).join('')
     if (!lineText.trim()) continue
+    // 作词/作曲/编曲这几行不是歌词，留着会让播放器把它当第一句高亮
+    if (isCreditLine(lineText)) continue
     lines.push({ startMs, durationMs, text: lineText, words })
   }
   // 上面逐行扫到过 [total:] 就用它；没扫到再兜一次（有的文件把它写在别的行里）。
@@ -207,8 +220,11 @@ export async function kugouWordLyric(track: Track, signal?: AbortSignal): Promis
 
     // 第三道闸门：KRC 头部 [total:]。
     // 只有"能读到 total 且明显不符"才拦；读不到 total 说明信息缺失，不构成错位证据。
+    //
+    // `[total:0]` 也算"读不到"：酷狗有一部分 KRC 就是这个值，把它当成真实时长
+    // 会与任何歌曲都差出几分钟，从而把**正确**的逐字歌词整批丢掉。
     const totalMs = parsed.durationMs
-    if (totalMs !== null && Math.abs(totalMs - track.durationMs) > TOTAL_TOLERANCE_MS) {
+    if (totalMs !== null && totalMs > 0 && Math.abs(totalMs - track.durationMs) > TOTAL_TOLERANCE_MS) {
       progress('lyric.rejected', { id: track.id, reason: 'krc-total', totalMs, wantMs: track.durationMs })
       return null
     }

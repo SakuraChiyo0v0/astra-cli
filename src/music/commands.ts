@@ -31,6 +31,7 @@ import { loadCandidateTracks, scanUpgradable } from './upgrade.ts'
 import { applyLike, prepareLike, readPending as readLikePending } from './like.ts'
 import { audited } from '../core/audit.ts'
 import { toTrack } from './netease.ts'
+import { fetchLyric, lyricFilePaths } from './lyric-cmd.ts'
 import { consume, prepare, clearPending, bindingMatches } from '../core/confirm.ts'
 import { executeRetag, planRetag, type RetagPlan } from './retag.ts'
 import { createHash } from 'node:crypto'
@@ -367,6 +368,95 @@ const templateCmd: Command = {
         ...(preview ? { preview } : {}),
         note: '合辑（专辑歌手是群星）会忽略模板里的歌手一层，固定落到 <compilationDir>/<专辑>/',
       },
+    }
+  },
+}
+
+const lyricCmd: Command = {
+  name: 'music lyric',
+  summary: '只取歌词，不下载音频（库里已有音频、想补歌词时用这个）',
+  usage: 'astra music lyric <关键词|ref> [--word] [--out <路径>] [--duration <秒>]',
+  notes: [
+    '**不会下载音频**，也不会动曲库记录 —— 只取歌词',
+    '默认返回逐行 LRC（[mm:ss.xx]文本）；--word 额外取逐字增强 LRC（[mm:ss.xx]<mm:ss.xx>字…）',
+    '--out 直接写文件，后缀按约定：.lrc 放逐字，.line.lrc 放逐行；只取逐行时只写 .lrc',
+    '库里是 B 站音频（不是网易云记录）时用 --duration <秒> 传实际时长，逐字歌词靠它校验',
+    '逐字取不到不算失败：返回里 word=null 并给 wordUnavailableReason，逐行照常返回',
+    '时长对不上的候选一律丢弃（报 LYRIC_NO_MATCH），宁可没有也不给错的歌词',
+  ],
+  options: {
+    word: { type: 'boolean', description: '同时取逐字增强 LRC（从酷狗，带逐字时间戳）' },
+    out: { type: 'string', description: '写进这个路径（自动按 .lrc / .line.lrc 约定拆成两份）', valueName: 'path' },
+    duration: { type: 'string', description: '用这个时长（秒）做校验，代替网易云记录；B 站音频必填', valueName: 'sec' },
+    json: { type: 'boolean', description: '把歌词正文也放进 data（默认只给行数，避免超长输出）' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const durationSec = values.duration === undefined ? null : Number(values.duration)
+    if (durationSec !== null && (!Number.isFinite(durationSec) || durationSec <= 0)) {
+      throw invalidInput('--duration 要是一个正数秒数', '例如接近 --duration 274')
+    }
+    let result
+    try {
+      result = await fetchLyric({
+        query: positionals[0]!,
+        wantWord: values.word === true,
+        durationOverrideMs: durationSec === null ? null : Math.round(durationSec * 1000),
+        signal,
+      })
+    } catch (err) {
+      const message = (err as Error).message ?? ''
+      // fetchLyric 用 `NO_MATCH:` 前缀区分"没找到"和"参数不对"
+      if (message.startsWith('NO_MATCH:')) {
+        throw new AstraError('LYRIC_NO_MATCH', message.slice('NO_MATCH:'.length), {
+          exitCode: 4,
+          hint: '换个写法再搜（歌名 + 歌手更准）；或确认这首歌确实有歌词',
+        })
+      }
+      if (message.startsWith('AMBIGUOUS:')) {
+        throw new AstraError('LYRIC_AMBIGUOUS', message.slice('AMBIGUOUS:'.length), {
+          exitCode: 2,
+          hint: '把歌手名也带上（如 "年轮 张碧晨"），或直接用 wy:<id>；也可以加 --duration <秒> 用实际时长筛',
+        })
+      }
+      if (/只能按单曲取歌词/.test(message)) {
+        throw invalidInput(message, '给歌名、wy:<id> 或歌曲链接')
+      }
+      throw err
+    }
+
+    const warnings: string[] = []
+    if (result.wordUnavailableReason) warnings.push(result.wordUnavailableReason)
+
+    const lineCount = result.line ? result.line.split('\n').filter((l) => l.trim()).length : 0
+    const wordCount = result.word ? result.word.split('\n').filter((l) => l.trim()).length : 0
+
+    let written: { path: string; kind: 'line' | 'word'; lines: number }[] = []
+    if (typeof values.out === 'string' && values.out) {
+      const { mkdir, writeFile } = await import('node:fs/promises')
+      const paths = lyricFilePaths(values.out, result.word !== null)
+      await mkdir(paths.main.replace(/[\\/][^\\/]*$/, ''), { recursive: true })
+      if (result.word) {
+        await writeFile(paths.main, result.word, 'utf8')
+        written.push({ path: paths.main, kind: 'word', lines: wordCount })
+        await writeFile(paths.line, result.line, 'utf8')
+        written.push({ path: paths.line, kind: 'line', lines: lineCount })
+      } else {
+        await writeFile(paths.main, result.line, 'utf8')
+        written.push({ path: paths.main, kind: 'line', lines: lineCount })
+      }
+    }
+
+    return {
+      data: {
+        matched: result.matched,
+        hasWord: result.word !== null,
+        lines: { line: lineCount, word: wordCount },
+        written,
+        ...(values.json === true ? { lyrics: { line: result.line, word: result.word } } : {}),
+      },
+      ...(warnings.length > 0 ? { warnings } : {}),
     }
   },
 }
@@ -1158,7 +1248,7 @@ function planDigest(plan: RetagPlan): string {
 }
 
 export const musicCommands: Command[] = [
-  get, search, info, batch, have, forget, templateCmd,
+  get, search, info, batch, have, forget, templateCmd, lyricCmd,
   job, jobs, jobCancel, jobResume, worker,
   loginPlain, loginStart, loginPoll, loginWait, account, logout, playlists, daily, liked, upgrade,
   subscribeAdd, subscribeList, subscribeSet, subscribeRemove, subscribeRun,
