@@ -122,6 +122,51 @@ test('FLAC STREAMINFO：区分 16bit/44.1k 与 24bit/96k', () => {
   assert.equal(summarize(fixture('tone.flac'), 20669, null).quality, 'flac')
 })
 
+/**
+ * 重写标签后文件大小**必须**变化。
+ *
+ * 这不是洁癖 —— rclone / WinFsp 挂载判断远程文件有没有变时只比大小（WebDAV 拿不到
+ * 内容哈希，vfsMeta 里的 Fingerprint 就是字节数）。原来 MP3 固定 1024、FLAC 固定 4096
+ * 的 padding 会让「长标题改成短标题」这种小事把字节全吃进 padding，文件大小不变，
+ * 用户的挂载盘上于是永远读到旧标签。2026-10 线上用 200 多首歌踩过一次。
+ *
+ * 反向验证：把 paddingFor 改回固定 1024，这个用例必须变红。
+ */
+test('MP3：标签变了文件大小就得变（挂载盘只按大小判失效）', () => {
+  const original = fixture('tone.mp3')
+  // **关键：两个标题必须字节长度相同。** 长度不同的话，就算 padding 写死也不会撞，
+  // 这个用例就永远绿、抓不到 bug —— 第一版就是这么写的，撤掉修复仍然通过。
+  // 真实场景：`年轮` → `花海`，都是 6 字节 UTF-8。
+  const a = retagMp3(original, { ...tags, title: '年轮' })
+  const b = retagMp3(original, { ...tags, title: '花海' })
+  assert.equal(Buffer.byteLength('年轮', 'utf8'), Buffer.byteLength('花海', 'utf8'), '前提：两个标题等长')
+  assert.notEqual(
+    a.length,
+    b.length,
+    '等长标题写出同样大小的文件 —— 挂载盘会一直显示旧标签',
+  )
+  // 音频一个字节都不能动
+  assert.deepEqual(audioPayload(a, 'mp3'), audioPayload(b, 'mp3'))
+})
+
+test('MP3：同一份标签重复写，大小稳定（不能每次重跑都变）', () => {
+  const original = fixture('tone.mp3')
+  const once = retagMp3(original, tags)
+  const twice = retagMp3(once, tags)
+  assert.equal(twice.length, once.length, 'padding 抖动会让 retag 反复改文件')
+  assert.deepEqual(twice, once)
+})
+
+test('FLAC：标签变了文件大小就得变', () => {
+  const original = fixture('tone.flac')
+  // 同样要求两个标题等字节长度，否则测不出固定 padding 的 bug
+  const a = retagFlac(original, { ...tags, title: '年轮' })
+  const b = retagFlac(original, { ...tags, title: '花海' })
+  assert.equal(Buffer.byteLength('年轮', 'utf8'), Buffer.byteLength('花海', 'utf8'), '前提：两个标题等长')
+  assert.notEqual(a.length, b.length, 'FLAC padding 固定会让大小不变')
+  assert.deepEqual(audioPayload(a, 'flac'), audioPayload(b, 'flac'))
+})
+
 test('码率反推档位：按真实大小算，宁可低估', () => {
   const mp3 = fixture('tone.mp3')
   // 3412653 字节 / 213 秒 ≈ 128kbps —— 实测 qdy 请求 flac 拿到的就是这个

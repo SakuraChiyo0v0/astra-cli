@@ -78,6 +78,10 @@ export const MAX_DURATION_GAP_SECONDS = 10
  */
 export function identityMismatch(probe: Probe, track: Track): string | null {
   const title = probe.embedded?.title
+  // 读不到标题时判「没问题」。两种情况读不到：文件本来就没标签，或者只探测了前 64KB
+  // 而大封面（B 站的实测 148KB）把 TIT2 挤到了后面 —— 后者意味着我们对这首歌的身份
+  // **一无所知**。一无所知时必须放行：这道关是拦「明显是另一首歌」用的，
+  // 不是「不能证明是这首就拒」—— 反过来会把大量正常音源挡掉。
   if (!title) return null
   const got = normalize(title.replace(/[(（[【].*?[)）\]】]/g, ''))
   const candidates = [track.title, ...track.aliases, ...track.translations].map((t) => normalize(t.replace(/[(（[【].*?[)）\]】]/g, ''))).filter(Boolean)

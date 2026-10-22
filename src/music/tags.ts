@@ -8,6 +8,7 @@
  * 写到临时文件再 rename；音频数据部分逐字节复制，调用方可以比对哈希确认没被改。
  */
 import { readFile, writeFile, rename } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import type { AudioFormat } from './audio.ts'
 
 export interface TagData {
@@ -94,6 +95,37 @@ export function id3v2End(file: Buffer): number {
   return offset
 }
 
+/**
+ * 按内容算一个**随内容变化**的 padding 长度。
+ *
+ * ## 为什么不能固定 1024
+ *
+ * rclone / WinFsp 挂载判断"远程文件有没有变"时**只比大小**
+ * （vfsMeta 里的 `Fingerprint` 就是字节数，WebDAV 拿不到内容哈希）。实测：
+ * 原地覆盖成同样大小的新内容、mtime 明明变新了，挂载盘读到的仍是旧内容；
+ * 改成差 1 个字节才会重新下载。
+ *
+ * 而重写标签经常改动很小（`_寒夜剩我一个人等清晨_《年轮》_AI東 雪蓮` → `年轮`），
+ * padding 又固定 1024，新标签变短就把字节全吃进 padding，文件总大小纹丝不动 ——
+ * 用户的挂载盘上于是永远显示旧标签。2026-10 线上踩过一次，200 多首歌全部中招。
+ *
+ * ## 做法
+ *
+ * padding 在 `[512, 1535]` 之间由内容哈希决定。同一个标签算出同一个值（重跑幂等，
+ * 不会因为 padding 抖动而反复改文件），不同标签**几乎必然算出不同值**，
+ * 总大小也就跟着变了。标签本身通常差几十上百字节，再加上 padding 的变化，
+ * 两者撞出相同总长度的概率极低。
+ *
+ * 512 比原来的 1024 小，是为了让「旧文件（padding 1024 固定）→ 新规则」
+ * 这一步也几乎必然改变大小：内容相同的标签原来算出 body+1024，
+ * 现在算出 body+[512..1535]，只有约 1/1024 的巧合会撞上。
+ */
+function paddingFor(body: Buffer): Buffer {
+  const digest = createHash('sha256').update(body).digest()
+  const size = 512 + (digest.readUInt16BE(0) % 1024)
+  return Buffer.alloc(size)
+}
+
 export function buildId3(tags: TagData): Buffer {
   const frames: (Buffer | null)[] = [
     textFrame('TIT2', [tags.title]),
@@ -111,7 +143,9 @@ export function buildId3(tags: TagData): Buffer {
     tags.cover ? apicFrame(tags.cover.mime, tags.cover.data) : null,
   ]
   const body = Buffer.concat(frames.filter((f): f is Buffer => f !== null))
-  const padding = Buffer.alloc(1024)
+  // padding 随内容变（理由见 paddingFor）：固定长度会让「重写标签」不改变文件大小，
+  // 而挂载盘只按大小判失效，用户就永远看到旧标签。
+  const padding = paddingFor(body)
   const header = Buffer.concat([Buffer.from('ID3', 'latin1'), Buffer.from([4, 0, 0]), syncsafe(body.length + padding.length)])
   return Buffer.concat([header, body, padding])
 }
@@ -288,9 +322,12 @@ function blockHeader(type: number, length: number, last: boolean): Buffer {
 export function retagFlac(file: Buffer, tags: TagData): Buffer {
   const { blocks, audioStart } = parseFlacBlocks(file)
   const kept = blocks.filter((b) => b.type !== FLAC_VORBIS_COMMENT && b.type !== FLAC_PICTURE && b.type !== FLAC_PADDING)
-  const fresh: FlacBlock[] = [...kept, { type: FLAC_VORBIS_COMMENT, data: vorbisComment(tags) }]
+  const comment = vorbisComment(tags)
+  const fresh: FlacBlock[] = [...kept, { type: FLAC_VORBIS_COMMENT, data: comment }]
   if (tags.cover) fresh.push({ type: FLAC_PICTURE, data: pictureBlock(tags.cover.mime, tags.cover.data) })
-  fresh.push({ type: FLAC_PADDING, data: Buffer.alloc(4096) })
+  // padding 随标签内容变，理由同 mp3 的 paddingFor：固定长度会让重写标签不改变文件大小，
+  // 而挂载盘只按大小判失效，用户的挂载盘上就永远显示旧标签。
+  fresh.push({ type: FLAC_PADDING, data: paddingFor(comment) })
   const parts: Buffer[] = [Buffer.from('fLaC', 'latin1')]
   fresh.forEach((block, i) => parts.push(blockHeader(block.type, block.data.length, i === fresh.length - 1), block.data))
   // 前置的 ID3（有的 FLAC 被塞了 ID3 头）一并丢掉，它不是标准的一部分

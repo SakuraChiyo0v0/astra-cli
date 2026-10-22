@@ -137,6 +137,10 @@ export async function probeFile(file: string, durationMs: number | null): Promis
 export function embeddedIdentity(head: Buffer): { title: string | null; artist: string | null } | null {
   const format = detectFormat(head)
   if (format === 'flac') {
+    // 注意：只拿到前 64KB 时，如果 PICTURE 块排在 VORBIS_COMMENT 之前且封面很大，
+    // 这里会返回 null（下面 `data.length < length` 那一步），**不是**「这个文件没标签」。
+    // 调用方必须把 null 当成「不知道」，不能当成「不是这首歌」。B 站音频的封面
+    // 实测有 148KB，远超 64KB，这个分支是真会走到的。
     let offset = head.indexOf('fLaC', 0, 'latin1')
     if (offset < 0) return null
     offset += 4
