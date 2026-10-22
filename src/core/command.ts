@@ -15,6 +15,13 @@ export interface CommandContext {
 export interface CommandResult {
   data: unknown
   warnings?: string[]
+  /**
+   * `--table` 时给人看的表格视图。
+   *
+   * **不进 `data`**：它只是另一种呈现，不该污染 JSON 的结构 ——
+   * 不加 `--table` 时脚本拿到的返回必须和以前一模一样。
+   */
+  table?: { headers: string[]; rows: (string | number | null)[][] }
 }
 
 export interface Command {

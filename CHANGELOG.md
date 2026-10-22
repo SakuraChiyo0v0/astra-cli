@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.12.21 — 2026-10-22
+
+**入口层体验（P3 4a–4e）：`astra bili --help` 不再报未知命令**
+
+- **修（4a）**：`astra bili` / `astra bili --help` / `astra bili -h` 三者都等价于
+  `astra help bili`。之前只有 `astra help bili` 能用 —— 那个写法没人猜得到，
+  清单说是"唯一真正卡住使用者的地方"。未知子命令（`astra bili foo`）的 hint
+  也改为提示该组子命令，不再是全局顶层清单
+- **新增（4b）**：`bili.video-template` 作为正式名，`bili.template` 保留为别名，
+  读写互通（写老名会同时写新名，老版本 astra 回退时不丢配置）
+- **新增（4c）**：`doctor` 增加 `bili.paths` —— 把两套模板**展开成示例路径**。
+  之前改完 `bili.audio-dir` / `--to bili` 只能真下一个文件才知道落点对不对，
+  `--to bili` 用错模板那次就是这么漏过去的
+- **新增（4d）**：`astra help bili` 里加分流说明（单条 get / 一批 bulk / 整个 UP 用 audio）
+- **新增（4e）**：`--table` 给人看的表格视图，作用于 `jobs` / `music have` /
+  `music subscribe list` / `bili subscribe list` / `bili audio`。
+  **默认仍是 JSON，且 `table` 不进 `data`** —— 不加开关时输出与以前完全一致
+- 表格按**字符显示宽度**排版（中文占两格）；分隔线用 ASCII `-`，
+  用 `─` 的话按列宽重复会变成两倍宽
+
 ## 0.12.20 — 2026-10-22
 
 **修伴生文件命名：替换扩展名，不是追加**

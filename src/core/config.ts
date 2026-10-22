@@ -37,7 +37,12 @@ export const CONFIG_KEYS: ConfigKey[] = [
   { key: 'music.ffmpeg', description: 'ffmpeg 可执行文件路径（B 站合并音视频也用它）；留空则从 PATH 查找', default: '' },
   { key: 'bili.dir', description: '视频根目录（绝对路径）；环境变量 ASTRA_VIDEO_DIR 优先', default: '',
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
-  { key: 'bili.template', description: '视频落盘模板，变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}',
+  // `bili.template` 是 v0.12.x 的老名字。加了 `bili.audio-template` 之后它就不再是
+  // "模板"而是"视频模板"，两个键并列时语义不对等 —— 看配置的人得先猜哪个管视频。
+  // `bili.video-template` 是正式名；老名保留为别名，读写互通（见 ALIASES）。
+  { key: 'bili.video-template', description: '视频落盘模板，变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}',
+    default: '{uploader}/{title}/{page:02} {part}.{ext}' },
+  { key: 'bili.template', description: '（已弃用，改用 bili.video-template）视频落盘模板',
     default: '{uploader}/{title}/{page:02} {part}.{ext}' },
   { key: 'bili.quality', description: '默认请求画质：4k / 1080p60 / 1080p / 720p / 480p / 360p（未登录会被服务端封顶 360P）', default: '1080p',
     validate: (v) => ([...Object.values(QUALITY_NAMES)].includes(v) || /^\d+$/.test(v) ? null : '画质名或 qn 数字') },
@@ -107,15 +112,32 @@ function writeAll(values: Record<string, string>): void {
   renameSync(tmp, file)
 }
 
+/**
+ * 配置键的别名：老名 → 正式名。
+ *
+ * 读写都走正式名，老名保留为入口 —— 老配置不改也能跑，
+ * 而且 `config get 老名` 和 `config get 正式名` 读到同一个值。
+ */
+const ALIASES: Record<string, string> = {
+  'bili.template': 'bili.video-template',
+}
+
+/** 老名换成正式名；本来就是正式名就原样返回。 */
+function canonicalKey(key: string): string {
+  return ALIASES[key] ?? key
+}
+
 function keyDef(key: string): ConfigKey {
-  const def = CONFIG_KEYS.find((k) => k.key === key)
+  const def = CONFIG_KEYS.find((k) => k.key === canonicalKey(key))
   if (!def) throw invalidInput(`未知配置项 ${key}`, `可用配置项：${CONFIG_KEYS.map((k) => k.key).join(', ')}`)
   return def
 }
 
 export function getConfig(key: string): string {
   const def = keyDef(key)
-  return readAll()[key] ?? def.default
+  const all = readAll()
+  // 正式名优先；没有再读老名（老配置里可能只写了 `bili.template`）
+  return all[canonicalKey(key)] ?? all[key] ?? def.default
 }
 
 export function setConfig(key: string, value: string): void {
@@ -123,7 +145,10 @@ export function setConfig(key: string, value: string): void {
   const problem = def.validate?.(value) ?? null
   if (problem) throw invalidInput(`${key} 的值不合法：${problem}`)
   const all = readAll()
-  all[key] = value
+  // 写正式名。同时也把老名写一份 —— 老版本 astra 读的还只是 `bili.template`，
+  // 升级后回退不该丢配置。
+  all[canonicalKey(key)] = value
+  if (ALIASES[key]) all[key] = value
   writeAll(all)
 }
 

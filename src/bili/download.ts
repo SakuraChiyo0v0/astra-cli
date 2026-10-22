@@ -286,7 +286,7 @@ export function targetPathFor(
 
   return {
     root: mediaRoot(),
-    template: getConfig('bili.template'),
+    template: getConfig('bili.video-template'),
     vars: {
       uploader: safeName(info.owner.name || '未知UP'),
       title: safeName(info.title),

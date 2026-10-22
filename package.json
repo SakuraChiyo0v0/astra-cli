@@ -1,6 +1,6 @@
 {
   "name": "astra-cli",
-  "version": "0.12.20",
+  "version": "0.12.21",
   "private": true,
   "description": "给 AI 调用的个人能力 CLI：一条命令办完一件事，输出统一 JSON",
   "type": "module",
@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --disable-warning=ExperimentalWarning --test \"tests/**/*.test.ts\"",
     "build": "node scripts/build.mjs",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "tree": "node scripts/gen-tree.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

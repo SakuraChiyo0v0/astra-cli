@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { AstraError, toAstraError } from './core/errors.ts'
 import { failResult, okResult, writeJson } from './core/output.ts'
 import { describeCommand, parseCommandArgs, type Command } from './core/command.ts'
+import { renderTable } from './core/output.ts'
 import { CONFIG_KEYS, getConfig, listConfig, musicRoot, setConfig, unsetConfig } from './core/config.ts'
 import { astraHome } from './core/paths.ts'
 import { closeDb } from './core/db.ts'
@@ -64,6 +65,17 @@ const help: Command = {
             + '后台任务的每项看 data.items[].status（downloaded / skipped / failed / queued / running）。',
           '  曲库里已有而跳过用 skipped；用 status == "downloaded" 过滤时记得把 skipped 也算成功',
         ],
+        // 三个批量入口的分流只写在各自 help 里时，拿合集 URL 去喂 `bili bulk`
+        // 要撞一次 BILI_BAD_TARGET 才知道该用 `bili audio`。放在组级说明里省那一轮。
+        ...(prefix === 'bili'
+          ? {
+            routing: [
+              '单条：`bili get <BV号|链接>`',
+              '一批视频：`bili bulk <合集|收藏夹>`（按视频下 mp4）',
+              '把一个 UP / 合集整体转成音乐库：`bili audio <mid|合集>`（下 mp3，带标签）',
+            ],
+          }
+          : {}),
         commands: visible.map(describeCommand),
       },
     }
@@ -127,6 +139,12 @@ const jobsCmd: Command = {
           progress: `${j.done + j.skipped}/${j.total}`, failed: j.failed,
           createdAt: j.createdAt,
         })),
+      },
+      table: {
+        headers: ['ID', '域', '状态', '进度', '失败', '标题'],
+        rows: jobs.map((j) => [
+          j.id, j.domain, statusLabel(j.status), `${j.done + j.skipped}/${j.total}`, j.failed, j.title,
+        ]),
       },
     }
   },
@@ -370,21 +388,57 @@ export function route(argv: string[]): { command: Command; rest: string[] } | nu
   return null
 }
 
+/**
+ * 这个前缀是不是一个"命令组"（`bili`、`music`、`vr`…）。
+ *
+ * 用途：`astra bili` / `astra bili --help` 该给子命令清单，
+ * 而不是报 UNKNOWN_COMMAND。之前只有 `astra help bili` 能用，
+ * 每次新会话都要重新想起这个写法 —— 是使用者真正卡住的地方。
+ */
+export function commandGroup(arg: string): boolean {
+  return commands.some((c) => !c.hidden && c.name.startsWith(`${arg} `))
+}
+
+/** 某组下所有子命令名（给提示用）。 */
+export function groupCommands(arg: string): string[] {
+  return commands.filter((c) => !c.hidden && c.name.startsWith(`${arg} `)).map((c) => c.name)
+}
+
 async function main(): Promise<number> {
   const argv = process.argv.slice(2)
   const pretty = argv.includes('--pretty')
-  const args = argv.filter((a) => a !== '--pretty' && a !== '--json')
+  const wantTable = argv.includes('--table')
+  const args = argv.filter((a) => a !== '--pretty' && a !== '--json' && a !== '--table')
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') args.splice(0, args.length, 'help')
   if (args[0] === '--version' || args[0] === '-v') args.splice(0, args.length, 'version')
   // `astra music get --help` → 该命令的说明
   const wantsHelp = args.includes('--help') || args.includes('-h')
+  const bare = args.filter((a) => a !== '--help' && a !== '-h')
+
+  // `astra bili` / `astra bili --help` / `astra bili -h` → 等价于 `astra help bili`。
+  // 不给这一步的话，习惯性敲 `--help` 得到的是 UNKNOWN_COMMAND，
+  // 而只有 `astra help bili` 能用 —— 那个写法没人猜得到。
+  //
+  // 注意要**在这一步之后不再走"展示 help 命令自己"的分支**：
+  // 重写完 args 就变成 `help bili`，那个分支会把 `help` 命令的说明吐出来，
+  // 而不是 bili 的子命令清单。
+  const isGroupHelp = bare.length === 1 && commandGroup(bare[0]!)
+  if (isGroupHelp) {
+    args.splice(0, args.length, 'help', bare[0]!)
+  }
+
   const routed = route(args.filter((a) => a !== '--help' && a !== '-h'))
   if (!routed) {
-    const groups = [...new Set(commands.filter((c) => !c.hidden).map((c) => c.name.split(' ')[0]))]
-    writeJson(failResult(new AstraError('UNKNOWN_COMMAND', `未知命令：${args.join(' ')}`, { exitCode: 2, hint: `运行 \`astra help\` 查看命令。顶层命令：${groups.join(', ')}` })), pretty)
+    // 未知子命令（`astra bili foo`）时，提示该组的子命令，而不是全局顶层清单 ——
+    // 顶层清单在 `bili foo` 这个上下文里没有任何帮助
+    const group = bare[0] && commandGroup(bare[0]) ? bare[0] : null
+    const hint = group
+      ? `\`${group}\` 的子命令：${groupCommands(group).map((c) => c.replace(`${group} `, '')).join(', ')}`
+      : `运行 \`astra help\` 查看命令。顶层命令：${[...new Set(commands.filter((c) => !c.hidden).map((c) => c.name.split(' ')[0]))].join(', ')}`
+    writeJson(failResult(new AstraError('UNKNOWN_COMMAND', `未知命令：${args.join(' ')}`, { exitCode: 2, hint })), pretty)
     return 2
   }
-  if (wantsHelp) {
+  if (wantsHelp && !isGroupHelp) {
     writeJson(okResult(describeCommand(routed.command)), pretty)
     return 0
   }
@@ -396,6 +450,15 @@ async function main(): Promise<number> {
   try {
     const parsed = parseCommandArgs(routed.command, restoreCommandFlags(argv, routed.command, routed.rest))
     const result = await routed.command.run({ ...parsed, signal: controller.signal })
+    // `--table`：只影响**显示**，不改返回结构 —— 脚本拿到的 JSON 一模一样。
+    // 命令没提供 table 视图时退回 JSON，不让这个开关变得危险。
+    if (wantTable) {
+      const view = result.table
+      if (view && Array.isArray(view.headers) && Array.isArray(view.rows)) {
+        process.stdout.write(renderTable(view) + '\n')
+        return 0
+      }
+    }
     writeJson(okResult(result.data, result.warnings ?? []), pretty)
     return 0
   } catch (err) {

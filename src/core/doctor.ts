@@ -15,6 +15,8 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { getConfig, mediaRoot, musicRoot } from './config.ts'
+import { targetPathFor } from '../bili/download.ts'
+import { renderTemplate } from './template.ts'
 import { astraHome } from './paths.ts'
 import { listSources } from '../lx/store.ts'
 import { loadSession } from '../music/auth.ts'
@@ -120,6 +122,49 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
     add({ name: 'video_dir', kind: 'domain', ok: write.ok, detail: write.detail, ...(write.ok ? {} : { hint: '检查视频目录的属主与权限' }) })
   } catch (err) {
     add({ name: 'video_dir', kind: 'domain', ok: false, detail: `建不出目录：${(err as Error).message.slice(0, 100)}` })
+  }
+
+  // 生效路径：把模板**展开成示例路径**。
+  //
+  // 为什么需要：`bili.template` / `bili.audio-template` / `bili.audio-dir` 三个配置
+  // 决定文件落哪儿，但改完只能真下一个文件才知道对不对。实测踩过一次：
+  // `--to bili` 用错了模板、落成 `<标题>/01.mp3`，看 doctor 完全发现不了。
+  //
+  // 示例用一个固定的假数据，不依赖网络也不依赖曲库 —— 目的是让"配置 → 落点"一眼可见。
+  {
+    const sampleInfo = {
+      bvid: 'BV1xx411c7mD',
+      title: '示例视频标题',
+      owner: { mid: 0, name: '示例UP主' },
+      pubdate: 0,
+      pages: [{ cid: 1, page: 1, part: '示例分P', duration: 0 }],
+    } as never
+    const samplePage = { cid: 1, page: 1, part: '示例分P', duration: 0 }
+    const audioDir = getConfig('bili.audio-dir')
+    const expand = (kind: 'video' | 'audio'): string => {
+      try {
+        const { root, template, vars } = targetPathFor(
+          sampleInfo,
+          samplePage,
+          kind === 'audio' ? { audioOnly: true } : {},
+          1080,
+        )
+        return `${root}/${renderTemplate(template, vars)}`
+      } catch (err) {
+        return `（模板展开失败：${(err as Error).message.slice(0, 80)}）`
+      }
+    }
+    add({
+      name: 'bili.paths',
+      kind: 'domain',
+      ok: true,
+      detail: [
+        `bili.dir            ${video}`,
+        `bili.audio-dir      ${audioDir ? audioDir : `跟随 music.dir（${music}）`}`,
+        `  video-template    → ${expand('video')}`,
+        `  audio-template    → ${expand('audio')}`,
+      ].join('\n'),
+    })
   }
 
   try {

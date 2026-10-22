@@ -506,6 +506,19 @@ const audioCmd: Command = {
           missing: result.missing,
         }),
       },
+      table: {
+        headers: ['项', '数量'],
+        rows: [
+          ['投稿', result.total],
+          ['排除', result.excluded],
+          ['计划', result.planned],
+          ['已下载', result.downloaded.length],
+          ['跳过', result.skipped.length],
+          ['失败', result.failed.length],
+          ['改名', result.renamed.length],
+          ['未对账', result.missing.length],
+        ],
+      },
       warnings,
     }
   },
@@ -1106,6 +1119,13 @@ const subList: Command = {
           pagesMode: s.pagesMode,
           lastJobId: s.lastJobId,
         })),
+      },
+      table: {
+        headers: ['ID', '标题', '音频', '分P', '视频数', '启用', '上次检查'],
+        rows: subs.map((s) => [
+          s.id, s.title, s.audioOnly ? 'mp3' : 'mp4', s.pagesMode,
+          s.lastSeen.length, s.enabled ? '是' : '否', s.lastCheckedAt ?? '-',
+        ]),
       },
     }
   },

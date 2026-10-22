@@ -298,10 +298,32 @@ const have: Command = {
       return { data: { total: low.length, tracks: low.slice(0, limit).map(trackViewOfLib), truncated: low.length > limit, hint: '这些可以用 `astra music get <ref> --force` 重下，官方通道常能拿到更高规格' } }
     }
     const { total, tracks } = searchLibrary(positionals.join(' '), limit)
+    const stats = libraryStats()
+    // `--table` 的视图：人看一眼想知道的是这几个数，
+    // 不是 `bySpec` / `byQuality` 那两坨嵌套对象。
+    const gb = (n: number): string => `${(n / 1024 ** 3).toFixed(1)}G`
+    const table = positionals.length === 0
+      ? {
+        headers: ['曲目', '占用', '缺失', '无封面', 'flac', '320k', '128k'],
+        rows: [[
+          stats.tracks,
+          gb(stats.bytes),
+          stats.missing,
+          stats.noCover,
+          stats.byQuality.flac ?? 0,
+          stats.byQuality['320k'] ?? 0,
+          stats.byQuality['128k'] ?? 0,
+        ]] as (string | number | null)[][],
+      }
+      : {
+        headers: ['歌名', '歌手', '专辑', '音质', '格式'],
+        rows: tracks.map((t) => [t.title, t.artists.join('/'), t.album ?? '-', t.quality, t.format]) as (string | number | null)[][],
+      }
     return {
       data: positionals.length > 0
         ? { keyword: positionals.join(' '), total, tracks: tracks.map(trackViewOfLib) }
-        : { stats: libraryStats(), recent: tracks.map(trackViewOfLib) },
+        : { stats, recent: tracks.map(trackViewOfLib) },
+      table,
     }
   },
 }
@@ -955,10 +977,15 @@ const subscribeList: Command = {
   maxArgs: 0,
   async run({ values }) {
     const subs = listSubscriptions()
+    const views = subs.map(subView)
     return {
       data: {
         subscriptions: subs.map((s) => ({ ...subView(s), ...(values.runs === true ? { runs: recentRuns(s.id, 5) } : {}) })),
         due: dueSubscriptions().map((s) => s.id),
+      },
+      table: {
+        headers: ['ID', '标题', '间隔h', '音质', '启用', '上次检查'],
+        rows: views.map((v) => [v.id, v.title, v.everyHours, v.qualityResolved, v.enabled ? '是' : '否', v.lastCheckedAt ?? '-']),
       },
     }
   },
