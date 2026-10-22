@@ -65,8 +65,9 @@ test('老视频分 P 齐全时不重复下载', () => {
   assert.deepEqual(tasks, [], '都下过了就不该再排')
 })
 
-test('老数据没有分 P 记录时当作已下全部，不批量重下', () => {
-  // 升级前建的订阅只有 bvid 基线，没见过 seenPages
+test('没有分 P 记录 = 一页都没下过（不是"全都下过"）', () => {
+  // 这正是 P0#1b 的根因：旧实现把"记录缺失"当成"已完成"，
+  // 于是 --rescan-pages 清空记录后反而什么都不补
   const { tasks } = planPages(
     current('BV1legacy'),
     new Map([['BV1legacy', pagesOf('BV1legacy', 3)]]),
@@ -74,18 +75,18 @@ test('老数据没有分 P 记录时当作已下全部，不批量重下', () =>
     {},
     { pagesMode: 'all' },
   )
-  assert.deepEqual(tasks, [], '默认不重下；要核对存量得显式 --rescan-pages')
+  assert.deepEqual(tasks.map((t) => t.page), [1, 2, 3], '没有记录就该全补')
 })
 
-test('--rescan-pages 才对存量基线重新核对', () => {
+test('记录存在但为空数组也按"一页都没下过"处理', () => {
   const { tasks } = planPages(
-    current('BV1legacy'),
-    new Map([['BV1legacy', pagesOf('BV1legacy', 3)]]),
-    ['BV1legacy'],
-    {},
-    { pagesMode: 'all', rescanPages: true },
+    current('BV1x'),
+    new Map([['BV1x', pagesOf('BV1x', 2)]]),
+    ['BV1x'],
+    { BV1x: [] },
+    { pagesMode: 'all' },
   )
-  assert.deepEqual(tasks.map((t) => t.page), [1, 2, 3], '重新核对时该把全部 P 都排上')
+  assert.deepEqual(tasks.map((t) => t.page), [1, 2])
 })
 
 test('第一次检查（空基线）只记基线，不排任务', () => {
@@ -122,4 +123,26 @@ test('SeenPages 的记录是按 P 号（1-based），不是 pageIndex', () => {
   )
   assert.equal(tasks.length, 1)
   assert.equal(tasks[0]!.page, 2, 'P1 下过了，只补 P2')
+})
+
+test('复现 P0#1b：set --rescan-pages 之后 run 能补回 P2', () => {
+  // 用户报的完整操作序列：
+  //   astra bili subscribe set b0e020c5 --rescan-pages   → seen_pages 清成 {}
+  //   astra bili subscribe run --force --id b0e020c5     → 期望补回 P2
+  //
+  // v0.12.15 断在这里：run 只给"有 seenPages 记录的" bvid 查 pages，
+  // 清空后一个都不查 → planPages 拿到空 pages → 跳过 → "没有新视频"。
+  const clearedSeenPages = {}                                   // set --rescan-pages 的结果
+  const lastSeen = ['BV1GEn26uEDT']                             // bvid 仍在基线里
+  const pagesByBvid = new Map([['BV1GEn26uEDT', [{ cid: 1, page: 1 }, { cid: 2, page: 2 }]]])
+
+  const { tasks } = planPages(
+    current('BV1GEn26uEDT'),
+    pagesByBvid,
+    lastSeen,
+    clearedSeenPages,
+    { pagesMode: 'all' },
+  )
+  assert.equal(tasks.length, 2, `清空后应当把两个分 P 都排上，实际 ${tasks.length}`)
+  assert.deepEqual(tasks.map((t) => t.page), [1, 2])
 })

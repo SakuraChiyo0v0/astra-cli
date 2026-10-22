@@ -250,42 +250,42 @@ export interface PageTask {
 /**
  * 算出这次要为哪些分 P 建任务。
  *
- * 三种情况：
- * 1. 新视频（bvid 不在基线）→ 按 `pagesMode` 决定下全部还是只 P1
- * 2. 老视频但**多了新分 P** → 只下没下过的那些（这就是补 P2 的路径）
- * 3. 老视频、分 P 没变 → 跳过
+ * **差集按「视频 × 分 P」算，不是只按 bvid。** 这是 P0#1b 的核心：
+ * 只按 bvid 时，视频已在基线里就判"没有新内容"，它后来补的分 P、
+ * 或用户手动删掉的分 P 都不会被发现。
  *
- * `seenPages[bvid]` 缺失（老数据）时按"已经下过全部"处理，避免给所有存量
- * 视频重下一遍；要重新核对存量用 `--rescan-pages`。
+ * 规则很简单：**`seenPages[bvid]` 里没有某个 P，就下它。** 没有特殊情况。
+ *
+ * - 记录不存在（老数据 / 刚 `--rescan-pages` 清空）→ 当作"一页都没下过"
+ * - 记录是空数组 → 同上
+ * - 记录里有 P 号 → 跳过那些
+ *
+ * `pagesMode === 'first'` 时只看 P1，其余 P 无论有没有记录都不下
+ * （用户明确只想要 P1，这是他的选择，不是漏）。
  */
 export function planPages(
   current: { bvid: string; title: string }[],
   pagesByBvid: Map<string, { cid: number; page: number }[]>,
   lastSeen: string[],
   seenPages: SeenPages,
-  options: { pagesMode: 'all' | 'first'; rescanPages?: boolean },
+  options: { pagesMode: 'all' | 'first' },
 ): { tasks: PageTask[]; baseline: boolean } {
   const baseline = lastSeen.length === 0
   if (baseline) return { tasks: [], baseline: true }
 
   const tasks: PageTask[] = []
-  const known = new Set(lastSeen)
   for (const item of current) {
     const pages = pagesByBvid.get(item.bvid) ?? []
     if (pages.length === 0) continue
-    const isNewVideo = !known.has(item.bvid)
 
     // 该下哪些 P 号
     const wantedPages = options.pagesMode === 'first' ? pages.slice(0, 1) : pages
-    // 已经下过的
-    const already = seenPages[item.bvid]
-    // 老视频 + 没有分 P 记录 + 没要求重新核对 → 当作已下过全部，别重下
-    const treatAsAllDone = !isNewVideo && already === undefined && options.rescanPages !== true
-    if (treatAsAllDone) continue
+    // 已经下过的那些。记录缺失 = 一页都没下过（不是"全都下过"）——
+    // 旧实现把缺失当成"已完成"，正是补不回 P2 的原因
+    const done = new Set(seenPages[item.bvid] ?? [])
 
-    const done = new Set(already ?? [])
     for (const page of wantedPages) {
-      if (!isNewVideo && done.has(page.page)) continue
+      if (done.has(page.page)) continue
       tasks.push({ bvid: item.bvid, title: item.title, page: page.page, cid: page.cid })
     }
   }
@@ -295,7 +295,7 @@ export function planPages(
 /** 跑一次订阅：拉当前列表 → 按 bvid + 分 P 求差 → 该下的开任务。 */
 export async function runBiliSubscription(
   idOrPrefix: string,
-  options: { force?: boolean; rescanPages?: boolean; signal?: AbortSignal } = {},
+  options: { force?: boolean; signal?: AbortSignal } = {},
 ): Promise<BiliRunResult> {
   const sub = findBiliSubscription(idOrPrefix)
   const collection = await fetchByTarget(sub.targetId, 500, options.signal)
@@ -307,33 +307,30 @@ export async function runBiliSubscription(
   // 但 `force` 在老脚本里就是"重新核对一遍"，保持它对**分 P** 的重新核对语义。
   const baseline = previous.length === 0
 
-  // 拉每个 bvid 的分 P 列表。只在真要判断时才查，避免几百个视频全查一遍。
-  const fresh = collection.items.filter((v) => !previous.includes(v.bvid))
-  const needPages = new Set<string>(fresh.map((v) => v.bvid))
-  // 分 P 可能变化的老视频也要查（基线里没有 seenPages 记录的跳过，见 planPages）
-  for (const v of collection.items) {
-    if (options.rescanPages === true) needPages.add(v.bvid)
-    else if (sub.seenPages[v.bvid] !== undefined) needPages.add(v.bvid)
-  }
-
+  // 拉 bvid 的分 P 列表。
+  //
+  // **所有 bvid 都要查**，不能只查"新视频"或"有 seenPages 记录的"——
+  // 后者正是 bug：`--rescan-pages` 把记录清空后，一个都不查，于是
+  // planPages 拿到的 pages 为空，直接跳过，补不回任何缺失的分 P。
+  //
+  // 代价是每次检查对合集里的每个视频各查一次详情。合集通常几十到几百个，
+  // 顺手算一下就知道值不值：201 个视频 × 一次 view 接口，几秒钟。
+  // 相比"漏内容且永远补不上"，这个代价可以接受。
   const pagesByBvid = new Map<string, { cid: number; page: number }[]>()
-  for (const bvid of needPages) {
+  for (const item of collection.items) {
     if (options.signal?.aborted) break
     try {
-      const info = await fetchInfo(bvid, options.signal)
-      pagesByBvid.set(bvid, info.pages.map((p: { cid: number; page: number }) => ({ cid: p.cid, page: p.page })))
+      const info = await fetchInfo(item.bvid, options.signal)
+      pagesByBvid.set(item.bvid, info.pages.map((p: { cid: number; page: number }) => ({ cid: p.cid, page: p.page })))
     } catch {
       // 单个视频查不到不该拖垮整次检查；下次再来
-      progress('bili.subscribe.info_failed', { id: sub.id, bvid })
+      progress('bili.subscribe.info_failed', { id: sub.id, bvid: item.bvid })
     }
   }
 
   const plan = baseline
     ? { tasks: [] as PageTask[], baseline: true }
-    : planPages(collection.items, pagesByBvid, previous, sub.seenPages, {
-      pagesMode: sub.pagesMode,
-      ...(options.rescanPages === true ? { rescanPages: true } : {}),
-    })
+    : planPages(collection.items, pagesByBvid, previous, sub.seenPages, { pagesMode: sub.pagesMode })
 
   let jobId: string | null = null
   let note: string

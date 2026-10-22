@@ -1088,7 +1088,6 @@ const subRun: Command = {
       try {
         results.push(await runBiliSubscription(sub.id, {
           ...(values.force === true ? { force: true } : {}),
-          ...(values['rescan-pages'] === true ? { rescanPages: true } : {}),
           ...(signal ? { signal } : {}),
         }))
       } catch (err) {
