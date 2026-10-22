@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.10 — 2026-10-22
+
+**补合集 ref 的入口级回归测试**
+
+- `tests/collection-ref.test.ts` 原来只测 `parseCollectionRef` 这个纯函数 ——
+  它证明"解析器认得这些写法"，但证明不了"三个命令真的用了它"。
+  要是哪天某个入口自己写一份正则，那些测试照样绿，而那个命令已经认不出
+  `season:<sid>` 了（v0.12.0 就退化过这一次）
+- 新增的测试**对真命令调 `run()`**，比对同一批 ref 在
+  `bili collection` / `bili bulk` / `bili subscribe add` 上的接受/拒绝是否一致
+- 顺带钉住一条有意的不一致：`bulk` 认普通视频（配 `--all-pages`/`--pages`），
+  另两个只认合集。哪天 bulk 不再支持，测试会提醒去改 usage
+
 ## 0.12.9 — 2026-10-22
 
 **新增 `music lyric`：只取歌词，不下载音频**
