@@ -12,7 +12,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 import { AstraError } from '../core/errors.ts'
-import { getConfig, mediaRoot } from '../core/config.ts'
+import { getConfig, mediaRoot, musicRoot } from '../core/config.ts'
 import { httpRequest } from '../core/http.ts'
 import { progress } from '../core/output.ts'
 import { loadBiliSession, cookieHeader } from './auth.ts'
@@ -21,6 +21,7 @@ import { mux, probe } from './ffmpeg.ts'
 import { audioTargetFormat, processBiliAudio } from './audio-tag.ts'
 import { qualityName } from './sign.ts'
 import { renderTemplate, resolveInside } from '../core/template.ts'
+import { resolveSidecars, writeSidecars } from './sidecar.ts'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
 const REFERER = 'https://www.bilibili.com/'
@@ -32,8 +33,25 @@ export interface DownloadOptions {
   quality: number
   /** 只取音频。 */
   audioOnly?: boolean
+  /**
+   * 只取音频时落到哪儿。默认 `music`（音乐根目录 + `music.template`）。
+   *
+   * 为什么默认进音乐库：同一批音频不该有两套命名规则。
+   * 以前 `--audio-only` 落 `bili.dir` + `bili.template`，想进音乐库就得
+   * "先临时改 bili.dir、下完再手工搬" —— 那个流程存在的唯一原因就是这条限制。
+   * `--to bili` 是显式出口：确实想按视频模板归档音频时用。
+   */
+  audioTo?: 'music' | 'bili'
+  /**
+   * 下载完成后生成哪些伴生文件。不给就用配置 `bili.sidecar`。
+   * 空数组 = 不生成（默认）。
+   */
+  sidecars?: SidecarKind[]
   signal?: AbortSignal
 }
+
+/** 伴生文件：跟视频同名的 .Metadata.nfo / .jpg / .Danmaku.ass。 */
+export type SidecarKind = 'nfo' | 'cover' | 'danmaku'
 
 export interface DownloadResult {
   status: 'downloaded'
@@ -54,7 +72,67 @@ export interface DownloadResult {
   /** 音频文件里内嵌了封面（ffprobe 会把它报成视频流）。 */
   coverEmbedded: boolean
   bytes: number
+  /** 生成的伴生文件（空 = 没生成）。 */
+  sidecars: SidecarKind[]
   warnings: string[]
+}
+
+/**
+ * 落盘用哪个根目录、哪个模板、哪些变量。
+ *
+ * 抽成纯函数是因为这里的规则容易搞错，而且错了很难发现（文件会安静地
+ * 落到另一个库里去）：
+ * - 视频一律 `bili.dir` + `bili.template`
+ * - **只取音频时进音乐库**（`music.dir` + `music.template`）——
+ *   同一批音频不该有两套命名规则，否则播放器里就是两堆互不相认的文件
+ * - `--to bili` 是显式出口：要按视频模板归档音频时才用
+ */
+export function targetPathFor(
+  info: VideoInfo,
+  page: VideoInfo['pages'][number],
+  options: Pick<DownloadOptions, 'audioOnly' | 'audioTo'>,
+  actualQuality: number,
+): { root: string; template: string; vars: Record<string, string> } {
+  const audio = options.audioOnly === true
+  const toMusic = audio && (options.audioTo ?? 'music') === 'music'
+  const multiPart = info.pages.length > 1
+
+  if (toMusic) {
+    // 音乐模板的变量集和视频那套不同（{artist}/{album}/...）。
+    // B 站没有"歌手/专辑"概念，用 UP 主当艺术家、视频标题当专辑 ——
+    // 与 `bili get --audio-only` 写进标签的归属保持一致（TIT2/TPE1/TALB）。
+    return {
+      root: musicRoot(),
+      template: getConfig('music.template'),
+      vars: {
+        artist: safeName(info.owner.name || '未知UP'),
+        artist_list: safeName(info.owner.name || '未知UP'),
+        primary_artist: safeName(info.owner.name || '未知UP'),
+        albumartist: safeName(info.owner.name || '未知UP'),
+        album: safeName(info.title),
+        title: safeName(multiPart ? page.part : info.title),
+        year: String(new Date((info.pubdate || 0) * 1000).getUTCFullYear() || ''),
+        track: String(page.page),
+        disc: '1',
+        source: 'bilibili',
+        ext: audioTargetFormat(),
+      },
+    }
+  }
+
+  return {
+    root: mediaRoot(),
+    template: getConfig('bili.template'),
+    vars: {
+      uploader: safeName(info.owner.name || '未知UP'),
+      title: safeName(info.title),
+      part: multiPart ? safeName(page.part) : '',
+      page: String(page.page),
+      bvid: info.bvid,
+      quality: qualityName(actualQuality),
+      ext: audio ? audioTargetFormat() : 'mp4',
+    },
+  }
 }
 
 /** 同一画质有多种编码，优先 avc1（兼容性最好），其次 hevc，最后 av01。 */
@@ -141,17 +219,7 @@ export async function downloadPage(
   const downgraded = actualQuality < options.quality
 
   // 目标路径
-  const root = mediaRoot()
-  const vars: Record<string, string> = {
-    uploader: safeName(info.owner.name || '未知UP'),
-    title: safeName(info.title),
-    part: info.pages.length > 1 ? safeName(page.part) : '',
-    page: String(page.page),
-    bvid: info.bvid,
-    quality: qualityName(actualQuality),
-    ext: options.audioOnly ? audioTargetFormat() : 'mp4',
-  }
-  const template = getConfig('bili.template')
+  const { root, template, vars } = targetPathFor(info, page, options, actualQuality)
   const relative = renderTemplate(template, vars)
   const target = resolveInside(root, relative)
   await mkdir(path.dirname(target), { recursive: true })
@@ -235,6 +303,18 @@ export async function downloadPage(
       warnings.push(`成品 ${Math.round(probed.durationSec)} 秒，与分 P 记录 ${expectedSec} 秒不一致`)
     }
     if (!options.audioOnly && probed.videoCodec === null) warnings.push('成品里没有视频流')
+
+    // 伴生文件（nfo / 封面 / 弹幕）。只对**视频**生成 —— 音频进音乐库后
+    // 靠内嵌标签，不需要这几个 sidecar。
+    let sidecars: SidecarKind[] = []
+    if (!options.audioOnly) {
+      const want = resolveSidecars(options.sidecars)
+      if (want.length > 0) {
+        const result = await writeSidecars(target, info, page, want, signal)
+        sidecars = result.written
+        warnings.push(...result.warnings)
+      }
+    }
     // 只下音频时，内嵌封面会被 ffprobe 报成一条 mjpeg 视频流。这不是问题，但要说清楚，
     // 否则 AI 看到 videoCodec 会以为"不是说只要音频吗，怎么下了个视频"
     const coverStream = options.audioOnly && probed.videoCodec !== null && ['mjpeg', 'png', 'bmp', 'gif', 'webp'].includes(probed.videoCodec)
@@ -258,6 +338,7 @@ export async function downloadPage(
       /** 音频文件里内嵌了封面（ffprobe 会把它报成视频流）。 */
       coverEmbedded: coverStream === true,
       bytes: (await stat(target)).size,
+      sidecars,
       warnings,
     }
   } finally {

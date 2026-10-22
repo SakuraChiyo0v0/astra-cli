@@ -47,6 +47,12 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (/^\d+$/.test(v) && Number(v) >= 96 && Number(v) <= 320 ? null : '只能是 96..320') },
   { key: 'bili.tag', description: '--audio-only 是否自动写标签并内嵌封面：true / false', default: 'true',
     validate: (v) => (['true', 'false'].includes(v) ? null : '只能是 true / false') },
+  // 伴生文件：与视频同名的 .Metadata.nfo / .jpg / .Danmaku.ass，Emby/Jellyfin 会自动刮削。
+  // 默认空 —— 弹幕要额外请求接口，多数情况不需要；要就一次配好。
+  { key: 'bili.sidecar', description: '下载视频时顺带生成的伴生文件，逗号分隔：nfo / cover / danmaku / all（默认空 = 不生成）', default: '',
+    validate: (v) => (/^[\s,，a-zA-Z]*$/.test(v) ? null : '只能是 nfo / cover / danmaku / all 的组合') },
+  { key: 'bili.subscribe.pages', description: '订阅下载哪些分 P：all（默认，完整拿到）/ first（只下 P1，返回 partial: true）', default: 'all',
+    validate: (v) => (['all', 'first'].includes(v) ? null : '只能是 all / first') },
   // —— 代理 ——
   // NAS 上 Steam 全域名不通，但有 mihomo 容器提供 http://mihomo:7890。
   // 用 include/exclude 按域名控制，别让 B 站、网易云也绕一圈。

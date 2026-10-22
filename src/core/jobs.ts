@@ -99,6 +99,14 @@ interface Handler {
   summary: (items: JobItemView[]) => string[]
   /** worker 启动时清理上次被强杀留下的临时文件。 */
   sweep?: () => Promise<void>
+  /**
+   * 任务结束（完成 / 部分完成 / 失败 / 取消）后调一次。
+   *
+   * 该域需要按**实际结果**更新自己的状态时用 —— 比如订阅要记下
+   * "这个视频的哪几个分 P 确实落盘了"。只有 `downloaded` / `skipped`
+   * 的项才算数，失败的下次要重试。
+   */
+  afterFinish?: (job: JobView, items: JobItemView[]) => void
 }
 
 const handlers = new Map<string, Handler>()
@@ -366,6 +374,14 @@ export async function runWorker(domain: string, jobId: string): Promise<void> {
 async function finish(domain: string, jobId: string): Promise<void> {
   const { job, items } = getJob(jobId, true, domain)
   const handler = handlers.get(domain)
+  // 域自己的收尾（按实际结果更新状态）。出问题不能影响通知。
+  if (handler?.afterFinish) {
+    try {
+      handler.afterFinish(job, items ?? [])
+    } catch {
+      // 收尾失败不该让任务变红，下次检查会再补
+    }
+  }
   const failed = (items ?? []).filter((i) => i.status === 'failed')
   const lines = [
     `【${job.title}】${statusLabel(job.status)}`,

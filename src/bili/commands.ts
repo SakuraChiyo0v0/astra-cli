@@ -11,6 +11,7 @@ import { homePath } from '../core/paths.ts'
 import { renderQrText, writeQrPng } from '../core/qr.ts'
 import { biliSessionDigest, clearBiliSession, cookieHeader, fetchBiliAccount, loadBiliSession, pollBiliQr, saveBiliSession, startBiliQr } from './auth.ts'
 import { playInfo, subtitleList, videoInfo, type VideoInfo } from './api.ts'
+import { sidecarKinds } from './sidecar.ts'
 import { downloadPage } from './download.ts'
 import { probe } from './ffmpeg.ts'
 import { QUALITY_NAMES, QUALITY_ORDER, qualityName } from './sign.ts'
@@ -92,9 +93,14 @@ function pageView(info: VideoInfo, index: number) {
 }
 
 /** 选出要下载哪几个分 P：给了 --page 就按它，否则单 P 全下、多 P 只下第一个并提示。 */
-function selectPages(info: VideoInfo, rawPage: unknown): { pages: number[]; warnings: string[] } {
+function selectPages(info: VideoInfo, rawPage: unknown): { pages: number[]; warnings: string[]; partial: boolean } {
   const warnings: string[] = []
   if (typeof rawPage === 'string' && rawPage.trim()) {
+    const raw = rawPage.trim().toLowerCase()
+    // `--page all`：明确要全部分 P
+    if (raw === 'all') {
+      return { pages: info.pages.map((_, i) => i), warnings, partial: false }
+    }
     const pages: number[] = []
     for (const chunk of rawPage.split(',')) {
       const trimmed = chunk.trim()
@@ -110,28 +116,34 @@ function selectPages(info: VideoInfo, rawPage: unknown): { pages: number[]; warn
       if (!Number.isInteger(n) || n < 1 || n > info.pages.length) throw invalidInput(`分 P ${trimmed} 不合法`, `这个视频有 ${info.pages.length} 个分 P`)
       if (!pages.includes(n - 1)) pages.push(n - 1)
     }
-    return { pages: pages.sort((a, b) => a - b), warnings }
+    return { pages: pages.sort((a, b) => a - b), warnings, partial: pages.length < info.pages.length }
   }
-  if (info.pages.length <= 1) return { pages: [0], warnings }
-  // 多分 P 不替用户全下：可能是 200 集的番剧
-  warnings.push(`这个视频有 ${info.pages.length} 个分 P，这次只下第 1 个；要别的用 --page 指定（如 --page 2,5-8）`)
-  return { pages: [0], warnings }
+  if (info.pages.length <= 1) return { pages: [0], warnings, partial: false }
+  // 多分 P 不替用户全下：可能是 200 集的番剧。
+  // 但"只下了一个"必须让调用方看得见 —— 光靠 warning 会被忽略（订阅就是这么漏的）。
+  warnings.push(`这个视频有 ${info.pages.length} 个分 P，这次只下第 1 个；要别的用 --page 指定（如 --page 2,5-8），全下用 --page all`)
+  return { pages: [0], warnings, partial: true }
 }
 
 const get: Command = {
   name: 'bili get',
   summary: '下载 B 站视频：BV 号 / 链接 / 短链都行，多分 P 用 --page 指定',
-  usage: 'astra bili get <BV号|链接> [--page 1,3-5] [--quality 1080p] [--audio-only]',
+  usage: 'astra bili get <BV号|链接> [--page 1,3-5|all] [--quality 1080p] [--audio-only] [--to music|bili] [--sidecar nfo,cover,danmaku]',
   notes: [
     'data.status 是 downloaded；多分 P 时 results 里每个分 P 一条结果',
+    '**partial=true 表示只下了一部分分 P** —— 多 P 视频默认只下 P1，要全下加 `--page all`',
     'downgraded=true 表示服务端给的画质低于请求的——未登录时一定封顶 360P',
     '短链（b23.tv）会先展开；带分 P 参数的链接会直接定位到那一 P',
     '--audio-only 的输出格式看 `bili.audio-format`（默认 mp3，能写标签）；mp3 / flac 会自动写歌名、UP 主、封面与 BV 号',
+    '--audio-only **默认落音乐库**（music.dir + music.template），和订阅音频模式一致；要按视频模板归档用 `--to bili`',
+    '--sidecar 生成 .Metadata.nfo / .jpg / .Danmaku.ass（Emby/Jellyfin 自动刮削）；不给看配置 bili.sidecar',
   ],
   options: {
-    page: { type: 'string', description: '分 P：1 / 2,5 / 3-8', valueName: 'pages' },
+    page: { type: 'string', description: '分 P：1 / 2,5 / 3-8 / all', valueName: 'pages' },
     quality: { type: 'string', short: 'q', description: '画质：4k / 1080p60 / 1080p / 720p / 480p / 360p', valueName: 'q' },
     'audio-only': { type: 'boolean', description: `只要音频，不下视频（格式见 bili.audio-format）` },
+    to: { type: 'string', description: '音频落到哪儿：music（默认，音乐库）/ bili（视频目录）；只对 --audio-only 有效', valueName: 'where' },
+    sidecar: { type: 'string', description: '伴生文件，逗号分隔：nfo / cover / danmaku / all / none', valueName: 'kinds' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -140,11 +152,26 @@ const get: Command = {
     if (target.kind !== 'video') throw invalidInput('这不是一个可下载的视频', '试试 BV 号或视频链接')
     const info = await videoInfo(target.bvid, signal)
     const quality = parseQuality(values.quality)
-    const { pages, warnings } = selectPages(info, values.page)
+    const audioOnly = values['audio-only'] === true
+    const { pages, warnings, partial } = selectPages(info, values.page)
+
+    const toRaw = typeof values.to === 'string' ? values.to.toLowerCase() : ''
+    if (toRaw && !['music', 'bili'].includes(toRaw)) throw invalidInput(`--to 只能是 music / bili`, '例如 --to bili')
+    if (toRaw && !audioOnly) throw invalidInput('--to 只对 --audio-only 有效', '下视频始终落 bili.dir')
+
+    const sidecars = typeof values.sidecar === 'string'
+      ? (values.sidecar.trim().toLowerCase() === 'none' ? [] : sidecarKinds(values.sidecar))
+      : undefined
 
     const results = []
     for (const index of pages) {
-      const result = await downloadPage(info, index, { quality, audioOnly: values['audio-only'] === true, signal })
+      const result = await downloadPage(info, index, {
+        quality,
+        audioOnly,
+        ...(toRaw ? { audioTo: toRaw as 'music' | 'bili' } : {}),
+        ...(sidecars ? { sidecars } : {}),
+        signal,
+      })
       warnings.push(...result.warnings)
       results.push(result)
     }
@@ -154,6 +181,8 @@ const get: Command = {
         video: videoView(info),
         results: results.length === 1 ? results[0] : results,
         ...(results.length > 1 ? { count: results.length } : {}),
+        // 只下了一部分分 P 时必须显式告诉调用方 —— 光靠 warnings 会被忽略
+        ...(partial ? { partial: true, downloadedPages: pages.length, totalPages: info.pages.length } : {}),
       },
       warnings,
     }
@@ -891,18 +920,40 @@ const collectionCmd: Command = {
   },
 }
 
+/** `--pages all|first`。没给就返回 null（用默认/配置）。 */
+function parsePagesMode(raw: unknown): 'all' | 'first' | null {
+  if (raw === undefined) return null
+  const v = String(raw).trim().toLowerCase()
+  if (v === 'all') return 'all'
+  if (v === 'first' || v === '1') return 'first'
+  throw invalidInput(`--pages 只能是 all / first`, 'all = 全部分 P（默认），first = 只下 P1')
+}
+
+/** on/off/true/false/1/0。 */
+function parseOnOff(raw: unknown, name: string): boolean {
+  const v = String(raw).trim().toLowerCase()
+  if (['on', 'true', '1', 'yes'].includes(v)) return true
+  if (['off', 'false', '0', 'no'].includes(v)) return false
+  throw invalidInput(`--${name} 只能是 on / off`, '例如 --audio-only on')
+}
+
 const subAdd: Command = {
   name: 'bili subscribe add',
   summary: '订阅合集 / 系列 / 收藏夹：定时检查，出新视频自动下',
-  usage: 'astra bili subscribe add <合集链接|season:<sid>|fav:<id>> [--every 24] [--quality 1080p]',
+  usage: 'astra bili subscribe add <合集链接|season:<sid>|fav:<id>> [--every 24] [--quality 1080p] [--audio-only] [--pages all|first]',
   notes: [
     '建订阅时会把**当前已有的一批记为基线**，第一次检查不会把整个合集重下一遍',
-    '新视频靠"上次见到的 bvid 列表"求差判断，不依赖发布时间（B 站时间字段不可靠）',
+    '新视频靠"上次见到的 bvid + 已下分 P"求差判断，不依赖发布时间（B 站时间字段不可靠）',
+    '**默认下全部分 P**（--pages all）：订阅的语义是完整拿到，漏 P 是静默丢内容',
+    '只想要 P1 加 --pages first，此时运行结果里会给 partial: true',
+    '--audio-only 时落音乐库（ASTRA_MUSIC_DIR + music.template），和 `bili get --audio-only` 一致',
     '**不支持订阅 UP 主**：UP 投稿列表接口带签名也返回 -352 风控（实测）',
   ],
   options: {
     every: { type: 'string', description: '每隔几小时检查一次，默认 24', valueName: 'h' },
     quality: { type: 'string', short: 'q', description: '下载画质，默认取 bili.quality', valueName: 'q' },
+    'audio-only': { type: 'boolean', description: '只下音频（mp3 进音乐库，带完整标签）' },
+    pages: { type: 'string', description: '下哪些分 P：all（默认）/ first（只 P1）', valueName: 'mode' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -910,13 +961,20 @@ const subAdd: Command = {
     const every = Number(values.every ?? '24')
     if (!Number.isInteger(every) || every < 1 || every > 720) throw invalidInput('--every 必须是 1..720 的整数')
     const quality = parseQuality(values.quality)
+    const pagesMode = parsePagesMode(values.pages)
     const sub = await addBiliSubscription(
-      { target: positionals[0]!, everyHours: every, quality: String(quality) },
+      {
+        target: positionals[0]!, everyHours: every, quality: String(quality),
+        audioOnly: values['audio-only'] === true,
+        ...(pagesMode ? { pagesMode } : {}),
+      },
       signal,
     )
+    const warnings = ['已记录当前内容作为基线；之后每 ' + every + ' 小时检查一次，发现新视频时下载']
+    if (pagesMode === 'first') warnings.push('--pages first：每个视频只下 P1，会漏掉其它分 P（结果里会给 partial: true）')
     return {
       data: { status: 'subscribed', subscription: sub, quality: qualityName(quality) },
-      warnings: ['已记录当前内容作为基线；之后每 ' + every + ' 小时检查一次，发现新视频时下载'],
+      warnings,
     }
   },
 }
@@ -943,6 +1001,8 @@ const subList: Command = {
           enabled: s.enabled,
           lastCheckedAt: s.lastCheckedAt,
           knownVideos: s.lastSeen.length,
+          audioOnly: s.audioOnly,
+          pagesMode: s.pagesMode,
           lastJobId: s.lastJobId,
         })),
       },
@@ -953,18 +1013,25 @@ const subList: Command = {
 const subSet: Command = {
   name: 'bili subscribe set',
   summary: '改订阅：间隔 / 启停 / 画质',
-  usage: 'astra bili subscribe set <id> [--every 12] [--enable|--disable] [--quality 1080p]',
+  usage: 'astra bili subscribe set <id> [--every 12] [--enable|--disable] [--quality 1080p] [--audio-only on|off] [--pages all|first] [--rescan-pages]',
+  notes: [
+    '--audio-only on|off 切换"只下音频"',
+    '--rescan-pages 清空分 P 记录，下次 run 重新核对每个视频有没有缺 P（补历史遗漏用）',
+  ],
   options: {
     every: { type: 'string', description: '每隔几小时', valueName: 'h' },
     enable: { type: 'boolean', description: '启用' },
     disable: { type: 'boolean', description: '停用' },
     quality: { type: 'string', short: 'q', description: '画质', valueName: 'q' },
+    'audio-only': { type: 'string', description: 'on / off：只下音频', valueName: 'mode' },
+    pages: { type: 'string', description: 'all / first：下哪些分 P', valueName: 'mode' },
+    'rescan-pages': { type: 'boolean', description: '清空分 P 记录，下次重新核对' },
   },
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals, values }) {
     if (values.enable === true && values.disable === true) throw invalidInput('--enable 与 --disable 不能同时给')
-    const patch: { everyHours?: number; enabled?: boolean; quality?: string | null } = {}
+    const patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first'; resetPages?: boolean } = {}
     if (values.every !== undefined) {
       const n = Number(values.every)
       if (!Number.isInteger(n) || n < 1 || n > 720) throw invalidInput('--every 必须是 1..720 的整数')
@@ -973,6 +1040,12 @@ const subSet: Command = {
     if (values.enable === true) patch.enabled = true
     if (values.disable === true) patch.enabled = false
     if (values.quality !== undefined) patch.quality = String(parseQuality(values.quality))
+    if (values['audio-only'] !== undefined) {
+      patch.audioOnly = parseOnOff(values['audio-only'], 'audio-only')
+    }
+    const pagesMode = parsePagesMode(values.pages)
+    if (pagesMode) patch.pagesMode = pagesMode
+    if (values['rescan-pages'] === true) patch.resetPages = true
     return { data: setBiliSubscription(positionals[0]!, patch) }
   },
 }
@@ -991,14 +1064,17 @@ const subRemove: Command = {
 const subRun: Command = {
   name: 'bili subscribe run',
   summary: '检查到点的订阅并下载新视频（给定时任务调）',
-  usage: 'astra bili subscribe run [--id <id>] [--force]',
+  usage: 'astra bili subscribe run [--id <id>] [--force] [--rescan-pages]',
   notes: [
     '不带 --id 时只跑到点的；--force 不管间隔强制检查',
+    '**按 bvid + 已下分 P 求差**：视频后来补的分 P 也能被发现并补下',
+    '--rescan-pages 对存量基线重新核对（老数据只有 bvid 没有分 P 记录）',
     '在 Hermes 里配一条 cron 定时调这个命令即可（比如每 6 小时）',
   ],
   options: {
     id: { type: 'string', description: '只跑这一个订阅', valueName: 'id' },
     force: { type: 'boolean', description: '忽略间隔，立刻检查' },
+    'rescan-pages': { type: 'boolean', description: '对存量基线重新核对分 P' },
   },
   maxArgs: 0,
   async run({ values, signal }) {
@@ -1010,7 +1086,11 @@ const subRun: Command = {
     for (const sub of targets) {
       if (signal?.aborted) break
       try {
-        results.push(await runBiliSubscription(sub.id, { ...(values.force === true ? { force: false } : {}), ...(signal ? { signal } : {}) }))
+        results.push(await runBiliSubscription(sub.id, {
+          ...(values.force === true ? { force: true } : {}),
+          ...(values['rescan-pages'] === true ? { rescanPages: true } : {}),
+          ...(signal ? { signal } : {}),
+        }))
       } catch (err) {
         results.push({ subscription: sub, newCount: 0, jobId: null, note: `失败：${(err as Error).message.slice(0, 150)}`, baseline: false })
       }

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.12.15 — 2026-10-22
+
+**订阅能下全部分 P、能只下音频；视频可生成 nfo / 封面 / 弹幕**
+
+- **修（P0）**：订阅只下第 1 个分 P。实测 `BV1GEn26uEDT`（P1「绿色」+ P2「纯享版」）
+  任务成功、`failed: 0`，但只落了 P1。现在默认下**全部分 P**（`--pages all`），
+  只想要 P1 用 `--pages first`，此时返回里给 `partial: true`
+- **修（P0，更根本的）**：基线只记 bvid，所以"视频后来补了一个分 P"永远发现不了 ——
+  `BV1GEn26uEDT` 已经在基线里，光改默认值它的 P2 也补不上。
+  基线升到 **bvid + 已下分 P 集合**（`seen_pages`），任何一次运行都能发现缺的 P；
+  存量数据用 `bili subscribe run --rescan-pages` 重新核对
+- **新增（P0）**：订阅支持 `--audio-only`。音频落**音乐库**
+  （`ASTRA_MUSIC_DIR` + `music.template`），带完整标签
+- **改**：`bili get --audio-only` 也**默认落音乐库**（原先落 `bili.dir`）。
+  同一批音频不该有两套命名规则；要按视频模板归档用 `--to bili`
+- **新增（P2）**：`bili.sidecar` 配置（`nfo` / `cover` / `danmaku` / `all`，默认空），
+  或命令行 `--sidecar`。生成 `.Metadata.nfo` / `.jpg` / `.Danmaku.ass`，
+  Emby / Jellyfin 自动刮削。命名是**扩展名追加**（`a.mp4` → `a.mp4.Metadata.nfo`），
+  替换扩展名播放器就认不出是同一条
+- `bili get` 多 P 只下一部分时返回 `partial: true` —— 光靠 warnings 会被忽略，
+  订阅漏 P 就是这么来的
+- 新增 16 条测试，核心两条验证过"撤掉修复会变红"
+
 ## 0.12.14 — 2026-10-22
 
 **`--json` 真正可用；歧义时给结构化候选**

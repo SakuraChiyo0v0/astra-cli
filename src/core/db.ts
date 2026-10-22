@@ -141,6 +141,12 @@ const MIGRATIONS: string[] = [
   // 按 `== "downloaded"` 过滤任务项时静默拿到空集合。
   // 只改 job_items，jobs 表的 done 计数列名不动（那是列名不是状态值）。
   `update job_items set status = 'downloaded' where status = 'done'`,
+  // 订阅：只记 bvid 会漏掉"这个视频后来多了个分 P"。
+  // 基线升到「bvid + 已下的分 P」，见 P0#1（BV1GEn26uEDT 进了基线只下了 P1，P2 永远补不上）。
+  `alter table subscriptions add column audio_only integer not null default 0`,
+  `alter table subscriptions add column pages_mode text not null default 'all'`,
+  // 已下分 P 的集合：{"BV1xx": [1,2], "BV1yy": [1]}。空对象 = 老数据，按"全下"对待。
+  `alter table subscriptions add column seen_pages text not null default '{}'`,
 ]
 
 export function db(): DatabaseSync {

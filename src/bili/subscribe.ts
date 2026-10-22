@@ -15,7 +15,8 @@ import { db } from '../core/db.ts'
 import { AstraError } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
 import { createJob, spawnWorker } from '../core/jobs.ts'
-import { collectionToItems, BILI_DOMAIN } from './jobs.ts'
+import { pageTasksToItems, BILI_DOMAIN } from './jobs.ts'
+import { fetchInfo } from './download.ts'
 import { fetchFavorite, fetchSeasonArchives, fetchSeriesArchives, parseCollectionRef, type Collection } from './collection.ts'
 
 export type BiliSubscribeKind = 'bili-season' | 'bili-series' | 'bili-fav'
@@ -35,6 +36,17 @@ export interface BiliSubscription {
   /** 上次见到的 bvid 列表。 */
   lastSeen: string[]
   lastJobId: string | null
+  /** 只下音频（mp3 进音乐库）。 */
+  audioOnly: boolean
+  /** 下哪些分 P：`all` 完整拿到，`first` 只下 P1（返回里会给 partial）。 */
+  pagesMode: 'all' | 'first'
+  /**
+   * 已下过的分 P：`{ bvid: [1, 2] }`。
+   *
+   * 只记 bvid 是不够的 —— 视频后来多了一个分 P 时，bvid 已经在基线里，
+   * 那个新 P 就永远不会被补上（实测 BV1GEn26uEDT 就卡在这）。
+   */
+  seenPages: SeenPages
 }
 
 interface Row {
@@ -48,9 +60,29 @@ interface Row {
   last_checked_at: string | null
   last_seen: string | null
   last_job_id: string | null
+  audio_only: number
+  pages_mode: string
+  seen_pages: string
 }
 
 const KIND_PREFIX = 'bili-'
+
+/** 分 P 跟踪：bvid -> 已经下过的 P 号（1-based）。 */
+export type SeenPages = Record<string, number[]>
+
+function parseSeenPages(raw: string): SeenPages {
+  try {
+    const parsed = JSON.parse(raw || '{}') as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: SeenPages = {}
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (Array.isArray(v)) out[k] = v.filter((n): n is number => typeof n === 'number')
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
 
 function toView(row: Row): BiliSubscription {
   let lastSeen: string[] = []
@@ -74,6 +106,9 @@ function toView(row: Row): BiliSubscription {
     lastCheckedAt: row.last_checked_at,
     lastSeen,
     lastJobId: row.last_job_id,
+    audioOnly: row.audio_only === 1,
+    pagesMode: row.pages_mode === 'first' ? 'first' : 'all',
+    seenPages: parseSeenPages(row.seen_pages),
   }
 }
 
@@ -101,7 +136,7 @@ export async function fetchByTarget(targetId: string, limit: number, signal?: Ab
   })
 }
 
-export async function addBiliSubscription(input: { target: string; everyHours: number; quality: string | null }, signal?: AbortSignal): Promise<BiliSubscription> {
+export async function addBiliSubscription(input: { target: string; everyHours: number; quality: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first' }, signal?: AbortSignal): Promise<BiliSubscription> {
   const ref = parseCollectionRef(input.target)
   if (ref.kind === null) {
     throw new AstraError('BAD_TARGET', `认不出这是哪个合集 / 系列 / 收藏夹：${input.target.slice(0, 40)}`, { exitCode: 2 })
@@ -117,8 +152,13 @@ export async function addBiliSubscription(input: { target: string; everyHours: n
     : withMid('season', ref.mid, ref.seasonId)
   const id = randomUUID().slice(0, 8)
   db()
-    .prepare('insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, last_seen, created_at) values (?, ?, ?, ?, ?, ?, 1, ?, ?)')
-    .run(id, kind, targetId, collection.title, input.quality, input.everyHours, JSON.stringify(collection.items.map((v) => v.bvid)), new Date().toISOString())
+    .prepare('insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, last_seen, created_at, audio_only, pages_mode) values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)')
+    .run(
+      id, kind, targetId, collection.title, input.quality, input.everyHours,
+      JSON.stringify(collection.items.map((v) => v.bvid)), new Date().toISOString(),
+      input.audioOnly === true ? 1 : 0,
+      input.pagesMode === 'first' ? 'first' : 'all',
+    )
   // 建订阅时把当前已有的一批记为基线 —— 第一次 run 不会把整个合集重下一遍
   return findBiliSubscription(id)
 }
@@ -128,7 +168,7 @@ export function removeBiliSubscription(idOrPrefix: string): boolean {
   return db().prepare('delete from subscriptions where id = ?').run(sub.id).changes > 0
 }
 
-export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean; quality?: string | null }): BiliSubscription {
+export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first'; resetPages?: boolean }): BiliSubscription {
   const sub = findBiliSubscription(idOrPrefix)
   const sets: string[] = []
   const values: (string | number | null)[] = []
@@ -143,6 +183,18 @@ export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: nu
   if (patch.quality !== undefined) {
     sets.push('quality = ?')
     values.push(patch.quality)
+  }
+  if (patch.audioOnly !== undefined) {
+    sets.push('audio_only = ?')
+    values.push(patch.audioOnly ? 1 : 0)
+  }
+  if (patch.pagesMode !== undefined) {
+    sets.push('pages_mode = ?')
+    values.push(patch.pagesMode)
+  }
+  // --rescan-pages：清空分 P 记录，让下次 run 重新核对每个视频有没有缺 P
+  if (patch.resetPages === true) {
+    sets.push("seen_pages = '{}'")
   }
   if (sets.length > 0) {
     values.push(sub.id)
@@ -168,49 +220,206 @@ export interface BiliRunResult {
  * **第一次（lastSeen 为空）一律返回空** —— 否则建订阅后第一次检查会把整个合集
  * 当成新视频，一次下几百个。这是这个功能最容易踩的坑。
  */
-export function pickFresh<T extends { bvid: string }>(current: T[], lastSeen: string[], force = false): { fresh: T[]; baseline: boolean } {
+/**
+ * 与基线求差，得出"这次要下什么"。
+ *
+ * **按 bvid + 分 P 求差，不是只按 bvid。** 只比 bvid 会漏掉一种情况：
+ * 视频后来新增了一个分 P（投稿后补了「纯享版」之类），bvid 已经在基线里，
+ * 那个新 P 就永远补不上。实测 BV1GEn26uEDT 就卡在这 —— 只下了 P1 的「绿色」，
+ * P2 的「纯享版」再也没出现过。
+ */
+export function pickFresh<T extends { bvid: string }>(
+  current: T[],
+  lastSeen: string[],
+  force = false,
+): { fresh: T[]; baseline: boolean } {
   const baseline = lastSeen.length === 0 || force
   if (baseline) return { fresh: [], baseline: true }
   return { fresh: current.filter((v) => !lastSeen.includes(v.bvid)), baseline: false }
 }
 
-/** 跑一次订阅：拉当前列表 → 与 lastSeen 求差 → 新的开任务。 */
-export async function runBiliSubscription(idOrPrefix: string, options: { force?: boolean; signal?: AbortSignal } = {}): Promise<BiliRunResult> {
+/** 一个待下的分 P。 */
+export interface PageTask {
+  bvid: string
+  title: string
+  /** 1-based P 号。 */
+  page: number
+  cid: number
+}
+
+/**
+ * 算出这次要为哪些分 P 建任务。
+ *
+ * 三种情况：
+ * 1. 新视频（bvid 不在基线）→ 按 `pagesMode` 决定下全部还是只 P1
+ * 2. 老视频但**多了新分 P** → 只下没下过的那些（这就是补 P2 的路径）
+ * 3. 老视频、分 P 没变 → 跳过
+ *
+ * `seenPages[bvid]` 缺失（老数据）时按"已经下过全部"处理，避免给所有存量
+ * 视频重下一遍；要重新核对存量用 `--rescan-pages`。
+ */
+export function planPages(
+  current: { bvid: string; title: string }[],
+  pagesByBvid: Map<string, { cid: number; page: number }[]>,
+  lastSeen: string[],
+  seenPages: SeenPages,
+  options: { pagesMode: 'all' | 'first'; rescanPages?: boolean },
+): { tasks: PageTask[]; baseline: boolean } {
+  const baseline = lastSeen.length === 0
+  if (baseline) return { tasks: [], baseline: true }
+
+  const tasks: PageTask[] = []
+  const known = new Set(lastSeen)
+  for (const item of current) {
+    const pages = pagesByBvid.get(item.bvid) ?? []
+    if (pages.length === 0) continue
+    const isNewVideo = !known.has(item.bvid)
+
+    // 该下哪些 P 号
+    const wantedPages = options.pagesMode === 'first' ? pages.slice(0, 1) : pages
+    // 已经下过的
+    const already = seenPages[item.bvid]
+    // 老视频 + 没有分 P 记录 + 没要求重新核对 → 当作已下过全部，别重下
+    const treatAsAllDone = !isNewVideo && already === undefined && options.rescanPages !== true
+    if (treatAsAllDone) continue
+
+    const done = new Set(already ?? [])
+    for (const page of wantedPages) {
+      if (!isNewVideo && done.has(page.page)) continue
+      tasks.push({ bvid: item.bvid, title: item.title, page: page.page, cid: page.cid })
+    }
+  }
+  return { tasks, baseline }
+}
+
+/** 跑一次订阅：拉当前列表 → 按 bvid + 分 P 求差 → 该下的开任务。 */
+export async function runBiliSubscription(
+  idOrPrefix: string,
+  options: { force?: boolean; rescanPages?: boolean; signal?: AbortSignal } = {},
+): Promise<BiliRunResult> {
   const sub = findBiliSubscription(idOrPrefix)
   const collection = await fetchByTarget(sub.targetId, 500, options.signal)
   const currentIds = collection.items.map((v) => v.bvid)
   const previous = sub.lastSeen
-  const { fresh, baseline } = pickFresh(collection.items, previous, options.force === true)
+
+  // `--force` 以前的意思是"不管间隔、立刻检查"，同时又兼任"重置基线"。
+  // 现在分开：force 只跳过间隔检查（由调用方决定），基线由 lastSeen 判断。
+  // 但 `force` 在老脚本里就是"重新核对一遍"，保持它对**分 P** 的重新核对语义。
+  const baseline = previous.length === 0
+
+  // 拉每个 bvid 的分 P 列表。只在真要判断时才查，避免几百个视频全查一遍。
+  const fresh = collection.items.filter((v) => !previous.includes(v.bvid))
+  const needPages = new Set<string>(fresh.map((v) => v.bvid))
+  // 分 P 可能变化的老视频也要查（基线里没有 seenPages 记录的跳过，见 planPages）
+  for (const v of collection.items) {
+    if (options.rescanPages === true) needPages.add(v.bvid)
+    else if (sub.seenPages[v.bvid] !== undefined) needPages.add(v.bvid)
+  }
+
+  const pagesByBvid = new Map<string, { cid: number; page: number }[]>()
+  for (const bvid of needPages) {
+    if (options.signal?.aborted) break
+    try {
+      const info = await fetchInfo(bvid, options.signal)
+      pagesByBvid.set(bvid, info.pages.map((p: { cid: number; page: number }) => ({ cid: p.cid, page: p.page })))
+    } catch {
+      // 单个视频查不到不该拖垮整次检查；下次再来
+      progress('bili.subscribe.info_failed', { id: sub.id, bvid })
+    }
+  }
+
+  const plan = baseline
+    ? { tasks: [] as PageTask[], baseline: true }
+    : planPages(collection.items, pagesByBvid, previous, sub.seenPages, {
+      pagesMode: sub.pagesMode,
+      ...(options.rescanPages === true ? { rescanPages: true } : {}),
+    })
 
   let jobId: string | null = null
   let note: string
-  if (fresh.length > 0) {
+  if (plan.tasks.length > 0) {
     const quality = Number(sub.quality ?? '80') || 80
-    const items = collectionToItems(fresh, collection.title, quality)
+    const items = pageTasksToItems(plan.tasks, collection.title, quality, sub.audioOnly)
     const job = createJob({
       domain: BILI_DOMAIN,
       kind: 'subscribe',
-      title: `订阅「${sub.title}」新增 ${fresh.length} 个`,
+      title: `订阅「${sub.title}」新增 ${plan.tasks.length} 项`,
       profile: String(quality),
       items,
+      // 任务跑完后要按这个 id 回写"哪几个分 P 真的下过了"
+      meta: { subscriptionId: sub.id },
     })
     spawnWorker(BILI_DOMAIN, job.id)
     jobId = job.id
-    note = `发现 ${fresh.length} 个新视频，已开任务 ${job.id}`
-    progress('bili.subscribe.new', { id: sub.id, count: fresh.length, jobId: job.id })
+    note = `发现 ${plan.tasks.length} 个待下分 P，已开任务 ${job.id}`
+    progress('bili.subscribe.new', { id: sub.id, count: plan.tasks.length, jobId: job.id })
   } else {
     note = baseline ? '第一次检查，已记录基线（不会重下已有内容）' : '没有新视频'
   }
 
+  // 更新"已下分 P"的基线。
+  //
+  // 只有**任务真的开起来**才记 —— 任务可能失败、可能被取消，那一项就还没下过。
+  // 记早了会让失败的项永远补不上（"以为下过了"）。实际确认落盘由
+  // `markPagesDownloaded` 在下一次检查前补记，这里只记"已经排进任务"的范围，
+  // 保守地**不记**，等任务跑完由 `recordJobPages` 回写。
+  const nextSeenPages = { ...sub.seenPages }
+  for (const v of collection.items) {
+    if (nextSeenPages[v.bvid] === undefined) {
+      // 新视频第一次进基线：没有任何已下记录（真下过会由任务完成后回写）
+      nextSeenPages[v.bvid] = []
+    }
+  }
+
   const now = new Date().toISOString()
   db()
-    .prepare('update subscriptions set last_checked_at = ?, last_seen = ?, last_job_id = coalesce(?, last_job_id) where id = ?')
-    .run(now, JSON.stringify(currentIds), jobId, sub.id)
+    .prepare('update subscriptions set last_checked_at = ?, last_seen = ?, seen_pages = ?, last_job_id = coalesce(?, last_job_id) where id = ?')
+    .run(now, JSON.stringify(currentIds), JSON.stringify(nextSeenPages), jobId, sub.id)
   db()
     .prepare("insert or replace into subscription_runs (subscription_id, ran_at, new_tracks, job_id, note) values (?, ?, ?, ?, ?)")
-    .run(sub.id, now, fresh.length, jobId, note)
+    .run(sub.id, now, plan.tasks.length, jobId, note)
 
-  return { subscription: findBiliSubscription(sub.id), newCount: fresh.length, jobId, note, baseline }
+  return { subscription: findBiliSubscription(sub.id), newCount: plan.tasks.length, jobId, note, baseline }
+}
+
+/**
+ * 按任务的**实际结果**回写"这些分 P 已经下过了"。
+ *
+ * 关键：只记 `status = 'downloaded'` 或 `'skipped'` 的项。
+ * 失败 / 取消的不能记 —— 记了下一轮就再也不会补，
+ * 而这正是"只记 bvid"那个 bug 的同类错误（以为下过了，其实没有）。
+ *
+ * 从 `job_items` 读而不是在内存里传：worker 是独立进程，
+ * 内存里的待下清单在 `subscribe run` 返回时就没了。
+ */
+export function recordSubscriptionPages(subscriptionId: string, jobId: string | null): void {
+  if (!jobId) return
+  const rows = db()
+    .prepare("select native_id, status, meta from job_items where job_id = ? and status in ('downloaded', 'skipped')")
+    .all(jobId) as unknown as { native_id: string; status: string; meta: string | null }[]
+  if (rows.length === 0) return
+
+  const sub = findBiliSubscription(subscriptionId)
+  const next: SeenPages = { ...sub.seenPages }
+  for (const row of rows) {
+    let meta: Record<string, unknown> = {}
+    try {
+      meta = JSON.parse(row.meta ?? '{}') as Record<string, unknown>
+    } catch {
+      continue
+    }
+    const bvid = typeof meta.bvid === 'string' ? meta.bvid : ''
+    // pageIndex 是 0-based，存进去用 1-based 的 P 号
+    const pageIndex = typeof meta.pageIndex === 'number' ? meta.pageIndex : null
+    if (!bvid || pageIndex === null) continue
+    const pageNo = pageIndex + 1
+    const list = next[bvid] ?? []
+    if (!list.includes(pageNo)) list.push(pageNo)
+    next[bvid] = list.sort((a, b) => a - b)
+  }
+  db()
+    .prepare('update subscriptions set seen_pages = ? where id = ?')
+    .run(JSON.stringify(next), sub.id)
 }
 
 /** 到点该跑的订阅。 */
