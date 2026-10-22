@@ -180,6 +180,9 @@ export async function downloadPage(
         },
         ...(signal ? { signal } : {}),
       })
+      // 视频没给 pubdate 时不会写日期标签。播放器里就永远是空的，
+      // 用户看不出原因 —— 说一句，免得以为是 astra 漏了。
+      if (!info.pubdate) warnings.push('这个视频没有发布日期，音频里不会写日期标签（TDRC / DATE）')
       warnings.push(...audioResult.warnings)
     }
 

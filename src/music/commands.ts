@@ -1028,16 +1028,24 @@ const coversCmd: Command = {
   summary: '给每张专辑目录补一张 cover.jpg（从文件内嵌封面提取，不联网）',
   usage: 'astra music covers',
   notes: [
-    '已有 cover.jpg 的会跳过；文件里没有内嵌封面的会列在 failed 里',
+    '已有 cover.jpg 的会跳过；一个目录里有多首歌时会挨个试，直到抠出封面',
+    '**看 `missing` 判断有没有漏**：它是"跑完之后仍然没有 cover.jpg 的目录"',
+    'failed 说的是"这一张为什么没写成"；missing 说的是"库里还有哪些目录是空封面"',
     'Navidrome 等播放器按专辑浏览时就有了封面，不再是空白',
   ],
   maxArgs: 0,
   async run({ signal }) {
     const result = await archiveAlbumCovers(signal)
-    return {
-      data: result,
-      warnings: result.failed.length > 0 ? [`${result.failed.length} 张没取到（多半是文件里没内嵌封面）`] : [],
+    const warnings: string[] = []
+    if (result.missing.length > 0) {
+      warnings.push(`${result.missing.length} 个专辑目录跑完仍没有 cover.jpg（原因见 missing）`)
+      // 有内嵌封面却没写出来是真正的 bug；没有内嵌封面是数据问题，分开说
+      const shouldHave = result.missing.filter((m) => m.reason !== '文件里没有内嵌封面')
+      if (shouldHave.length > 0) {
+        warnings.push(`${shouldHave.length} 个目录里有内嵌封面但没写出来，值得查一下`)
+      }
     }
+    return { data: result, warnings }
   },
 }
 

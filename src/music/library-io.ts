@@ -20,6 +20,19 @@ export interface CoverArchiveResult {
   skipped: number
   /** 取不到封面或写失败的，带原因。 */
   failed: { path: string; reason: string }[]
+  /**
+   * **没有 cover.jpg 的专辑目录**，即使这次没能补上。
+   *
+   * 和 `failed` 的区别：`failed` 说的是"这一张没写成、为什么"，
+   * `missing` 说的是"跑完之后，库里头还有哪些目录是没封面的" ——
+   * 包含两种情况：
+   * 1. 文件里确实没有内嵌封面（补不了，要靠联网或手工）
+   * 2. **有内嵌封面但这次没覆盖到**（比如同一专辑的曲目分散在多个目录，
+   *    只按第一个目录写了 cover.jpg，其余目录仍然空着）
+   *
+   * 第 2 种才是真正需要兜底的：它有封面却没写出来，用户以为跑过了就没事了。
+   */
+  missing: { dir: string; reason: string }[]
 }
 
 /**
@@ -30,34 +43,60 @@ export interface CoverArchiveResult {
  */
 export async function archiveAlbumCovers(signal?: AbortSignal, onProgress?: (done: number, total: number) => void): Promise<CoverArchiveResult> {
   const tracks = allTracks().filter((t) => !t.missing)
-  const result: CoverArchiveResult = { written: 0, skipped: 0, failed: [] }
-  const seen = new Set<string>()
-  for (const [index, track] of tracks.entries()) {
-    const albumDir = path.dirname(track.path)
-    if (seen.has(albumDir)) continue
-    seen.add(albumDir)
+  const result: CoverArchiveResult = { written: 0, skipped: 0, failed: [], missing: [] }
+
+  // 按**目录**分组，而不是"每个目录只取第一首"。
+  // 原先是 `seen.has(albumDir) continue`，一目录一判定 —— 那只在
+  // "同一张专辑的所有曲目都在同一目录"时成立。合作曲按主歌手归目录后，
+  // 一张专辑可能散在两个目录里，每个目录都得有自己的 cover.jpg。
+  const byDir = new Map<string, typeof tracks>()
+  for (const track of tracks) {
+    const dir = path.dirname(track.path)
+    const list = byDir.get(dir)
+    if (list) list.push(track)
+    else byDir.set(dir, [track])
+  }
+
+  let index = 0
+  for (const [albumDir, dirTracks] of byDir) {
+    index += 1
     const dest = path.join(albumDir, 'cover.jpg')
     const exists = await stat(dest).catch(() => null)
     if (exists) {
       result.skipped += 1
-      onProgress?.(index + 1, tracks.length)
+      onProgress?.(index, byDir.size)
       continue
     }
-    try {
-      // 从文件里抠内嵌封面：不联网，也不会因为平台换了图而对不上
-      const buffer = await readFile(track.path)
-      const cover = extractCoverArt(buffer)
-      if (!cover) {
-        result.failed.push({ path: dest, reason: '文件里没有内嵌封面' })
-      } else {
+
+    // 依次试这一目录里的每首歌，直到抠出封面为止。
+    // 只试第一首的话，第一首恰好是翻唱/纯音乐（没有内嵌封面）就会误报
+    // "这个目录没封面"，而其实第二首有。
+    let wrote = false
+    let lastReason = '目录里没有曲目'
+    for (const track of dirTracks) {
+      try {
+        // 从文件里抠内嵌封面：不联网，也不会因为平台换了图而对不上
+        const buffer = await readFile(track.path)
+        const cover = extractCoverArt(buffer)
+        if (!cover) {
+          lastReason = '文件里没有内嵌封面'
+          continue
+        }
         await writeFile(dest, cover.data)
         result.written += 1
+        wrote = true
+        break
+      } catch (err) {
+        lastReason = (err as Error).message.slice(0, 120)
       }
-    } catch (err) {
-      result.failed.push({ path: dest, reason: (err as Error).message.slice(0, 120) })
+    }
+    if (!wrote) {
+      result.failed.push({ path: dest, reason: lastReason })
+      // 跑完之后这个目录仍然没有 cover.jpg —— 调用方需要知道
+      result.missing.push({ dir: albumDir, reason: lastReason })
     }
     if (signal?.aborted) break
-    onProgress?.(index + 1, tracks.length)
+    onProgress?.(index, byDir.size)
   }
   return result
 }

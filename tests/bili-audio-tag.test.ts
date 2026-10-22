@@ -162,3 +162,52 @@ test('整段流（带画面）也能抽出音频并写 BV：番剧和老视频�
     else process.env.ASTRA_HOME = prevHome
   }
 })
+
+test('发行日期：pubdate 写成 TDRC，播放器按年份归档', async () => {
+  // 清单 P2#12：B 站音频进音乐库后，按年份浏览全是空白
+  const dir = mkdtempSync(path.join(tmpdir(), 'astra-at-'))
+  const source = makeSource(dir)
+  const output = path.join(dir, 'out.mp3')
+  const home = mkdtempSync(path.join(tmpdir(), 'astra-home-'))
+  const prevHome = process.env.ASTRA_HOME
+  process.env.ASTRA_HOME = home
+  try {
+    const result = await processBiliAudio({
+      source,
+      output,
+      // 2024-03-29 00:00:00 UTC
+      info: { title: '《5:20AM》', uploader: '东洋雪莲', coverUrl: null, bvid: 'BV19K421a7kx', pubdate: 1711670400 },
+    })
+    assert.ok(result.tagged)
+    const tags = readTags(output)
+    if (tags) {
+      assert.equal(tags.date, '2024-03-29', '应当是视频发布日期，不是下载时间')
+    }
+  } finally {
+    if (prevHome === undefined) delete process.env.ASTRA_HOME
+    else process.env.ASTRA_HOME = prevHome
+  }
+})
+
+test('没有 pubdate 时不写日期，也不编一个', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'astra-at-'))
+  const source = makeSource(dir)
+  const output = path.join(dir, 'out.mp3')
+  const home = mkdtempSync(path.join(tmpdir(), 'astra-home-'))
+  const prevHome = process.env.ASTRA_HOME
+  process.env.ASTRA_HOME = home
+  try {
+    await processBiliAudio({
+      source,
+      output,
+      info: { title: 't', uploader: 'u', coverUrl: null, bvid: 'BV17x411w7KC' },
+    })
+    const tags = readTags(output)
+    if (tags) {
+      assert.equal(tags.date, undefined, '没有发布日期就不该有 date —— 更不能拿"今天"顶上')
+    }
+  } finally {
+    if (prevHome === undefined) delete process.env.ASTRA_HOME
+    else process.env.ASTRA_HOME = prevHome
+  }
+})
