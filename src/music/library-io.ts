@@ -7,11 +7,57 @@
  *
  * 零推测原则照旧：封面取不到就不写，不拿别的图凑。
  */
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { existsSync, type Dirent } from 'node:fs'
 import path from 'node:path'
 import { AstraError } from '../core/errors.ts'
+import { musicRoot } from '../core/config.ts'
 import { allTracks, type LibraryTrack } from './library.ts'
 import { extractCoverArt } from './tags.ts'
+
+/** 扫描时认作"音频文件"的扩展名。 */
+const AUDIO_EXT = new Set(['.flac', '.mp3', '.m4a', '.ogg', '.opus', '.wav', '.aac', '.wma'])
+
+/**
+ * 扫音乐根目录，找出所有"装音频的目录"。
+ *
+ * **以目录为准，不以曲库记录为准。** 这是清单 P2#13 的核心：
+ * 原来遍历 `allTracks()`，曲库没收录的专辑（手动放进去的、下载后没入库的、
+ * 记录被 forget 掉的）根本不在遍历范围里，`written` 看着全部成功，
+ * 实际漏了目录，而且 `failed` 是空的 —— 静默跳过。
+ *
+ * 只认"直接含有音频文件"的目录：上一层（歌手目录）通常只有子目录，
+ * 不该给它写 cover.jpg。代价是"音频在更深的子目录里"扫不到，
+ * 但那不是这套模板会产出的结构（模板是 `<歌手>/<专辑>/<曲目>.flac`）。
+ */
+export async function findAlbumDirs(root: string): Promise<string[]> {
+  const out: string[] = []
+  const list = async (dir: string): Promise<Dirent[]> => {
+    try {
+      return await readdir(dir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+  }
+  for (const entry of await list(root)) {
+    if (!entry.isDirectory()) continue
+    const dir = path.join(root, entry.name)
+    const children = await list(dir)
+    const hasAudio = children.some((c) => c.isFile() && AUDIO_EXT.has(path.extname(c.name).toLowerCase()))
+    if (hasAudio) {
+      out.push(dir)
+      continue
+    }
+    // 再往下一层看看（`<歌手>/<专辑>/` 是标准结构；也容忍 `<专辑>/<碟>/`）
+    for (const child of children) {
+      if (!child.isDirectory()) continue
+      const sub = path.join(dir, child.name)
+      const grand = await list(sub)
+      if (grand.some((g) => g.isFile() && AUDIO_EXT.has(path.extname(g.name).toLowerCase()))) out.push(sub)
+    }
+  }
+  return out
+}
 
 export interface CoverArchiveResult {
   /** 写了多少张 cover.jpg。 */
@@ -33,6 +79,15 @@ export interface CoverArchiveResult {
    * 第 2 种才是真正需要兜底的：它有封面却没写出来，用户以为跑过了就没事了。
    */
   missing: { dir: string; reason: string }[]
+  /** 一共扫到多少个专辑目录。 */
+  dirs: number
+  /** 跑完之后**确实有** cover.jpg 的目录数（含原来就有的）。 */
+  hasCover: number
+}
+
+/** 自检：扫到的目录里，哪些跑完之后仍然没有 cover.jpg。 */
+export function verifyCovers(result: CoverArchiveResult): { ok: boolean; missing: { dir: string; reason: string }[] } {
+  return { ok: result.missing.length === 0, missing: result.missing }
 }
 
 /**
@@ -41,42 +96,68 @@ export interface CoverArchiveResult {
  * 只处理曲库里有的曲目（不扫全盘），按"歌所在目录的父目录"判断专辑目录。
  * 已有 `cover.jpg` 的直接跳过，不重复下。
  */
-export async function archiveAlbumCovers(signal?: AbortSignal, onProgress?: (done: number, total: number) => void): Promise<CoverArchiveResult> {
-  const tracks = allTracks().filter((t) => !t.missing)
-  const result: CoverArchiveResult = { written: 0, skipped: 0, failed: [], missing: [] }
+export interface CoverArchiveOptions {
+  /** 音乐根目录；不给就取 `musicRoot()`。 */
+  root?: string
+  /** 只看这些目录（测试与 `--dir` 用）。 */
+  dirs?: string[]
+}
 
-  // 按**目录**分组，而不是"每个目录只取第一首"。
-  // 原先是 `seen.has(albumDir) continue`，一目录一判定 —— 那只在
-  // "同一张专辑的所有曲目都在同一目录"时成立。合作曲按主歌手归目录后，
-  // 一张专辑可能散在两个目录里，每个目录都得有自己的 cover.jpg。
-  const byDir = new Map<string, typeof tracks>()
-  for (const track of tracks) {
+export async function archiveAlbumCovers(
+  signal?: AbortSignal,
+  onProgress?: (done: number, total: number) => void,
+  options: CoverArchiveOptions = {},
+): Promise<CoverArchiveResult> {
+  const result: CoverArchiveResult = { written: 0, skipped: 0, failed: [], missing: [], dirs: 0, hasCover: 0 }
+
+  // **以目录为准**（清单 P2#13）。不看曲库记录 —— 曲库没收录的专辑照样要覆盖。
+  const root = options.root ?? musicRoot()
+  const dirs = options.dirs ?? await findAlbumDirs(root)
+  result.dirs = dirs.length
+
+  // 目录 -> 该目录下的音频文件。曲库记录只是"加速线索"，
+  // 找不到就现场扫目录，绝不因为"曲库没有"就跳过。
+  const knownByDir = new Map<string, string[]>()
+  for (const track of allTracks()) {
+    if (track.missing) continue
     const dir = path.dirname(track.path)
-    const list = byDir.get(dir)
-    if (list) list.push(track)
-    else byDir.set(dir, [track])
+    const list = knownByDir.get(dir)
+    if (list) list.push(track.path)
+    else knownByDir.set(dir, [track.path])
   }
 
   let index = 0
-  for (const [albumDir, dirTracks] of byDir) {
+  for (const albumDir of dirs) {
     index += 1
     const dest = path.join(albumDir, 'cover.jpg')
-    const exists = await stat(dest).catch(() => null)
-    if (exists) {
+
+    // 判据是 cover.jpg **在不在**，不是"内嵌封面能不能读到"
+    if (await stat(dest).catch(() => null)) {
       result.skipped += 1
-      onProgress?.(index, byDir.size)
+      result.hasCover += 1
+      onProgress?.(index, dirs.length)
       continue
     }
 
-    // 依次试这一目录里的每首歌，直到抠出封面为止。
-    // 只试第一首的话，第一首恰好是翻唱/纯音乐（没有内嵌封面）就会误报
-    // "这个目录没封面"，而其实第二首有。
+    // 候选音频：先用曲库里的，再用目录里实际存在的（两者取并集，
+    // 曲库没有这条记录时也能找到文件）
+    const candidates = new Set(knownByDir.get(albumDir) ?? [])
+    try {
+      for (const entry of await readdir(albumDir, { withFileTypes: true })) {
+        if (entry.isFile() && AUDIO_EXT.has(path.extname(entry.name).toLowerCase())) {
+          candidates.add(path.join(albumDir, entry.name))
+        }
+      }
+    } catch {
+      // 目录读不了就走下面的失败分支
+    }
+
+    // 挨个试，直到抠出封面为止 —— 第一首可能是纯音乐/翻唱，没有内嵌封面
     let wrote = false
-    let lastReason = '目录里没有曲目'
-    for (const track of dirTracks) {
+    let lastReason = '目录里没有音频文件'
+    for (const file of candidates) {
       try {
-        // 从文件里抠内嵌封面：不联网，也不会因为平台换了图而对不上
-        const buffer = await readFile(track.path)
+        const buffer = await readFile(file)
         const cover = extractCoverArt(buffer)
         if (!cover) {
           lastReason = '文件里没有内嵌封面'
@@ -84,6 +165,7 @@ export async function archiveAlbumCovers(signal?: AbortSignal, onProgress?: (don
         }
         await writeFile(dest, cover.data)
         result.written += 1
+        result.hasCover += 1
         wrote = true
         break
       } catch (err) {
@@ -92,11 +174,11 @@ export async function archiveAlbumCovers(signal?: AbortSignal, onProgress?: (don
     }
     if (!wrote) {
       result.failed.push({ path: dest, reason: lastReason })
-      // 跑完之后这个目录仍然没有 cover.jpg —— 调用方需要知道
+      // 跑完之后这个目录仍然没有 cover.jpg —— 调用方靠这个判断有没有漏
       result.missing.push({ dir: albumDir, reason: lastReason })
     }
     if (signal?.aborted) break
-    onProgress?.(index, byDir.size)
+    onProgress?.(index, dirs.length)
   }
   return result
 }

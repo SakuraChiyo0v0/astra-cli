@@ -5,7 +5,9 @@
  * 拿得准就直接下完返回结果，拿不准就返回候选让 AI 回去问用户。
  */
 import { AstraError, invalidInput } from '../core/errors.ts'
-import { getConfig, setConfig } from '../core/config.ts'
+import { getConfig, setConfig, musicRoot } from '../core/config.ts'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 import type { Command } from '../core/command.ts'
 import { isQuality, type Quality } from './audio.ts'
 import { decide, scoreTrack, type Candidate } from './match.ts'
@@ -13,7 +15,7 @@ import { artistTopTracks, albumInfo, playlistTracks, searchCollection, searchSon
 import { resolveTarget } from './target.ts'
 import { downloadTrack } from './download.ts'
 import { allTracks, backfillFingerprints, findTrack, forgetTrack, libraryStats, searchLibrary, type LibraryTrack } from './library.ts'
-import { archiveAlbumCovers, exportM3u } from './library-io.ts'
+import { archiveAlbumCovers, exportM3u, findAlbumDirs } from './library-io.ts'
 import { refreshLibrarySpecs } from './maintain.ts'
 import {
   addSubscription, dueSubscriptions, fetchSubscriptionTracks, findSubscription, listSubscriptions,
@@ -1026,19 +1028,39 @@ const subscribeRun: Command = {
 const coversCmd: Command = {
   name: 'music covers',
   summary: '给每张专辑目录补一张 cover.jpg（从文件内嵌封面提取，不联网）',
-  usage: 'astra music covers',
+  usage: 'astra music covers [--dir <路径>] [--verify]',
   notes: [
-    '已有 cover.jpg 的会跳过；一个目录里有多首歌时会挨个试，直到抠出封面',
-    '**看 `missing` 判断有没有漏**：它是"跑完之后仍然没有 cover.jpg 的目录"',
-    'failed 说的是"这一张为什么没写成"；missing 说的是"库里还有哪些目录是空封面"',
-    'Navidrome 等播放器按专辑浏览时就有了封面，不再是空白',
+    '**以目录为准，不看曲库记录** —— 手动放进来的、下载后没入库的专辑也会覆盖到',
+    '已有 cover.jpg 的跳过；一个目录里有多首歌时挨个试，直到抠出封面',
+    '`dirs` = 扫到多少专辑目录，`hasCover` = 跑完确实有 cover.jpg 的目录数（含原有的）',
+    '**`missing` 是判断有没有漏的判据**：跑完之后仍然没有 cover.jpg 的目录（带原因）',
+    '`failed` 说"这一张为什么没写成"；`missing` 说"库里还有哪些目录是空封面"',
+    '--verify 只自检不写：列出所有没有 cover.jpg 的目录',
   ],
+  options: {
+    dir: { type: 'string', description: '只处理这个目录下的专辑（默认音乐根目录）', valueName: 'path' },
+    verify: { type: 'boolean', description: '只检查不写，列出缺 cover.jpg 的目录' },
+  },
   maxArgs: 0,
-  async run({ signal }) {
-    const result = await archiveAlbumCovers(signal)
+  async run({ values, signal }) {
+    const root = typeof values.dir === 'string' && values.dir ? values.dir : undefined
+
+    if (values.verify === true) {
+      const dirs = await findAlbumDirs(root ?? musicRoot())
+      const lacking: { dir: string; hasAudio: boolean }[] = []
+      for (const dir of dirs) {
+        if (!existsSync(path.join(dir, 'cover.jpg'))) lacking.push({ dir, hasAudio: true })
+      }
+      return {
+        data: { dirs: dirs.length, hasCover: dirs.length - lacking.length, missing: lacking.map((l) => l.dir) },
+        warnings: lacking.length > 0 ? [`${lacking.length} 个专辑目录没有 cover.jpg`] : [],
+      }
+    }
+
+    const result = await archiveAlbumCovers(signal, undefined, root ? { root } : {})
     const warnings: string[] = []
     if (result.missing.length > 0) {
-      warnings.push(`${result.missing.length} 个专辑目录跑完仍没有 cover.jpg（原因见 missing）`)
+      warnings.push(`${result.missing.length}/${result.dirs} 个专辑目录跑完仍没有 cover.jpg（原因见 missing）`)
       // 有内嵌封面却没写出来是真正的 bug；没有内嵌封面是数据问题，分开说
       const shouldHave = result.missing.filter((m) => m.reason !== '文件里没有内嵌封面')
       if (shouldHave.length > 0) {
