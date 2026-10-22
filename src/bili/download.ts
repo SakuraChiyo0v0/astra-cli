@@ -13,6 +13,7 @@ import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 import { AstraError } from '../core/errors.ts'
 import { getConfig, mediaRoot, musicRoot } from '../core/config.ts'
+import { existsSync, readFileSync } from 'node:fs'
 import { httpRequest } from '../core/http.ts'
 import { progress } from '../core/output.ts'
 import { loadBiliSession, cookieHeader } from './auth.ts'
@@ -74,7 +75,127 @@ export interface DownloadResult {
   bytes: number
   /** 生成的伴生文件（空 = 没生成）。 */
   sidecars: SidecarKind[]
+  /** 因重名而改过名时，原来的路径。 */
+  renamedFrom: string | null
   warnings: string[]
+}
+
+/** 磁盘上一个路径的现状。 */
+export type Occupancy =
+  /** 空着，可以写。 */
+  | { state: 'free' }
+  /** 已经存在，且属于这个 bvid（重复下载，覆盖自己是预期的）。 */
+  | { state: 'same'; bvid: string }
+  /** 已经存在，属于别的视频 —— 不能覆盖。 */
+  | { state: 'taken'; bvid: string | null }
+
+export interface ResolvedTarget {
+  target: string
+  /** 发生改名时，原来的（冲突的）路径。 */
+  renamedFrom: string | null
+  /** 用什么消歧的。 */
+  reason: 'part' | 'bvid' | 'seq' | null
+}
+
+/**
+ * 算出最终落盘路径，同名时消歧。
+ *
+ * 背景（P0#2e）：给 o叔 的 322 个作品批量下音频时，`{title}` 抽出来的歌名
+ * 大量重复（水星记 ×4、原神 ×6…），**319 首只落地 280 首，丢了 39 首**，
+ * 而且 `failed: 0` —— 后面的文件直接把前面的覆盖了，调用方毫无察觉。
+ *
+ * 消歧优先级（清单定的）：
+ * 1. `{part}`：分 P 名往往就是版本说明（纯享版 / 降级版），语义最好
+ * 2. `{bvid}`：最稳，但丑
+ * 3. 序号 `（2）`：兜底
+ *
+ * **同一个 bvid 再来一次不算冲突** —— 那是重复下载，覆盖自己是预期的。
+ *
+ * 抽成纯函数是因为这段判断必须能单测。靠"真下 300 首去撞"验证不了
+ * 边界，而且撞坏了就是丢数据。
+ */
+export function resolveTargetPath(
+  wanted: string,
+  info: { bvid: string },
+  page: { part: string },
+  probe: (path: string) => Occupancy,
+): ResolvedTarget {
+  const ext = path.extname(wanted)
+  const base = wanted.slice(0, wanted.length - ext.length)
+
+  const usable = (p: string): boolean => {
+    const state = probe(p).state
+    return state === 'free' || state === 'same'
+  }
+
+  if (usable(wanted)) return { target: wanted, renamedFrom: null, reason: null }
+
+  // 1) 分 P 名（往往就是版本说明）
+  const part = (page.part ?? '').trim()
+  if (part) {
+    const byPart = `${base}（${part}）${ext}`
+    if (usable(byPart)) return { target: byPart, renamedFrom: wanted, reason: 'part' }
+  }
+
+  // 2) bvid —— 最稳，不会撞
+  const byBvid = `${base}（${info.bvid}）${ext}`
+  if (usable(byBvid)) return { target: byBvid, renamedFrom: wanted, reason: 'bvid' }
+
+  // 3) 序号
+  for (let n = 2; n < 1000; n += 1) {
+    const bySeq = `${base}（${n}）${ext}`
+    if (usable(bySeq)) return { target: bySeq, renamedFrom: wanted, reason: 'seq' }
+  }
+  // 一千个都占满了：退回 bvid 形式（哪怕它也被占，至少不会静默覆盖普通名字）
+  return { target: byBvid, renamedFrom: wanted, reason: 'bvid' }
+}
+
+/**
+ * 看磁盘上一个路径的现状，给 `resolveTargetPath` 用。
+ *
+ * **怎么判断"这个文件属于哪个视频"**：
+ * 1. 文件名里带 `（BV1xxx）` —— 我们自己消歧时写进去的，最可靠
+ * 2. 文件标签里的 `SOURCE_ID` / `BILIBILI_BVID` —— 正常情况下都有
+ * 3. 都读不出 → 当作"别人的"，宁可改名也不覆盖
+ *
+ * 第 3 条是保守选择：读不出归属时覆盖一个陌生文件，
+ * 比多留一个带后缀的文件糟糕得多（后者只是丑，前者是丢数据）。
+ */
+export function probePath(target: string, wantBvid: string): Occupancy {
+  if (!existsSync(target)) return { state: 'free' }
+  const owner = ownerBvidOf(target)
+  if (owner !== null && owner === wantBvid) return { state: 'same', bvid: owner }
+  return { state: 'taken', bvid: owner }
+}
+
+/**
+ * 读出这个文件属于哪个 bvid；读不出来返回 null。
+ *
+ * 只看**文件名**，不解析标签：
+ * - 消歧时我们会把 bvid 写进名字（`绿色DJ（BV1GEn26uEDT）.mp3`），这是最可靠的线索
+ * - 没带 bvid 的（多数正常文件）返回 null，调用方按"别人的"处理 → 不覆盖
+ *
+ * 为什么不读标签：`readTags` 现在只解 title/artist/album/lyrics，
+ * 为了这个判断去扩一个跨格式的 SOURCE_ID 解析器不值得 ——
+ * 而"读不出归属就当别人的"这个保守选择本来也更安全：
+ * 多留一个带后缀的文件只是丑，覆盖掉别人的文件是丢数据。
+ */
+function ownerBvidOf(target: string): string | null {
+  // 1) 文件名里的 bvid（消歧时写进去的）
+  const fromName = path.basename(target).match(/（(BV[0-9A-Za-z]{10})）/)
+  if (fromName) return fromName[1]!
+
+  // 2) 标签里的 SOURCE_ID。我们写的是 ASCII 明文，两种容器里都能直接搜到：
+  //    ID3v2.4 的 TXXX 是 UTF-8 帧体，Vorbis 的条目是 `SOURCE_ID=BVxxx`。
+  //    比这里更精确的解析不值得 —— 读不出来就走"别人的"分支，那是安全的。
+  try {
+    const buf = readFileSync(target)
+    const hit = buf.toString('latin1').match(/SOURCE_ID[\x00=](BV[0-9A-Za-z]{10})/)
+    if (hit) return hit[1]!
+  } catch {
+    // 读不了就当别人的
+  }
+  return null
 }
 
 /**
@@ -256,7 +377,24 @@ export async function downloadPage(
   // 目标路径
   const { root, template, vars } = targetPathFor(info, page, options, actualQuality)
   const relative = renderTemplate(template, vars)
-  const target = resolveInside(root, relative)
+  // 同名消歧：模板里的 {title} 抽出来的歌名会重复（水星记 ×4、原神 ×6…），
+  // 直接 rename 上去会把前面的歌静默覆盖掉（P0#2e：322 首丢了 39 首）
+  const resolved = resolveTargetPath(
+    resolveInside(root, relative),
+    info,
+    page,
+    (p) => probePath(p, info.bvid),
+  )
+  const target = resolved.target
+  if (resolved.renamedFrom) {
+    progress('bili.download.renamed', {
+      bvid: info.bvid,
+      page: page.page,
+      from: path.basename(resolved.renamedFrom),
+      to: path.basename(target),
+      reason: resolved.reason,
+    })
+  }
   await mkdir(path.dirname(target), { recursive: true })
   const tmpVideo = `${target}.v-${process.pid}.tmp`
   const tmpAudio = `${target}.a-${process.pid}.tmp`
@@ -375,6 +513,7 @@ export async function downloadPage(
       coverEmbedded: coverStream === true,
       bytes: (await stat(target)).size,
       sidecars,
+      renamedFrom: resolved.renamedFrom,
       warnings,
     }
   } finally {

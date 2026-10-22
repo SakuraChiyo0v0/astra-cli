@@ -175,6 +175,14 @@ const get: Command = {
       warnings.push(...result.warnings)
       results.push(result)
     }
+    // 因重名改过名的，汇总出来让调用方知道（P0#2e 的验收点之一）
+    const renamed = results
+      .filter((r) => r.renamedFrom !== null)
+      .map((r) => ({ bvid: r.bvid, page: r.page, from: r.renamedFrom!, to: r.path }))
+    if (renamed.length > 0) {
+      warnings.push(`${renamed.length} 个文件因重名加了后缀（见 renamed），没有覆盖已有文件`)
+    }
+
     return {
       data: {
         status: 'downloaded',
@@ -183,6 +191,7 @@ const get: Command = {
         ...(results.length > 1 ? { count: results.length } : {}),
         // 只下了一部分分 P 时必须显式告诉调用方 —— 光靠 warnings 会被忽略
         ...(partial ? { partial: true, downloadedPages: pages.length, totalPages: info.pages.length } : {}),
+        ...(renamed.length > 0 ? { renamed } : {}),
       },
       warnings,
     }
