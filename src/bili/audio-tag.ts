@@ -32,6 +32,14 @@ export interface AudioTagInfo {
   pubdate?: number | null
   /** 来源标记（bvid），写进 SOURCE_ID —— 日后能追溯回原视频。 */
   bvid?: string | null
+  /**
+   * 专辑名，写进 TALB。
+   *
+   * 不传时用 UP 主名（老行为）。用户会把同一个 UP 的作品按大类分专辑
+   * （`O叔流行` / `O叔古典` / `O叔现场`），靠专辑标签在播放器里分组 ——
+   * 否则 300 多首全堆在 `oskarpianist` 一个专辑下没法看。
+   */
+  album?: string | null
 }
 
 export interface AudioPipelineOptions {
@@ -125,7 +133,7 @@ export async function processBiliAudio(options: AudioPipelineOptions): Promise<A
   const tags: TagData = {
     title: info.title,
     artists: [info.uploader].filter(Boolean),
-    album: info.uploader || null,
+    album: info.album || info.uploader || null,
     albumArtists: [info.uploader].filter(Boolean),
     date: info.pubdate ? new Date(info.pubdate * 1000).toISOString().slice(0, 10) : null,
     trackNo: null,

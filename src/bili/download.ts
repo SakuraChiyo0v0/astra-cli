@@ -12,7 +12,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 import { AstraError } from '../core/errors.ts'
-import { getConfig, mediaRoot, musicRoot } from '../core/config.ts'
+import { biliAudioRoot, getConfig, mediaRoot } from '../core/config.ts'
 import { existsSync, readFileSync } from 'node:fs'
 import { httpRequest } from '../core/http.ts'
 import { progress } from '../core/output.ts'
@@ -48,6 +48,8 @@ export interface DownloadOptions {
    * 空数组 = 不生成（默认）。
    */
   sidecars?: SidecarKind[]
+  /** 音频的专辑名（TALB）。不给就用 UP 主名。 */
+  album?: string | null
   signal?: AbortSignal
 }
 
@@ -237,10 +239,15 @@ export function targetPathFor(
   actualQuality: number,
 ): { root: string; template: string; vars: Record<string, string> } {
   const audio = options.audioOnly === true
-  const toMusic = audio && (options.audioTo ?? 'music') === 'music'
   const multiPart = info.pages.length > 1
 
-  if (toMusic) {
+  if (audio) {
+    // 音频走**同一个模板**，不管落到哪个根目录。
+    //
+    // `--to bili` 曾经套的是视频模板（`{title}/{page:02} {part}`），
+    // 结果音频被塞进 `<视频标题>/01.mp3` 这种子目录里 —— 音频归档就该是单文件。
+    // 模板与根目录是两件事，不该混在一个判断里。
+    //
     // B 站没有"歌手 / 专辑"概念：UP 主当艺术家、视频标题当专辑，
     // 与写进标签的 TPE1 / TALB 保持一致。
     const uploader = safeName(info.owner.name || '未知UP')
@@ -270,7 +277,8 @@ export function targetPathFor(
     // 订阅一开就是 201 个子目录，跟用户想要的平铺结构冲突。
     const dedicated = (getConfig('bili.audio-template') || '').trim()
     return {
-      root: musicRoot(),
+      // 根目录：`--to bili` 时进视频库，否则进 B 站音频根（默认同音乐库）
+      root: (options.audioTo ?? 'music') === 'bili' ? mediaRoot() : biliAudioRoot(),
       template: dedicated || getConfig('music.template'),
       vars: shared,
     }
@@ -286,7 +294,7 @@ export function targetPathFor(
       page: String(page.page),
       bvid: info.bvid,
       quality: qualityName(actualQuality),
-      ext: audio ? audioTargetFormat() : 'mp4',
+      ext: 'mp4',
     },
   }
 }
@@ -419,6 +427,7 @@ export async function downloadPage(
           coverUrl: info.pic,
           pubdate: info.pubdate || null,
           bvid: info.bvid,
+          album: options.album ?? null,
         },
         ...(signal ? { signal } : {}),
       })
@@ -478,10 +487,14 @@ export async function downloadPage(
     }
     if (!options.audioOnly && probed.videoCodec === null) warnings.push('成品里没有视频流')
 
-    // 伴生文件（nfo / 封面 / 弹幕）。只对**视频**生成 —— 音频进音乐库后
-    // 靠内嵌标签，不需要这几个 sidecar。
+    // 伴生文件（nfo / 封面 / 弹幕）。
+    //
+    // **音频也生成。** 之前只对视频生成，理由是"音频靠内嵌标签就够了" ——
+    // 但那是替用户做了决定：`--sidecar cover` 明确要一张同名 jpg 时，
+    // 音频也该有（有的播放器 / 整理工具不读内嵌封面）。
+    // 显式要了就给，不猜。
     let sidecars: SidecarKind[] = []
-    if (!options.audioOnly) {
+    {
       const want = resolveSidecars(options.sidecars)
       if (want.length > 0) {
         const result = await writeSidecars(target, info, page, want, signal)

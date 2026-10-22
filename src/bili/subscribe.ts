@@ -38,6 +38,8 @@ export interface BiliSubscription {
   lastJobId: string | null
   /** 只下音频（mp3 进音乐库）。 */
   audioOnly: boolean
+  /** 音频的专辑名（TALB）；null = 用 UP 名。 */
+  audioAlbum: string | null
   /** 下哪些分 P：`all` 完整拿到，`first` 只下 P1（返回里会给 partial）。 */
   pagesMode: 'all' | 'first'
   /**
@@ -63,6 +65,7 @@ interface Row {
   audio_only: number
   pages_mode: string
   seen_pages: string
+  audio_album: string | null
 }
 
 const KIND_PREFIX = 'bili-'
@@ -107,6 +110,7 @@ function toView(row: Row): BiliSubscription {
     lastSeen,
     lastJobId: row.last_job_id,
     audioOnly: row.audio_only === 1,
+    audioAlbum: row.audio_album,
     pagesMode: row.pages_mode === 'first' ? 'first' : 'all',
     seenPages: parseSeenPages(row.seen_pages),
   }
@@ -136,7 +140,7 @@ export async function fetchByTarget(targetId: string, limit: number, signal?: Ab
   })
 }
 
-export async function addBiliSubscription(input: { target: string; everyHours: number; quality: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first' }, signal?: AbortSignal): Promise<BiliSubscription> {
+export async function addBiliSubscription(input: { target: string; everyHours: number; quality: string | null; audioOnly?: boolean; audioAlbum?: string | null; pagesMode?: 'all' | 'first' }, signal?: AbortSignal): Promise<BiliSubscription> {
   const ref = parseCollectionRef(input.target)
   if (ref.kind === null) {
     throw new AstraError('BAD_TARGET', `认不出这是哪个合集 / 系列 / 收藏夹：${input.target.slice(0, 40)}`, { exitCode: 2 })
@@ -152,11 +156,12 @@ export async function addBiliSubscription(input: { target: string; everyHours: n
     : withMid('season', ref.mid, ref.seasonId)
   const id = randomUUID().slice(0, 8)
   db()
-    .prepare('insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, last_seen, created_at, audio_only, pages_mode) values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)')
+    .prepare('insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, last_seen, created_at, audio_only, audio_album, pages_mode) values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)')
     .run(
       id, kind, targetId, collection.title, input.quality, input.everyHours,
       JSON.stringify(collection.items.map((v) => v.bvid)), new Date().toISOString(),
       input.audioOnly === true ? 1 : 0,
+      input.audioAlbum ?? null,
       input.pagesMode === 'first' ? 'first' : 'all',
     )
   // 建订阅时把当前已有的一批记为基线 —— 第一次 run 不会把整个合集重下一遍
@@ -168,7 +173,7 @@ export function removeBiliSubscription(idOrPrefix: string): boolean {
   return db().prepare('delete from subscriptions where id = ?').run(sub.id).changes > 0
 }
 
-export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first' }): BiliSubscription {
+export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; audioAlbum?: string | null; pagesMode?: 'all' | 'first' }): BiliSubscription {
   const sub = findBiliSubscription(idOrPrefix)
   const sets: string[] = []
   const values: (string | number | null)[] = []
@@ -187,6 +192,10 @@ export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: nu
   if (patch.audioOnly !== undefined) {
     sets.push('audio_only = ?')
     values.push(patch.audioOnly ? 1 : 0)
+  }
+  if (patch.audioAlbum !== undefined) {
+    sets.push('audio_album = ?')
+    values.push(patch.audioAlbum)
   }
   if (patch.pagesMode !== undefined) {
     sets.push('pages_mode = ?')
@@ -405,7 +414,7 @@ export async function runBiliSubscription(
   let note: string
   if (plan.tasks.length > 0) {
     const quality = Number(sub.quality ?? '80') || 80
-    const items = pageTasksToItems(plan.tasks, collection.title, quality, sub.audioOnly)
+    const items = pageTasksToItems(plan.tasks, collection.title, quality, sub.audioOnly, sub.audioAlbum)
     const job = createJob({
       domain: BILI_DOMAIN,
       kind: 'subscribe',

@@ -12,6 +12,7 @@ import { renderQrText, writeQrPng } from '../core/qr.ts'
 import { biliSessionDigest, clearBiliSession, cookieHeader, fetchBiliAccount, loadBiliSession, pollBiliQr, saveBiliSession, startBiliQr } from './auth.ts'
 import { playInfo, subtitleList, videoInfo, type VideoInfo } from './api.ts'
 import { sidecarKinds } from './sidecar.ts'
+import { runAudioSync } from './audio-sync.ts'
 import { downloadPage } from './download.ts'
 import { probe } from './ffmpeg.ts'
 import { QUALITY_NAMES, QUALITY_ORDER, qualityName } from './sign.ts'
@@ -128,7 +129,7 @@ function selectPages(info: VideoInfo, rawPage: unknown): { pages: number[]; warn
 const get: Command = {
   name: 'bili get',
   summary: '下载 B 站视频：BV 号 / 链接 / 短链都行，多分 P 用 --page 指定',
-  usage: 'astra bili get <BV号|链接> [--page 1,3-5|all] [--quality 1080p] [--audio-only] [--to music|bili] [--sidecar nfo,cover,danmaku]',
+  usage: 'astra bili get <BV号|链接> [--page 1,3-5|all] [--quality 1080p] [--audio-only] [--to music|bili] [--album <专辑>] [--sidecar nfo,cover,danmaku] [--concurrency <n>]',
   notes: [
     'data.status 是 downloaded；多分 P 时 results 里每个分 P 一条结果',
     '**partial=true 表示只下了一部分分 P** —— 多 P 视频默认只下 P1，要全下加 `--page all`',
@@ -137,6 +138,8 @@ const get: Command = {
     '--audio-only 的输出格式看 `bili.audio-format`（默认 mp3，能写标签）；mp3 / flac 会自动写歌名、UP 主、封面与 BV 号',
     '--audio-only **默认落音乐库**（music.dir + music.template），和订阅音频模式一致；要按视频模板归档用 `--to bili`',
     '--sidecar 生成 .Metadata.nfo / .jpg / .Danmaku.ass（Emby/Jellyfin 自动刮削）；不给看配置 bili.sidecar',
+    '--album 指定音频的 TALB（默认 UP 主名）；把同一个 UP 的作品按大类分专辑时用',
+    '--concurrency 只影响**多分 P**（一命令下多个 P 时并行）；跨视频的批量请用 `bili audio`',
   ],
   options: {
     page: { type: 'string', description: '分 P：1 / 2,5 / 3-8 / all', valueName: 'pages' },
@@ -144,6 +147,8 @@ const get: Command = {
     'audio-only': { type: 'boolean', description: `只要音频，不下视频（格式见 bili.audio-format）` },
     to: { type: 'string', description: '音频落到哪儿：music（默认，音乐库）/ bili（视频目录）；只对 --audio-only 有效', valueName: 'where' },
     sidecar: { type: 'string', description: '伴生文件，逗号分隔：nfo / cover / danmaku / all / none', valueName: 'kinds' },
+    album: { type: 'string', description: '音频的专辑名（TALB），默认 UP 主名', valueName: 'name' },
+    concurrency: { type: 'string', description: '多分 P 时的并发数 1..8，默认 1', valueName: 'n' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -163,18 +168,33 @@ const get: Command = {
       ? (values.sidecar.trim().toLowerCase() === 'none' ? [] : sidecarKinds(values.sidecar))
       : undefined
 
-    const results = []
-    for (const index of pages) {
-      const result = await downloadPage(info, index, {
-        quality,
-        audioOnly,
-        ...(toRaw ? { audioTo: toRaw as 'music' | 'bili' } : {}),
-        ...(sidecars ? { sidecars } : {}),
-        signal,
-      })
-      warnings.push(...result.warnings)
-      results.push(result)
+    const album = typeof values.album === 'string' && values.album.trim() ? values.album.trim() : null
+    if (album && !audioOnly) throw invalidInput('--album 只对 --audio-only 有效', '视频没有专辑标签')
+
+    const concurrency = Math.max(1, Math.min(8, Number(values.concurrency ?? '1') || 1))
+
+    const downloadOne = async (index: number) => downloadPage(info, index, {
+      quality,
+      audioOnly,
+      ...(toRaw ? { audioTo: toRaw as 'music' | 'bili' } : {}),
+      ...(sidecars ? { sidecars } : {}),
+      ...(album ? { album } : {}),
+      signal,
+    })
+
+    // 多分 P 时才并发；单 P 走原来的直路（并发没有收益，还多一层调度）
+    const results: Awaited<ReturnType<typeof downloadOne>>[] = []
+    if (concurrency > 1 && pages.length > 1) {
+      // 按批并发，结果按 P 号顺序拼回去 —— 调用方拿到的顺序不该随并发度变化
+      for (let i = 0; i < pages.length; i += concurrency) {
+        const batch = pages.slice(i, i + concurrency)
+        const done = await Promise.all(batch.map((idx) => downloadOne(idx)))
+        results.push(...done)
+      }
+    } else {
+      for (const index of pages) results.push(await downloadOne(index))
     }
+    for (const result of results) warnings.push(...result.warnings)
     // 因重名改过名的，汇总出来让调用方知道（P0#2e 的验收点之一）
     const renamed = results
       .filter((r) => r.renamedFrom !== null)
@@ -420,6 +440,75 @@ export function toSrt(cues: { from: number; to: number; content: string }[]): st
   return cues
     .map((cue, i) => `${i + 1}\n${srtTime(cue.from)} --> ${srtTime(cue.to)}\n${cue.content.trim()}\n`)
     .join('\n')
+}
+
+const audioCmd: Command = {
+  name: 'bili audio',
+  summary: '把一个 UP / 合集整体转成音乐库（批量下音频，增量、可对账）',
+  usage: 'astra bili audio <mid|合集链接|season:<sid>|fav:<id>> [--exclude <正则>] [--album <专辑>] [--limit 2000] [--concurrency 4] [--dry]',
+  notes: [
+    '**先报数再下载**：返回里有 total / excluded / planned，--dry 只看计划',
+    '增量：已在库里（同 bvid）的跳过，所以连跑两次第二次 downloaded=0',
+    '同名按分 P 名 → bvid → 序号 消歧，不会静默覆盖（见 renamed）',
+    '落点由 `bili.audio-dir` + `bili.audio-template` 决定（都留空则同音乐库）',
+    '结束返回 downloaded / skipped / failed / renamed / missing，能直接对账',
+    '单首失败不中断整批；撞上风控（412）会自动把后续批次降到串行',
+  ],
+  options: {
+    exclude: { type: 'string', description: '排除标题匹配这个正则的投稿（如 开票|巡演|vlog）', valueName: 'regex' },
+    album: { type: 'string', description: '专辑名（TALB），默认 UP 主名', valueName: 'name' },
+    limit: { type: 'string', description: '最多取多少个投稿，默认 2000', valueName: 'n' },
+    concurrency: { type: 'string', description: '并发数 1..8，默认 4', valueName: 'n' },
+    dry: { type: 'boolean', description: '只报计划，不下载' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const concurrency = Math.max(1, Math.min(8, Number(values.concurrency ?? '4') || 4))
+    const limit = Math.max(1, Math.min(5000, Number(values.limit ?? '2000') || 2000))
+    const result = await runAudioSync({
+      target: positionals[0]!,
+      exclude: typeof values.exclude === 'string' ? values.exclude : null,
+      album: typeof values.album === 'string' && values.album.trim() ? values.album.trim() : null,
+      limit,
+      dry: values.dry === true,
+      concurrency,
+      ...(signal ? { signal } : {}),
+    })
+
+    const warnings: string[] = []
+    if (result.failed.length > 0) {
+      warnings.push(`${result.failed.length} 首失败（见 failed），可以重跑同一命令补齐 —— 已下的会跳过`)
+    }
+    if (result.missing.length > 0) {
+      warnings.push(`${result.missing.length} 首既没下也没跳过，可能是逻辑问题，见 missing`)
+    }
+    if (result.renamed.length > 0) {
+      warnings.push(`${result.renamed.length} 首因重名加了后缀（见 renamed）`)
+    }
+
+    return {
+      data: {
+        dryRun: values.dry === true,
+        source: { total: result.total, excluded: result.excluded, planned: result.planned },
+        summary: {
+          downloaded: result.downloaded.length,
+          skipped: result.skipped.length,
+          failed: result.failed.length,
+          renamed: result.renamed.length,
+          missing: result.missing.length,
+        },
+        ...(values.dry === true ? {} : {
+          downloaded: result.downloaded,
+          skipped: result.skipped.map((s) => s.bvid),
+          failed: result.failed,
+          renamed: result.renamed,
+          missing: result.missing,
+        }),
+      },
+      warnings,
+    }
+  },
 }
 
 const doctor: Command = {
@@ -962,6 +1051,7 @@ const subAdd: Command = {
     every: { type: 'string', description: '每隔几小时检查一次，默认 24', valueName: 'h' },
     quality: { type: 'string', short: 'q', description: '下载画质，默认取 bili.quality', valueName: 'q' },
     'audio-only': { type: 'boolean', description: '只下音频（mp3 进音乐库，带完整标签）' },
+    'audio-album': { type: 'string', description: '音频的专辑名（TALB），默认 UP 主名', valueName: 'name' },
     pages: { type: 'string', description: '下哪些分 P：all（默认）/ first（只 P1）', valueName: 'mode' },
   },
   minArgs: 1,
@@ -975,6 +1065,7 @@ const subAdd: Command = {
       {
         target: positionals[0]!, everyHours: every, quality: String(quality),
         audioOnly: values['audio-only'] === true,
+        ...(typeof values['audio-album'] === 'string' && values['audio-album'].trim() ? { audioAlbum: values['audio-album'].trim() } : {}),
         ...(pagesMode ? { pagesMode } : {}),
       },
       signal,
@@ -1011,6 +1102,7 @@ const subList: Command = {
           lastCheckedAt: s.lastCheckedAt,
           knownVideos: s.lastSeen.length,
           audioOnly: s.audioOnly,
+          audioAlbum: s.audioAlbum,
           pagesMode: s.pagesMode,
           lastJobId: s.lastJobId,
         })),
@@ -1033,13 +1125,14 @@ const subSet: Command = {
     disable: { type: 'boolean', description: '停用' },
     quality: { type: 'string', short: 'q', description: '画质', valueName: 'q' },
     'audio-only': { type: 'string', description: 'on / off：只下音频', valueName: 'mode' },
+    'audio-album': { type: 'string', description: '音频的专辑名（TALB）；空字符串 = 用 UP 名', valueName: 'name' },
     pages: { type: 'string', description: 'all / first：下哪些分 P', valueName: 'mode' },
   },
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals, values }) {
     if (values.enable === true && values.disable === true) throw invalidInput('--enable 与 --disable 不能同时给')
-    const patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; pagesMode?: 'all' | 'first' } = {}
+    const patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; audioAlbum?: string | null; pagesMode?: 'all' | 'first' } = {}
     if (values.every !== undefined) {
       const n = Number(values.every)
       if (!Number.isInteger(n) || n < 1 || n > 720) throw invalidInput('--every 必须是 1..720 的整数')
@@ -1050,6 +1143,10 @@ const subSet: Command = {
     if (values.quality !== undefined) patch.quality = String(parseQuality(values.quality))
     if (values['audio-only'] !== undefined) {
       patch.audioOnly = parseOnOff(values['audio-only'], 'audio-only')
+    }
+    if (values['audio-album'] !== undefined) {
+      const album = String(values['audio-album']).trim()
+      patch.audioAlbum = album || null
     }
     const pagesMode = parsePagesMode(values.pages)
     if (pagesMode) patch.pagesMode = pagesMode
@@ -1199,7 +1296,7 @@ const spaceCmd: Command = {
 }
 
 export const biliCommands: Command[] = [
-  get, info, subtitle, danmaku, popular, weekly, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk,
+  get, info, subtitle, danmaku, popular, weekly, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk, audioCmd,
   jobCmd, jobList, jobCancel, jobResume, workerCmd,
   loginStart, loginPoll, account, logout, doctor,
   subAdd, subList, subSet, subRemove, subRun,

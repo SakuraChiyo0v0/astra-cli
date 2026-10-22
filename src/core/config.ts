@@ -57,6 +57,11 @@ export const CONFIG_KEYS: ConfigKey[] = [
   // 为什么单独一条：音乐模板会把"视频标题"当专辑名，于是一个视频一个目录 ——
   // 订阅开起来就是 201 个子目录。B 站音频本来就该平铺在 UP 主目录下。
   { key: 'bili.audio-template', description: 'B 站音频的落盘模板（留空用 music.template）；变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}，如 Bilibili/{uploader}/{title}.{ext}', default: '' },
+  // B 站音频的**独立根目录**。留空则跟音乐库共用 ASTRA_MUSIC_DIR。
+  // 为什么单独一条：B 站那批大量是 UP 主自己调的 AI 翻唱/翻弹，性质与流媒体音源不同，
+  // 用户想把它们分开放。以前只能临时改 ASTRA_MUSIC_DIR 再手工搬，订阅路径没法这样绕。
+  { key: 'bili.audio-dir', description: 'B 站音频的根目录（绝对路径）；留空用 ASTRA_MUSIC_DIR。与 bili.audio-template 组合出完整落点', default: '',
+    validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   // —— 代理 ——
   // NAS 上 Steam 全域名不通，但有 mihomo 容器提供 http://mihomo:7890。
   // 用 include/exclude 按域名控制，别让 B 站、网易云也绕一圈。
@@ -145,6 +150,18 @@ export function musicRoot(): string {
   const configured = getConfig('music.dir')
   if (configured) return configured
   return homePath('music')
+}
+
+/**
+ * B 站音频的根目录：`bili.audio-dir` > `musicRoot()`。
+ *
+ * 留空时退回音乐库（老行为不变）。配了就完全独立 —— B 站那批多是 UP 主
+ * 自己调的 AI 翻唱 / 翻弹，和流媒体音源混在一起不好找。
+ */
+export function biliAudioRoot(): string {
+  const configured = getConfig('bili.audio-dir')
+  if (configured && configured.trim()) return path.resolve(configured)
+  return musicRoot()
 }
 
 /** 视频根目录：`ASTRA_VIDEO_DIR` > `bili.dir` > `<ASTRA_HOME>/video`。 */

@@ -147,6 +147,8 @@ const MIGRATIONS: string[] = [
   `alter table subscriptions add column pages_mode text not null default 'all'`,
   // 已下分 P 的集合：{"BV1xx": [1,2], "BV1yy": [1]}。空对象 = 老数据，按"全下"对待。
   `alter table subscriptions add column seen_pages text not null default '{}'`,
+  // 订阅音频模式的专辑名（TALB）。空 = 用 UP 名。
+  `alter table subscriptions add column audio_album text`,
 ]
 
 export function db(): DatabaseSync {

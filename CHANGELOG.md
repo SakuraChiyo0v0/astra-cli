@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.12.19 — 2026-10-22
+
+**新增 `bili audio` 批量转音乐库；`bili.audio-dir`；专辑名可指定**
+
+- **新增 `bili audio <mid|合集|season:...>`**：一条命令把一个 UP 整体转成音乐库。
+  之前是外部循环调 `bili get`，还得临时改 `ASTRA_MUSIC_DIR`、事后数文件对账、写补下脚本
+- 先报数再下载：`投稿 322 / 排除 3 / 待下 319`；`--dry` 只看计划
+- **增量**：已存在（同 bvid）跳过 —— 连跑两次第二次 `downloaded: 0, skipped: N`
+- 返回 `downloaded / skipped / failed / renamed / missing`，能直接对账
+- `--exclude <正则>` 过滤非内容投稿；**正则写错会抛错**，不会静默排除全部
+- **新增 `bili.audio-dir`**：B 站音频独立根目录，留空则同 `ASTRA_MUSIC_DIR`
+- **修**：`--to bili` 套的是视频模板（`{title}/{page:02}`），音频被塞进子目录。
+  模板与根目录是两件事，现在音频一律用 `bili.audio-template`
+- **修**：`--sidecar` 对 `--audio-only` 无效。显式要了就生成，不替用户判断"音频不需要"
+- **新增 `--album` / 订阅的 `--audio-album`**：指定 TALB。默认仍是 UP 名
+- `bili get --concurrency`：多分 P 时并行（单 P 无收益，仍走直路）
+
 ## 0.12.18 — 2026-10-22
 
 **修批量下载同名文件静默覆盖（P0#2e）—— 322 首丢 39 首**

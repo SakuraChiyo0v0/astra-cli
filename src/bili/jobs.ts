@@ -33,13 +33,14 @@ export function pageTasksToItems(
   collectionTitle: string,
   quality: number,
   audioOnly: boolean,
+  audioAlbum?: string | null,
 ): BiliJobItem[] {
   return tasks.map((t) => ({
     // 同一视频的不同分 P 必须 id 不同，否则任务项会互相覆盖
     id: `${t.bvid}:${t.cid}`,
     title: t.title,
     subtitle: collectionTitle,
-    meta: { bvid: t.bvid, pageIndex: t.page - 1, quality, audioOnly },
+    meta: { bvid: t.bvid, pageIndex: t.page - 1, quality, audioOnly, ...(audioAlbum ? { audioAlbum } : {}) },
   }))
 }
 
@@ -116,6 +117,7 @@ registerJobHandler(BILI_DOMAIN, {
     const pageIndex = typeof meta.pageIndex === 'number' ? meta.pageIndex : 0
     const quality = typeof meta.quality === 'number' ? meta.quality : 80
     const audioOnly = meta.audioOnly === true
+    const audioAlbum = typeof meta.audioAlbum === 'string' ? meta.audioAlbum : null
     if (!bvid) throw new Error('任务项缺少 bvid')
 
     // 同一个视频的分 P 共用一份详情（避免每个分 P 都查一次）
@@ -125,7 +127,11 @@ registerJobHandler(BILI_DOMAIN, {
       ctx.shared.set(`info:${bvid}`, info)
     }
 
-    const result = await downloadPage(info, pageIndex, { quality, ...(audioOnly ? { audioOnly: true } : {}) })
+    const result = await downloadPage(info, pageIndex, {
+      quality,
+      ...(audioOnly ? { audioOnly: true } : {}),
+      ...(audioAlbum ? { album: audioAlbum } : {}),
+    })
     return {
       status: 'downloaded',
       profile: qualityName(result.actualQuality),
