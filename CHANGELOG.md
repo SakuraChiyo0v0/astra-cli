@@ -24,6 +24,20 @@
   `config list` 里写清 `proxy.include` 留空 = 全部走
 
 
+## 0.12.6 — 2026-10-23
+
+**B 站音频写入 BV 号：离开下载目录后还能追回原视频**
+
+- **新增**：`bili get --audio-only`（`bili.tag=true`）现在额外写两个字段 ——
+  `BILIBILI_BVID`（BV 号）与 `BILIBILI_URL`（可直接点开的视频地址）。
+  MP3 走 ID3 的 `TXXX`，FLAC 走同名 Vorbis 键
+- **背景**：`SOURCE_ID` 里本来就有 BV 号，但那个键名播放器不显示；音频一旦被转码、重命名、
+  拖进别的库，就再也追不到是哪条视频了（提需求的人原话是要能回原视频补歌词 / 换画质）
+- `music/tags.ts` 的 `TagData` 新增 `extra` 自定义字段表，两个域共用一套写法；键名统一大写
+- `bili get --help` 与 `skills/bili/SKILL.md` 更正：`--audio-only` 输出的是
+  `bili.audio-format` 决定的格式（默认 mp3），不是文档里一直写的 m4a
+- 测试：`tags` 与 `bili-audio-tag` 两条都加了 BV 号断言，并验证过"撤掉修复会变红"
+
 ## 0.12.5 — 2026-10-23
 
 **歌词文件改名：逐字写 `.lrc`，逐行兜底 `.line.lrc`**

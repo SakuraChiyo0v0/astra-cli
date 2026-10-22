@@ -126,11 +126,12 @@ const get: Command = {
     'data.status 是 downloaded；多分 P 时 results 里每个分 P 一条结果',
     'downgraded=true 表示服务端给的画质低于请求的——未登录时一定封顶 360P',
     '短链（b23.tv）会先展开；带分 P 参数的链接会直接定位到那一 P',
+    '--audio-only 的输出格式看 `bili.audio-format`（默认 mp3，能写标签）；mp3 / flac 会自动写歌名、UP 主、封面与 BV 号',
   ],
   options: {
     page: { type: 'string', description: '分 P：1 / 2,5 / 3-8', valueName: 'pages' },
     quality: { type: 'string', short: 'q', description: '画质：4k / 1080p60 / 1080p / 720p / 480p / 360p', valueName: 'q' },
-    'audio-only': { type: 'boolean', description: '只要音频（m4a），不下视频' },
+    'audio-only': { type: 'boolean', description: `只要音频，不下视频（格式见 bili.audio-format）` },
   },
   minArgs: 1,
   maxArgs: 1,

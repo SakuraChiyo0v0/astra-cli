@@ -28,6 +28,7 @@ const tags: TagData = {
   lyrics: '第一行\n第二行',
   cover: { mime: 'image/png', data: PNG },
   source: { platform: 'netease', id: '2034742057' },
+  extra: { BILIBILI_BVID: 'BV17x411w7KC', BILIBILI_URL: 'https://www.bilibili.com/video/BV17x411w7KC' },
 }
 
 function ffprobeTags(file: string): Record<string, string> | null {
@@ -64,6 +65,9 @@ test('FLAC：替换标签，音频帧逐字节不变，可完整解码', () => {
     assert.match(read.artist ?? '', /YOASOBI/)
     assert.equal(read.source_id, '2034742057')
     assert.equal(read.lyrics, '第一行\n第二行')
+    // 自定义字段：FLAC 用同名 Vorbis 键，键名统一大写
+    assert.equal(read.bilibili_bvid, 'BV17x411w7KC')
+    assert.equal(read.bilibili_url, 'https://www.bilibili.com/video/BV17x411w7KC')
   }
   assert.notEqual(ffmpegDecodes(file), false)
 })
@@ -83,6 +87,8 @@ test('MP3：去掉旧 ID3 写 v2.4，音频帧逐字节不变', () => {
     assert.equal(read.track, '3/10')
     assert.equal(read.album_artist, 'YOASOBI')
     assert.equal(read.source, 'netease')
+    // 自定义字段：ID3 写在 TXXX 里，ffprobe 有的版本报成纯描述、有的报成 `TXXX:描述`
+    assert.equal(read.bilibili_bvid ?? read['txxx:bilibili_bvid'], 'BV17x411w7KC')
   }
   assert.notEqual(ffmpegDecodes(file), false)
 })

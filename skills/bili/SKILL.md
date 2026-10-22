@@ -47,7 +47,7 @@ stdout 只有一个 JSON。`ok:true` 看 `data`，`ok:false` 看 `error.code` / 
 | 下载（链接 / BV / av） | `astra bili get <...>` |
 | 指定分 P | `astra bili get <...> --page 3` 或 `--page 2,5-8` |
 | 指定画质 | `astra bili get <...> --quality 1080p`（4k/1080p60/1080p/720p/480p/360p） |
-| 只要音频 | `astra bili get <...> --audio-only`（输出 m4a） |
+| 只要音频 | `astra bili get <...> --audio-only`（默认 mp3，自动写歌名 / UP 主 / 封面 / BV 号） |
 | 先看有什么 | `astra bili info <...>`（加 `--probe` 看实际能拿到什么画质） |
 | 存字幕 | `astra bili subtitle <...> [--page 1]` |
 

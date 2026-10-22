@@ -135,6 +135,9 @@ export async function processBiliAudio(options: AudioPipelineOptions): Promise<A
     lyrics: null,
     cover,
     source: { platform: 'bilibili', id: info.bvid ?? info.title },
+    // 音频一旦离开下载目录，`SOURCE_ID` 这种自定义键名播放器不显示，用户想回原视频
+    // 只能靠记忆。把 BV 号单独写成一个人人看得懂的字段 + 一条能直接点开的链接。
+    extra: info.bvid ? { BILIBILI_BVID: info.bvid, BILIBILI_URL: `https://www.bilibili.com/video/${info.bvid}` } : undefined,
   }
   try {
     const result = await writeTags(output, format, tags)

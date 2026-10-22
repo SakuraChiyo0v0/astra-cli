@@ -62,6 +62,10 @@ test('m4a → mp3：转码成功且写入 title / artist / album / date', async 
       assert.equal(tags.artist, '某UP主')
       assert.equal(tags.album, '某UP主')
       assert.equal(tags.source_id, 'BV17x411w7KC', 'SOURCE_ID 要写 bvid，不是标题')
+      // 音频离开下载目录后，SOURCE_ID 这种键名播放器不显示；BV 号要能被直接看到。
+      // ffprobe 对 TXXX 的键名报法不统一（纯描述 / `TXXX:描述`），两种都认
+      assert.equal(tags.bilibili_bvid ?? tags['txxx:bilibili_bvid'], 'BV17x411w7KC')
+      assert.equal(tags.bilibili_url ?? tags['txxx:bilibili_url'], 'https://www.bilibili.com/video/BV17x411w7KC')
     }
   } finally {
     if (prevHome === undefined) delete process.env.ASTRA_HOME

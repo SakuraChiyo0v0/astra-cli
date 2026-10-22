@@ -25,6 +25,13 @@ export interface TagData {
   cover: { mime: string; data: Buffer } | null
   /** 来源标记，写进自定义字段，日后能追溯。 */
   source: { platform: string; id: string }
+  /**
+   * 额外的自定义字段，原样写入：ID3 用 `TXXX:<键>`，FLAC 用同名 Vorbis 键。
+   *
+   * 用途是让调用方带上自己领域的溯源信息（如 B 站的 `BILIBILI_BVID`），
+   * 不用为了一个字段去改这个接口。键名由调用方定，这里不做白名单。
+   */
+  extra?: Record<string, string>
 }
 
 // ---------- ID3v2.4 ----------
@@ -53,6 +60,19 @@ function textFrame(id: string, values: string[]): Buffer | null {
 
 function txxxFrame(description: string, value: string): Buffer {
   return id3Frame('TXXX', Buffer.concat([Buffer.from([3]), Buffer.from(description, 'utf8'), Buffer.from([0]), Buffer.from(value, 'utf8')]))
+}
+
+/**
+ * 调用方自定义字段 -> 帧。
+ *
+ * 键名统一大写：ID3 的 TXXX 描述本身大小写不敏感（ffprobe 读回来是 `TXXX:BILIBILI_BVID`），
+ * 但 FLAC 的 Vorbis 键按惯例全大写。同一个人写的两个域不该因为大小写而在播放器里分成两列。
+ */
+function extraFrames(extra: Record<string, string> | undefined): Buffer[] {
+  if (!extra) return []
+  return Object.entries(extra)
+    .filter(([key, value]) => key.trim() && value.trim())
+    .map(([key, value]) => txxxFrame(key.trim().toUpperCase(), value.trim()))
 }
 
 function usltFrame(lyrics: string): Buffer {
@@ -87,6 +107,7 @@ export function buildId3(tags: TagData): Buffer {
     tags.lyrics ? usltFrame(tags.lyrics) : null,
     txxxFrame('SOURCE', tags.source.platform),
     txxxFrame('SOURCE_ID', tags.source.id),
+    ...extraFrames(tags.extra),
     tags.cover ? apicFrame(tags.cover.mime, tags.cover.data) : null,
   ]
   const body = Buffer.concat(frames.filter((f): f is Buffer => f !== null))
@@ -231,6 +252,7 @@ function vorbisComment(tags: TagData): Buffer {
   add('LYRICS', tags.lyrics)
   add('SOURCE', tags.source.platform)
   add('SOURCE_ID', tags.source.id)
+  for (const [key, value] of Object.entries(tags.extra ?? {})) add(key.trim().toUpperCase(), value)
   const vendor = Buffer.from('astra-cli', 'utf8')
   const parts: Buffer[] = [u32le(vendor.length), vendor, u32le(entries.length)]
   for (const entry of entries) {
