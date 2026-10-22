@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { decodeKrc, parseKrc, toEnhancedLrc } from '../src/music/kugou-lyric.ts'
-import { embedsLyric, writesLrcFile, pickEmbeddedLyrics } from '../src/music/download.ts'
+import { embedsLyric, writesLrcFile, pickEmbeddedLyrics, lyricText } from '../src/music/download.ts'
 import { retagFlac, retagMp3, parseFlacBlocks, id3v2End, audioPayload } from '../src/music/tags.ts'
 
 /** 写标签用的最小 TagData（不带封面 / 歌词）。 */
@@ -125,4 +125,27 @@ test('写歌词不动音频字节', () => {
   const mp3Src = readFileSync(new URL('./fixtures/tone.mp3', import.meta.url))
   const mp3Dst = retagMp3(mp3Src, { ...BASE, lyrics: LRC })
   assert.equal(audio(mp3Dst, 'mp3'), audio(mp3Src, 'mp3'))
+})
+
+/**
+ * 歌词文件的命名规则与内容分工。
+ *
+ * 播放器 / Navidrome 只按 `<歌名>.lrc` 找 sidecar。以前逐字写成 `.word.lrc`，
+ * 等于永远不被读取 —— 内容再对也没用。现在 `.lrc` 放逐字，`.line.lrc` 放逐行兜底。
+ */
+test('逐字进 .lrc；.line.lrc 是剥掉时间戳的逐行版', () => {
+  const raw = readFileSync(new URL('./fixtures/idol.krc', import.meta.url))
+  const enhanced = toEnhancedLrc(parseKrc(decodeKrc(raw)))
+
+  // .lrc 的内容：带 [mm:ss.xx] 或 <mm:ss.xx>
+  assert.match(enhanced, /^\[\d{2}:\d{2}\.\d{2}\]/, '逐字文件每行以 LRC 时间戳开头')
+  assert.match(enhanced, /<\d{2}:\d{2}\.\d{2}>/, '逐字文件含逐字标签')
+
+  // .line.lrc 的内容：同一个 lyricText() 产出，时间戳被剥干净
+  const plain = lyricText(enhanced)
+  assert.ok(plain.length > 0, '逐行版不能是空的')
+  assert.doesNotMatch(plain, /\[\d{2}:\d{2}/, '逐行版没有 [mm:ss]')
+  assert.doesNotMatch(plain, /<\d{2}:\d{2}/, '逐行版没有 <mm:ss>')
+  // 剥掉时间戳后歌词正文还在
+  assert.ok(plain.split('\n').some((l) => l.trim().length > 0))
 })

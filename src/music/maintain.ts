@@ -47,8 +47,10 @@ export async function refreshLibrarySpecs(tracks?: LibraryTrack[]): Promise<Refr
     }
     // 配套文件：同名换扩展名
     const base = track.path.replace(/\.[^.]+$/, '')
-    const hasLyric = ['.lrc', '.word.lrc'].some((ext) => existsSync(base + ext))
-    const hasWordLyric = existsSync(base + '.word.lrc')
+    // 三种历史命名都要认：`.lrc`（主，v0.12.5 起逐字也用它）、
+    // `.line.lrc`（逐行兜底）、`.word.lrc`（v0.12.4 及以前的逐字文件名，存量还有）
+    const hasLyric = ['.lrc', '.line.lrc', '.word.lrc'].some((ext) => existsSync(base + ext))
+    const hasWordLyric = ['.line.lrc', '.word.lrc'].some((ext) => existsSync(base + ext))
     // 封面在 FLAC 的 PICTURE 块 / MP3 的 APIC 帧里，不在文本标签里
     const hasCover = (() => {
       try {

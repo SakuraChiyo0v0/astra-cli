@@ -58,9 +58,11 @@ const help: Command = {
           '含空格的关键词可以不加引号（get / search 会把剩余参数拼起来）',
           // 两套 status 是不同层的东西，混用会静默得到空集合（踩过：按 == "downloaded"
           // 过滤任务项，101 项全部漏掉，误判成全部失败）
-          '两种 status 别混用：单次操作看 data.status（downloaded / already_have / ambiguous / job_started）；',
-          '  后台任务的每项看 data.items[].status，取值是 done / skipped / failed / queued / running。',
-          '  任务项成功用 done（不是 downloaded），曲库里已有而跳过用 skipped',
+          // 两套词已经统一（v0.12.5）：任务项的成功也是 downloaded，调用方可以用一套过滤
+          'status 分两层，但成功都用 downloaded：单次操作看 data.status'
+            + '（downloaded / already_have / ambiguous / job_started）；'
+            + '后台任务的每项看 data.items[].status（downloaded / skipped / failed / queued / running）。',
+          '  曲库里已有而跳过用 skipped；用 status == "downloaded" 过滤时记得把 skipped 也算成功',
         ],
         commands: visible.map(describeCommand),
       },

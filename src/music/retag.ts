@@ -318,13 +318,14 @@ function normalizeForCompare(p: string): string {
 /**
  * 找同一首歌旁边的同步歌词文件。
  *
- * `.word.lrc`（逐字 `<mm:ss.xx>`）优先，其次 `.lrc`（`[mm:ss.xx]`）。
+ * `.lrc`（v0.12.5 起逐字也放这里）优先，其次 `.line.lrc` / 存量的 `.word.lrc`。
  * 只认带时间戳的 —— 纯文本文件带回去没有意义，内嵌要的就是时间轴。
  * 都不存在或都是纯文本时返回 null，调用方沿用原标签。
  */
 export async function syncedLyricsFor(audioPath: string): Promise<string | null> {
   const base = audioPath.replace(/\.[^.]+$/, '')
-  for (const ext of ['.word.lrc', '.lrc']) {
+  // 逐字在 .lrc 里（v0.12.5 起），逐行兜底在 .line.lrc；.word.lrc 是存量旧名
+  for (const ext of ['.lrc', '.line.lrc', '.word.lrc']) {
     const file = base + ext
     if (!existsSync(file)) continue
     const text = await readFile(file, 'utf8').catch(() => null)
@@ -422,7 +423,7 @@ async function retagOne(item: RetagPlanItem): Promise<{ tagged: boolean; moved: 
     moved = true
     progress('music.retag.move', { id: item.id, from: item.from, to: item.to })
     // 同名 .lrc / .word.lrc 跟着走，不然歌词留在原地等于丢了
-    for (const ext of ['.lrc', '.word.lrc']) {
+    for (const ext of ['.lrc', '.line.lrc', '.word.lrc']) {
       const sidecar = item.from.replace(/\.[^.]+$/, ext)
       if (!existsSync(sidecar)) continue
       try {

@@ -50,7 +50,7 @@ export async function biliJobItems(bvid: string, pages: number[] | null, quality
 /** "画质：1080P 5 / 360P 2"。 */
 export function qualitySummary(items: JobItemView[]): string {
   const counts = new Map<string, number>()
-  for (const i of items) if ((i.status === 'done' || i.status === 'skipped') && i.profile) counts.set(i.profile, (counts.get(i.profile) ?? 0) + 1)
+  for (const i of items) if ((i.status === 'downloaded' || i.status === 'skipped') && i.profile) counts.set(i.profile, (counts.get(i.profile) ?? 0) + 1)
   if (counts.size === 0) return ''
   return '画质：' + [...counts].map(([q, n]) => `${q} ${n}`).join(' / ')
 }
@@ -96,7 +96,7 @@ registerJobHandler(BILI_DOMAIN, {
 
     const result = await downloadPage(info, pageIndex, { quality })
     return {
-      status: 'done',
+      status: 'downloaded',
       profile: qualityName(result.actualQuality),
       path: result.path,
       note: [

@@ -317,8 +317,14 @@ test('重写标签时优先用同目录的同步歌词，别把纯文本原样�
   const plainLrc = await syncedLyricsFor(audio)
   assert.match(plainLrc!, /\[00:12\.34\]/)
 
-  // 逐字 `.word.lrc` 优先于 `.lrc`
-  writeFileSync(base + '.word.lrc', '[00:12.34]<00:12.34>第<00:12.80>一行\n', 'utf8')
+  // v0.12.5 起逐字就在 `.lrc` 里（`<mm:ss.xx>`），`.line.lrc` 是逐行兜底
+  writeFileSync(base + '.lrc', '[00:12.34]<00:12.34>第<00:12.80>一行\n', 'utf8')
   const word = await syncedLyricsFor(audio)
-  assert.match(word!, /<00:12\.34>/, '有逐字就用逐字')
+  assert.match(word!, /<00:12\.34>/, '逐字写在 .lrc 里，读得到')
+
+  // 存量旧名 `.word.lrc` 仍然要认，否则老库升级时读不到逐字
+  writeFileSync(base + '.lrc', '第一行\n第二行\n', 'utf8')
+  writeFileSync(base + '.word.lrc', '[00:12.34]<00:12.34>旧<00:12.80>名\n', 'utf8')
+  const legacy = await syncedLyricsFor(audio)
+  assert.match(legacy!, /<00:12\.34>/, '.word.lrc 是存量命名，也要认')
 })

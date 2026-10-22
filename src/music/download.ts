@@ -45,8 +45,11 @@ export interface DownloadResult {
   bytes: number | null
   bitrateKbps: number | null
   source: string | null
+  /** 主歌词文件 `.lrc`：有逐字就是逐字格式，否则是逐行。 */
   lyricFile: string | null
-  /** 逐字歌词（增强 LRC）；没有就是 null。 */
+  /** 逐行兜底 `.line.lrc`；只有拿到逐字歌词时才有。 */
+  lineLyricFile: string | null
+  /** @deprecated 同 `lineLyricFile`，保留这个键不打断已有脚本。 */
   wordLyricFile: string | null
   warnings: string[]
 }
@@ -64,6 +67,7 @@ function existingResult(hit: LibraryTrack, requested: Quality): DownloadResult {
     bitrateKbps: hit.bps ? Math.round(hit.bps / 1000) : null,
     source: hit.sourceId,
     lyricFile: null,
+    lineLyricFile: null,
     wordLyricFile: null,
     warnings: [],
   }
@@ -149,10 +153,17 @@ export function pickEmbeddedLyrics(
   return synced.enhanced ?? synced.lrc ?? synced.plain ?? null
 }
 
-function lyricText(lrc: string): string {
+/**
+ * 剥掉时间戳与制作人员名单，得到纯逐行文本（`.line.lrc` 用）。
+ *
+ * 两种时间戳都要剥：普通 LRC 的 `[mm:ss.xx]` 和逐字的 `<mm:ss.xx>`。
+ * 只剥方括号的话，从增强 LRC 转出来的 `.line.lrc` 会残留一堆 `<00:12.34>`，
+ * 不认逐字标签的播放器会把它们当正文显示出来。
+ */
+export function lyricText(lrc: string): string {
   return lrc
     .split(/\r?\n/)
-    .map((line) => line.replace(/\[[^\]]*\]/g, '').trim())
+    .map((line) => line.replace(/\[[^\]]*\]/g, '').replace(/<[^>]*>/g, '').trim())
     .filter((line) => line && !/^(作词|作曲|编曲|制作人|混音|母带|录音)\s*[:：]/.test(line))
     .join('\n')
 }
@@ -329,19 +340,25 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
     if (hit && hit.path !== target) await rm(hit.path, { force: true })
     await rename(tmp, target)
 
+    // 歌词落盘：**逐字写 `.lrc`，逐行兜底写 `.line.lrc`**。
+    //
+    // 为什么不是 `.word.lrc`：播放器/Navidrome 只按 `<歌名>.lrc` 找 sidecar，
+    // 换个扩展名等于永远不被读取 —— 逐字歌词写了也没用。
+    // 带 `<mm:ss.xx>` 的增强 LRC 是 `.lrc` 的超集，认普通 LRC 的播放器也能读，
+    // 所以逐字放主位、逐行放旁边给不认逐字标签的播放器兜底。
+    //
+    // 顺序：有逐字就 `.lrc` = 逐字 + `.line.lrc` = 逐行；没有逐字就 `.lrc` = 逐行。
     let lyricFile: string | null = null
-    if (lyricBody && writesLrcFile(lyricMode)) {
-      lyricFile = target.replace(/\.[^.]+$/, '.lrc')
-      await writeFile(lyricFile, lyricBody.lrc, 'utf8')
-    }
-
-    // 逐字歌词单独存 .word.lrc：普通的给不支持增强 LRC 的播放器，
-    // 支持 `<mm:ss.xx>` 的用 .word.lrc，互不干扰。
-    // 内容在写标签之前就取好了（内嵌要用），这里只落盘。
-    let wordLyricFile: string | null = null
+    let lineLyricFile: string | null = null
+    const base = target.replace(/\.[^.]+$/, '')
     if (wordLyricText) {
-      wordLyricFile = target.replace(/\.[^.]+$/, '.word.lrc')
-      await writeFile(wordLyricFile, wordLyricText.enhanced, 'utf8')
+      lyricFile = `${base}.lrc`
+      await writeFile(lyricFile, wordLyricText.enhanced, 'utf8')
+      lineLyricFile = `${base}.line.lrc`
+      await writeFile(lineLyricFile, wordLyricText.plain, 'utf8')
+    } else if (lyricBody && writesLrcFile(lyricMode)) {
+      lyricFile = `${base}.lrc`
+      await writeFile(lyricFile, lyricBody.lrc, 'utf8')
     }
 
     saveTrack({
@@ -362,7 +379,7 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       spec: { sampleRate: probe.flac?.sampleRate ?? null, bitsPerSample: probe.flac?.bitsPerSample ?? null, channels: probe.flac?.channels ?? null },
       hasCover: cover !== null,
       hasLyric: lyricBody !== null,
-      hasWordLyric: wordLyricFile !== null,
+      hasWordLyric: lineLyricFile !== null,
     })
 
     return {
@@ -377,7 +394,9 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       bitrateKbps: probe.bps ? Math.round(probe.bps / 1000) : null,
       source: resolved.sourceId === 'official' ? 'official' : `${resolved.sourceId}@${resolved.route}`,
       lyricFile,
-      wordLyricFile,
+      lineLyricFile,
+      // 旧键：值是 .line.lrc 的路径，语义和以前一样（逐行那份）
+      wordLyricFile: lineLyricFile,
       warnings,
     }
   } finally {

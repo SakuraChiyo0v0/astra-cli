@@ -136,6 +136,11 @@ const MIGRATIONS: string[] = [
    )`,
   `create index audit_at on audit_log (at desc)`,
   `create index audit_action on audit_log (action)`,
+  // 任务项状态词统一：`done` → `downloaded`，和单曲 `data.status` 对齐。
+  // 原先两套词（任务项 done/skipped、单曲 downloaded/already_have）导致调用方
+  // 按 `== "downloaded"` 过滤任务项时静默拿到空集合。
+  // 只改 job_items，jobs 表的 done 计数列名不动（那是列名不是状态值）。
+  `update job_items set status = 'downloaded' where status = 'done'`,
 ]
 
 export function db(): DatabaseSync {

@@ -22,7 +22,9 @@ import { homePath } from './paths.ts'
 import { notify } from './notify.ts'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'partial' | 'failed' | 'cancelled' | 'interrupted'
-export type ItemStatus = 'queued' | 'running' | 'done' | 'skipped' | 'failed'
+// 任务项状态。`downloaded` 与单曲 `data.status` 同词，调用方可以用一套过滤；
+// `skipped` = 曲库里已有、跳过。
+export type ItemStatus = 'queued' | 'running' | 'downloaded' | 'skipped' | 'failed'
 
 export interface JobView {
   id: string
@@ -69,7 +71,7 @@ export interface JobItemInput {
 
 /** 处理器返回什么就算什么：skipped 表示"已经有了，跳过"。 */
 export interface ItemOutcome {
-  status: 'done' | 'skipped'
+  status: 'downloaded' | 'skipped'
   profile?: string | null
   path?: string | null
   note?: string | null
@@ -285,7 +287,7 @@ function refreshCounts(jobId: string): void {
   db()
     .prepare(
       `update jobs set
-         done = (select count(*) from job_items where job_id = ? and status = 'done'),
+         done = (select count(*) from job_items where job_id = ? and status = 'downloaded'),
          skipped = (select count(*) from job_items where job_id = ? and status = 'skipped'),
          failed = (select count(*) from job_items where job_id = ? and status = 'failed'),
          updated_at = ?

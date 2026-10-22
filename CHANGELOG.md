@@ -24,6 +24,19 @@
   `config list` 里写清 `proxy.include` 留空 = 全部走
 
 
+## 0.12.5 — 2026-10-23
+
+**歌词文件改名：逐字写 `.lrc`，逐行兜底 `.line.lrc`**
+
+- **修**：逐字歌词一直写成 `.word.lrc`，而播放器 / Navidrome 只按 `<歌名>.lrc` 找 sidecar ——
+  换个扩展名等于永远不被读取，逐字歌词写了也没用。现在 `.lrc` 放逐字（增强 LRC 是普通 LRC 的超集，
+  认普通 LRC 的播放器也能读），另存一份逐行的 `.line.lrc` 给不认逐字标签的播放器兜底
+- 返回值新增 `lineLyricFile`；旧的 `wordLyricFile` 保留（指向同一份），不打断已有脚本
+- **修**：任务项状态词统一为 `downloaded`（原 `done`）。`job --items` 与单曲 `data.status`
+  现在同一套词，按 `== "downloaded"` 过滤不会再拿到空集合。带一条迁移把历史 `done` 改写成 `downloaded`
+- 兼容：`.word.lrc`（存量文件名）仍然识别，`retag` 搬文件时三种命名都跟着走
+
+
 ## 0.12.4 — 2026-10-23
 
 **内嵌歌词改为同步格式（Navidrome 不再显示"无歌词"）**

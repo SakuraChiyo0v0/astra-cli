@@ -37,7 +37,7 @@ function trackFromMeta(meta: Record<string, unknown>): Track | null {
 /** "音质：24bit 3 / flac 2 / 128k 5"。热歌榜实测大半只有 128k，用户应该知道。 */
 export function qualitySummary(items: JobItemView[]): string {
   const counts = new Map<string, number>()
-  for (const i of items) if ((i.status === 'done' || i.status === 'skipped') && i.profile) counts.set(i.profile, (counts.get(i.profile) ?? 0) + 1)
+  for (const i of items) if ((i.status === 'downloaded' || i.status === 'skipped') && i.profile) counts.set(i.profile, (counts.get(i.profile) ?? 0) + 1)
   if (counts.size === 0) return ''
   const order = ['24bit', 'flac', '320k', '128k']
   return '音质：' + [...counts].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([q, n]) => `${q} ${n}`).join(' / ')
@@ -81,7 +81,7 @@ registerJobHandler(MUSIC_DOMAIN, {
 
     const result = await downloadTrack(track, { quality, albumCache: cache })
     return {
-      status: result.status === 'already_have' ? 'skipped' : 'done',
+      status: result.status === 'already_have' ? 'skipped' : 'downloaded',
       profile: result.quality,
       path: result.path,
       note: result.warnings.length > 0 ? result.warnings.join('；') : null,
