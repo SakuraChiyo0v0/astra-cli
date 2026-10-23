@@ -13,7 +13,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { albumTypeRank, pickOwnerAlbum, preferredAlbum, type AlbumCandidate } from '../src/music/album-priority.ts'
+import { albumTypeRank, deservesReassign, pickOwnerAlbum, preferredAlbum, type AlbumCandidate } from '../src/music/album-priority.ts'
 
 const album = (over: Partial<AlbumCandidate> = {}): AlbumCandidate => ({
   id: 'x',
@@ -124,4 +124,61 @@ test('两端信息不全时不动文件：类型判据的默认值是安全的',
   // 老记录没存类型 → albumTypeRank(null) 是中间档 → 不会被判成"二手"
   assert.equal(albumTypeRank(null) >= 4, false, 'null 不该被判成精选/合辑档')
   // 因此"theirsSecondary"为 false，归位条件不成立 → 不动
+})
+
+// ---- P4#6：deservesReassign 是 downloadTrack 真正调用的那个判据 ----
+
+test('值得归位：已有是精选集、新的是更早的录音室版', () => {
+  const theirs = album({ id: 'history', publishTime: HISTORY, type: '精选集' })
+  const mine = album({ id: 'thriller', publishTime: THRILLER, type: '录音室版' })
+  assert.equal(deservesReassign(theirs, mine), true)
+})
+
+test('不值得：已有更早（绝不该被更晚的那张挤走）', () => {
+  // 这正是实测丢歌的那个方向 —— 必须为 false
+  const theirs = album({ id: 'orig', publishTime: THRILLER, type: '专辑' })
+  const mine = album({ id: 'best', publishTime: HISTORY, type: '专辑' })
+  assert.equal(deservesReassign(theirs, mine), false, '已有 1982、新的是 1995 → 不能动')
+})
+
+test('不值得：年份都不知道时不动文件', () => {
+  const theirs = album({ id: 'unknown', publishTime: null, type: null })
+  const mine = album({ id: 'mine', publishTime: null, type: '录音室版' })
+  assert.equal(deservesReassign(theirs, mine), false, '没有年份就没有证据')
+})
+
+test('同年时看类型：已有是精选集、新的是普通专辑 → 值得', () => {
+  const theirs = album({ id: 'a', publishTime: BAD, type: '精选集' })
+  const mine = album({ id: 'b', publishTime: BAD, type: '专辑' })
+  assert.equal(deservesReassign(theirs, mine), true, '类型能区分时用类型')
+})
+
+test('同年同类型 → 不动', () => {
+  const theirs = album({ id: 'a', publishTime: BAD, type: '专辑' })
+  const mine = album({ id: 'b', publishTime: BAD, type: '专辑' })
+  assert.equal(deservesReassign(theirs, mine), false)
+})
+
+test('实测数据：网易云的 type 几乎永远是"专辑"，判据实际靠年份', () => {
+  // 实测 沈香学(2023) 和 2026 Special Edition(2026) 都返回 type="专辑"
+  assert.equal(albumTypeRank('专辑'), 1, '"专辑"该归到最原始档')
+  const theirs = album({ id: 'a', publishTime: Date.UTC(2023, 5, 6), type: '专辑' })
+  const mine = album({ id: 'b', publishTime: Date.UTC(2026, 0, 1), type: '专辑' })
+  assert.equal(deservesReassign(theirs, mine), false, '同年同类型时靠年份 —— 更晚的不该抢')
+  // 反过来（新的是更早的原专辑）才值得
+  assert.equal(deservesReassign(mine, theirs), true, '2026 让位给 2023')
+})
+
+test('单位必须一致：秒和毫秒混用会让年份判据彻底错掉', () => {
+  // 真实踩过：track.publishTime 是秒（1686067200），album.publishTime 是毫秒
+  // （1686067200000）。把秒当毫秒乘/不乘搞反，存出来的年份是 55399 这种东西。
+  const inSeconds = 1686067200
+  const inMillis = inSeconds * 1000
+  assert.equal(new Date(inMillis).getUTCFullYear(), 2023, '毫秒才能直接给 Date')
+  // 秒不乘 1000 会得到 1970 年
+  assert.equal(new Date(inSeconds).getUTCFullYear(), 1970, '秒直接给 Date 是错的')
+  // 判断"更早"时两边必须都是同一单位 —— 用毫秒
+  const earlier = inMillis
+  const later = inMillis + 86400_000 * 365
+  assert.ok(earlier < later)
 })

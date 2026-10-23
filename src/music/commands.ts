@@ -117,16 +117,19 @@ function startBatch(kind: string, title: string, quality: Quality, tracks: Track
 const get: Command = {
   name: 'music get',
   summary: '下载一首歌（或一整张专辑 / 歌单）：给关键词、网易云链接或 ref 都行',
-  usage: 'astra music get <关键词|链接|ref> [--quality flac] [--force]',
+  usage: 'astra music get <关键词|链接|ref> [--quality flac] [--force] [--reassign]',
   notes: [
     '结果 data.status：downloaded（下好了）/ already_have（曲库里已有，没重复下）/ ambiguous（拿不准，需要用户选）/ job_started（批量任务已在后台开始）',
     'ambiguous 时把 candidates 列给用户（标题、歌手、专辑、时长、flags），用户选定后用该项的 ref 再调一次 get；不要自己替用户挑',
     'downloaded 时如果 downgraded=true，要告诉用户实际音质（比如请求无损只拿到 128k）',
     '链接是专辑 / 歌单 / 歌手时会直接开后台任务，用 `astra music job <id>` 查进度',
+    '**文件默认永不移动**：同一首歌已在库里别处时只记 already_have（带 duplicateOf 说明在哪），不搬文件',
+    '--reassign 才允许把"精选集里的重复曲目"归位到录音室原专辑（先下后删，只走这一个方向）',
   ],
   options: {
     quality: { type: 'string', short: 'q', description: '请求音质：128k / 320k / flac / 24bit（默认取配置 music.quality）', valueName: 'q' },
     force: { type: 'boolean', description: '曲库里已有也重新下载' },
+    reassign: { type: 'boolean', description: '允许把精选集里的重复曲目归位到原专辑（默认不动已有文件）' },
     limit: { type: 'string', description: '候选数量上限，默认 5', valueName: 'n' },
   },
   minArgs: 1,
@@ -162,7 +165,12 @@ const get: Command = {
       track = decision.pick.track
       alternatives = decision.alternatives
     }
-    const result = await downloadTrack(track, { quality, force: values.force === true, signal })
+    const result = await downloadTrack(track, {
+      quality,
+      force: values.force === true,
+      ...(values.reassign === true ? { reassign: true } : {}),
+      signal,
+    })
     const data: Record<string, unknown> = { ...result }
     delete data.warnings
     if (alternatives.length > 0) data.otherVersions = alternatives.slice(0, 3).map(candidateView)

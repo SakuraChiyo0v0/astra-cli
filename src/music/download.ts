@@ -24,7 +24,7 @@ import { renderTemplate, resolveInside } from './paths.ts'
 import { albumArtistsFor, isCompilation, primaryArtist } from './album-artist.ts'
 import { kugouWordLyric, toEnhancedLrc } from './kugou-lyric.ts'
 import { findTrack, findByFingerprint, forgetTrack, saveTrack, trackFingerprint, type LibraryTrack } from './library.ts'
-import { albumTypeRank, preferredAlbum, type AlbumCandidate } from './album-priority.ts'
+import { deservesReassign, preferredAlbum, type AlbumCandidate } from './album-priority.ts'
 
 export interface DownloadOptions {
   quality: Quality
@@ -33,10 +33,31 @@ export interface DownloadOptions {
   signal?: AbortSignal
   /** 批量下载时同一张专辑只查一次。 */
   albumCache?: Map<string, Promise<AlbumInfo | null>>
+  /**
+   * 允许把已在库里的重复曲目归位到更该拥有它的专辑。
+   *
+   * **默认 false —— 已落盘的文件永不移动**（P4#6）。
+   * 打开后仍只走"精选/合辑/现场 → 录音室原专辑"一个方向，且先下后删。
+   */
+  reassign?: boolean
 }
 
 export interface DownloadResult {
   status: 'downloaded' | 'already_have'
+  /**
+   * 这首已经在库里别的位置（`status: 'already_have'` 时才有）。
+   *
+   * 给调用方一个解释"为什么这张专辑少了一首"的依据 ——
+   * 不是下载失败，是同一首已经在另一张专辑里。
+   */
+  duplicateOf?: {
+    album: string | null
+    albumId: string | null
+    albumYear: number | null
+    path: string
+    /** 值得归位但这次没开 `--reassign`。 */
+    reassignable: boolean
+  }
   track: { id: string; title: string; artists: string[]; album: string | null }
   path: string
   format: AudioFormat
@@ -230,7 +251,9 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
     const mine: AlbumCandidate = {
       id: track.albumId ?? '',
       name: track.album ?? '',
-      publishTime: track.publishTime ?? album?.publishTime ?? null,
+      // **统一成毫秒**：`track.publishTime` 是秒、`album.publishTime` 是毫秒。
+      // 两者混着塞进同一个字段，比较时就是在比 %1000 的余数。
+      publishTime: album?.publishTime ?? (track.publishTime ? track.publishTime * 1000 : null),
       type: album?.type ?? null,
       trackNo: track.trackNo,
     }
@@ -262,22 +285,36 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       return existingResult(existing, quality)
     }
 
-    // 到这里 mine 不输给 theirs。但**只有"精选让位给录音室原专辑"才动文件**。
+    // **默认绝不移动已落盘的文件**（P4#6 的最终形态）。
     //
-    // 判据（两个都要成立）：
-    // 1. 已有那份是"二手"专辑（精选 / 合辑 / 现场 / 原声）
-    // 2. 现在这张更早，或者已有那份类型明确是二手
+    // 只有显式 `--reassign` 时才做归位，而且仍然：
+    // - 只允许"精选/合辑/现场 → 录音室原专辑"一个方向
+    // - 先下后删（先删再下在 0.12.22 丢过 2 首歌）
     //
-    // 只看年份是不够的：同年出的重混版不该把原版挤走。
-    // 两端信息不全时一律不动 —— 在不确定的情况下搬用户已经整理好的文件，
-    // 代价远大于"这首歌暂时待在精选集里"。
-    const theirsSecondary = albumTypeRank(theirs.type) >= 4
-    const mineMoreOriginal = albumTypeRank(mine.type) < albumTypeRank(theirs.type)
-    const strictlyOlder = theirs.publishTime !== null && mine.publishTime !== null && mine.publishTime < theirs.publishTime
+    // 为什么默认关掉：`astra.db` 里的 `file_path` 是**事实**，不是缓存。
+    // 用户可能已经按这个布局整理过、做过备份、写过脚本、在播放器里建过播放列表。
+    // 为了"这首歌待在更正确的专辑里"去动它，是在拿用户的数据赌一个推测出来的偏好 ——
+    // 而且账单是**静默**的（目录里凭空少一首，没有任何提示）。
+    //
+    // 代价要说清楚：先下的精选集会永久占着那首歌，原专辑那次是 skipped。
+    // 想纠正就跑一次 `music get <原专辑> --reassign` —— 显式的、可预期的。
+    const couldReassign = deservesReassign(theirs, mine)
 
-    if (!(theirsSecondary && (mineMoreOriginal || strictlyOlder))) {
+    if (!couldReassign || options.reassign !== true) {
+      // 跳过，但要把"为什么这张少了一首"说清楚（清单 P4#5 第 4 条）
       if (existing.id !== track.id) progress('music.dedup', { wanted: track.id, existing: existing.id, title: track.title })
-      return existingResult(existing, quality)
+      return {
+        ...existingResult(existing, quality),
+        // 调用方靠这个解释"专辑不完整"：不是下载失败，是这首已经在别处了
+        duplicateOf: {
+          album: existing.album ?? null,
+          albumId: existing.albumId ?? null,
+          albumYear: existing.albumYear ?? null,
+          path: existing.path,
+          // 值得归位但没开 --reassign 时，明确告诉他可以做
+          reassignable: couldReassign,
+        },
+      }
     }
 
     progress('music.reassign', {
@@ -462,11 +499,19 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       hasCover: cover !== null,
       hasLyric: lyricBody !== null,
       hasWordLyric: lineLyricFile !== null,
-      // 存下来给下次的归属判断用（P4#5）—— 不然每次都要再查一次专辑接口
+      // 存下来给下次的归属判断用（P4#5）—— 不然每次都要再查一次专辑接口。
+      //
+      // **单位不一样**：`track.publishTime` 是**秒**（歌的发行时间），
+      // `album.publishTime` 是**毫秒**（专辑接口原样返回）。
+      // 一开始把两者当同一单位乘 1000，存出来是 `55399` 这种离谱年份 ——
+      // 而年份正是判归属的第一判据，错了就全错。
+      // 用专辑的（那才是"这张专辑哪年发的"）；专辑拿不到才退回歌的。
       albumId: track.albumId ?? null,
-      albumYear: (track.publishTime ?? album?.publishTime ?? null)
-        ? new Date((track.publishTime ?? album?.publishTime)! * 1000).getUTCFullYear()
-        : null,
+      albumYear: album?.publishTime
+        ? new Date(album.publishTime).getUTCFullYear()
+        : track.publishTime
+          ? new Date(track.publishTime * 1000).getUTCFullYear()
+          : null,
       albumType: album?.type ?? null,
     })
 

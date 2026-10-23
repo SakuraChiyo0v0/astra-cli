@@ -29,19 +29,27 @@ export interface AlbumCandidate {
 /**
  * 专辑类型的分档：数字越小越"原始"。
  *
- * 不认识 / 不知道的类型按**中间档**处理，不放到最前也不放到最后 ——
- * 把未知当成"精选集"会让真·原专辑被它压过，当成"录音室"又会让精选集压过原专辑。
- * 中间档意味着遇到未知时**退回看年份**，那是更可靠的判据。
+ * **实测（2026-10-23）网易云的 `type` 字段几乎永远是 `"专辑"`** ——
+ * 它并不区分录音室版和精选集。实测 `沈香学(2023)` 和
+ * `ZUTOMAYO - 2026 Special Edition` 都返回 `"专辑"`。
+ *
+ * 所以这个分档在真实数据上基本只能落到"中间档"，**判归属实际靠的是年份**。
+ * 保住它是因为：类型一旦能拿到（别的音源、或网易云以后细分），判据就自动生效；
+ * 而拿不到时它会返回中间档，自然退回年份比较 —— 不会给出错误结论。
+ *
+ * 不认识 / 不知道的类型按**中间档**处理，不放最前也不放最后：
+ * 放最前会让未知压过真·原专辑，放最后会让精选集压过原专辑。
  */
 export function albumTypeRank(type: string | null | undefined): number {
   const t = (type ?? '').trim()
   if (!t) return 2
-  // 录音室专辑：最原始
-  if (/录音室|studio/i.test(t)) return 1
-  // EP / 单曲：通常也是原始发行，但内容少，排在录音室之后
+  // 精选 / 合辑 / 现场 / 原声：都是"二手"收录。**这条要放在"专辑"之前**，
+  // 因为"精选集"这种描述里也可能带"专辑"字样
+  if (/精选|合辑|合集|现场|原声|compilation|greatest hits|live|soundtrack/i.test(t)) return 4
+  // 录音室 / 普通专辑：最原始
+  if (/录音室|studio|^专辑$|^album$/i.test(t)) return 1
+  // EP / 单曲：通常也是原始发行，但内容少
   if (/^EP$|^单曲|single/i.test(t)) return 2
-  // 精选 / 合辑 / 现场 / 原声：都是"二手"收录
-  if (/精选|合辑|合集|现场|原声|compilation|live|soundtrack/i.test(t)) return 4
   // 其它（Remix / 混音 / 伴奏 / DJ 版…）最靠后
   if (/remix|混音|伴奏|karaoke|instrumental|dj/i.test(t)) return 5
   return 2
@@ -76,6 +84,36 @@ export function preferredAlbum(a: AlbumCandidate, b: AlbumCandidate): boolean {
 
   // 4) 分不出来：保持现状
   return false
+}
+
+/**
+ * 这次下载**是否值得**把已有文件归位到更该拥有它的专辑。
+ *
+ * 两个条件都必须成立：
+ * 1. 已有那份是"二手"专辑（精选 / 合辑 / 现场 / 原声）
+ * 2. 现在这张更原始（类型更靠前）或者更早
+ *
+ * **这只是"值得做"，不是"要做"** —— 实际动不动还要看 `--reassign`。
+ * 默认绝不动已落盘的文件（P4#6）：`file_path` 是事实，用户可能已经按它
+ * 整理过、备份过、建过播放列表，为了一个推测出来的偏好去改是在赌他的数据。
+ */
+export function deservesReassign(theirs: AlbumCandidate, mine: AlbumCandidate): boolean {
+  // **年份是主要判据**，类型只是补充 —— 实测网易云的 type 几乎永远是"专辑"，
+  // 靠它分不出精选集和录音室版。
+  //
+  // 要求：双方年份都知道，且这张**严格更早**；或者已有那份类型明确是二手。
+  const strictlyOlder = theirs.publishTime !== null && mine.publishTime !== null && mine.publishTime < theirs.publishTime
+  const mineMoreOriginal = albumTypeRank(mine.type) < albumTypeRank(theirs.type)
+
+  // 类型能区分时才用类型（例如已有的是"精选集"、新的是"专辑"）
+  if (theirsSecondary(theirs) && mineMoreOriginal) return true
+  // 否则只认年份早。**同年、或任一方不知道年份 → 不动**
+  return strictlyOlder
+}
+
+/** 已有那份是不是"二手"专辑（精选 / 合辑 / 现场 / 原声）。 */
+function theirsSecondary(a: AlbumCandidate): boolean {
+  return albumTypeRank(a.type) >= 4
 }
 
 /**
