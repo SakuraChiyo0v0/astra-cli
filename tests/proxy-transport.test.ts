@@ -228,12 +228,22 @@ test('非 http/https 的目标协议直接拒绝', async () => {
 /** 用 ASTRA_PROXY 让 httpRequest 走代理（它自己读配置，不接受注入）。 */
 async function withProxyEnv<T>(url: string, fn: () => Promise<T>): Promise<T> {
   const prev = process.env.ASTRA_PROXY
+  const prevInclude = process.env.ASTRA_PROXY_INCLUDE
+  const prevExclude = process.env.ASTRA_PROXY_EXCLUDE
   process.env.ASTRA_PROXY = url
+  // 机器上的真实配置可能配了 include（例如只让 steam 走代理），
+  // 那样 example.com 会直连、这个用例就永远绿不了。显式清空，用例只测代理行为本身。
+  process.env.ASTRA_PROXY_INCLUDE = ''
+  process.env.ASTRA_PROXY_EXCLUDE = ''
   try {
     return await fn()
   } finally {
     if (prev === undefined) delete process.env.ASTRA_PROXY
     else process.env.ASTRA_PROXY = prev
+    if (prevInclude === undefined) delete process.env.ASTRA_PROXY_INCLUDE
+    else process.env.ASTRA_PROXY_INCLUDE = prevInclude
+    if (prevExclude === undefined) delete process.env.ASTRA_PROXY_EXCLUDE
+    else process.env.ASTRA_PROXY_EXCLUDE = prevExclude
   }
 }
 

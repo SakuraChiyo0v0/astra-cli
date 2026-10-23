@@ -57,8 +57,8 @@ export function proxyConfig(): ProxyConfig | null {
   const split = (text: string): string[] => text.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
   return {
     url,
-    include: split(getConfig('proxy.include') || ''),
-    exclude: split(getConfig('proxy.exclude') || ''),
+    include: split(process.env.ASTRA_PROXY_INCLUDE ?? getConfig('proxy.include') ?? ''),
+    exclude: split(process.env.ASTRA_PROXY_EXCLUDE ?? getConfig('proxy.exclude') ?? ''),
   }
 }
 
