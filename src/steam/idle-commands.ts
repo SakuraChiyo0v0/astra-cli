@@ -322,7 +322,20 @@ const loginStatus: Command = {
   maxArgs: 0,
   async run() {
     const state = readState('login')
-    if (!state) return { data: { status: 'not_started', hint: '`astra steam login` 开始扫码' } }
+    const saved = loadSteamCredentials()
+    // 有 refreshToken 就是登录着的 —— 哪怕上一次扫码记录是 cancelled/failed（比如后来用密码登录的）
+    if (saved?.refreshToken && (!state || state.status === 'cancelled' || state.status === 'failed')) {
+      return {
+        data: {
+          status: 'done',
+          accountName: saved.accountName ?? null,
+          hasRefreshToken: true,
+          refreshTokenDigest: refreshTokenDigest(saved.refreshToken),
+          steamId64: saved.steamId64 ?? null,
+        },
+      }
+    }
+    if (!state) return { data: { status: 'not_started', hint: '`astra steam login <账号>` 登录' } }
 
     if (state.status === 'waiting_scan' && !pidAlive(state.pid)) {
       writeState('login', { status: 'failed', error: '登录进程已退出（二维码过期或被取消）' })
