@@ -9,8 +9,9 @@
  */
 import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command } from '../core/command.ts'
-import { appDetails, inventory, playerSummaries, wishlist } from './api.ts'
-import { apiKeyDigest, loadSteamCredentials, requireApiKey, requireSteamId, saveSteamCredentials, validateSteamId64 } from './auth.ts'
+import { appDetails, inventory, ownedGames, playerSummaries, wishlist } from './api.ts'
+import { apiKeyDigest, loadSteamCredentials, refreshTokenDigest, requireApiKey, requireSteamId, saveSteamCredentials, validateSteamId64 } from './auth.ts'
+import { steamIdleCommands } from './idle-commands.ts'
 
 /** 从 `--user` 或凭据里取 SteamID64。 */
 function resolveUser(value: unknown): { steamId64: string; apiKey: string | null } {
@@ -293,4 +294,36 @@ const doctor: Command = {
   },
 }
 
-export const steamCommands: Command[] = [authShow, authSetUser, authSetKey, authClear, me, wishlistCmd, inventoryCmd, doctor]
+/** 库里的游戏：挂时长要按名字挂，先让用户/自己看清名字。 */
+const libraryCmd: Command = {
+  name: 'steam library',
+  summary: '我 Steam 库里有哪些游戏（挂时长用名字对应）',
+  usage: 'astra steam library [--search 关键词] [--limit 50]',
+  notes: ['需要 Web API key + 账号「游戏详情」公开', '带 minutes，是总时长（分钟）'],
+  options: {
+    search: { type: 'string', description: '只看名字包含这个词的', valueName: 'text' },
+    limit: { type: 'string', short: 'n', description: '默认 50', valueName: 'n' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const credentials = loadSteamCredentials()
+    const apiKey = requireApiKey(credentials)
+    const steamId64 = requireSteamId(credentials)
+    const limit = Math.max(1, Math.min(500, Number(values.limit ?? '50') || 50))
+    const games = await ownedGames(apiKey, steamId64, signal)
+    const needle = typeof values.search === 'string' ? values.search.trim().toLowerCase() : ''
+    const filtered = needle ? games.filter((game) => game.name.toLowerCase().includes(needle)) : games
+    const picked = filtered.slice(0, limit)
+    return {
+      data: {
+        steamId64,
+        total: games.length,
+        matched: filtered.length,
+        returned: picked.length,
+        games: picked.map((game) => ({ appId: game.appId, name: game.name, minutes: game.minutes })),
+      },
+    }
+  },
+}
+
+export const steamCommands: Command[] = [authShow, authSetUser, authSetKey, authClear, me, wishlistCmd, inventoryCmd, libraryCmd, doctor, ...steamIdleCommands]

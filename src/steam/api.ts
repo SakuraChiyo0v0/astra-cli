@@ -280,3 +280,32 @@ export async function inventory(steamId64: string, appId: string, contextId = '2
     }),
   }
 }
+
+// ---------- 拥有的游戏 ----------
+
+export interface OwnedGame {
+  appId: number
+  name: string
+  /** 总时长（分钟），挂时长会算进这个数。 */
+  minutes: number
+}
+
+/**
+ * 库里拥有的全部游戏（含免费游戏）。
+ *
+ * 需要 Web API key + 账号「游戏详情」公开。挂时长用游戏名解析 AppID 时用它，
+ * 这样不用依赖别的服务。
+ */
+export async function ownedGames(apiKey: string, steamId64: string, signal?: AbortSignal): Promise<OwnedGame[]> {
+  const query = new URLSearchParams({ key: apiKey, steamid: steamId64, include_appinfo: '1', include_played_free_games: '1' })
+  const url = `${API}/IPlayerService/GetOwnedGames/v1/?${query.toString()}`
+  const payload = await getJson<{ response?: { games?: { appid: number; name?: string; playtime_forever?: number }[] } }>(url, '游戏库', signal)
+  const games = payload.response?.games ?? []
+  if (games.length === 0) {
+    throw new AstraError('STEAM_LIBRARY_EMPTY', '游戏库是空的', {
+      exitCode: 4,
+      hint: '确认账号的「游戏详情」是公开的（Steam 隐私设置），并且 key 属于这个账号',
+    })
+  }
+  return games.map((g) => ({ appId: g.appid, name: g.name ?? `App ${g.appid}`, minutes: g.playtime_forever ?? 0 }))
+}
