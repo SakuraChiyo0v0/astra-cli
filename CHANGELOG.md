@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.25 — 2026-10-23
+
+**修并发迁移炸库（`duplicate column name`），并让代理配置可临时覆盖**
+
+- **修（严重，会直接失败）**：两个 astra 进程同时在一个新库上启动时，第二个必炸
+  `INTERNAL: duplicate column name: channels`。实测 `music get album:… & bili get … &`
+  并行就复现。根因是版本号在事务**外**读：两边都读到旧版本，第二个拿到写锁后照样执行
+  同一条 `alter table … add column`。现在整个迁移序列放进一个 `begin immediate`，
+  并在拿到写锁后**重读** `user_version`，第二个进程直接跳过。
+  新增 `tests/db-migrate-concurrent.test.ts`（4 个进程同时迁移），拿掉修复即红
+- **修**：`proxy.include` / `proxy.exclude` 支持环境变量覆盖
+  （`ASTRA_PROXY_INCLUDE` / `ASTRA_PROXY_EXCLUDE`）。原先只能读配置，
+  机器上配了 include（例如只让 steam 走代理）时，代理相关用例会永远绿不了 ——
+  `tests/proxy-transport.test.ts` 现在显式清空这两个变量，用例不再依赖本机配置
 ## 0.12.24 — 2026-10-22
 
 **文件不可变：默认永不移动已落盘的文件**

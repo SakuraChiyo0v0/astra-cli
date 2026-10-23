@@ -165,11 +165,23 @@ export function db(): DatabaseSync {
   const database = new DatabaseSync(homePath('astra.db'), { timeout: 10_000 })
   database.exec('pragma journal_mode = wal; pragma foreign_keys = on;')
   const version = (database.prepare('pragma user_version').get() as { user_version: number }).user_version
-  for (let i = version; i < MIGRATIONS.length; i += 1) {
+  if (version < MIGRATIONS.length) {
+    // 整个迁移序列放进**一个** immediate 事务里，并且在拿到写锁之后**重读**版本号。
+    //
+    // 早先是「事务外读版本 → 逐条 begin immediate」。两个进程同时启动时（例如
+    // `music get` 和 `bili get` 并行、或 cron 与手动命令撞上），两边都读到旧版本，
+    // 第二个进程拿到锁后照样执行同一条 `alter table … add column`，直接
+    // `INTERNAL: duplicate column name: channels` —— 实测就是这么炸的。
+    //
+    // begin immediate 是写锁：第二个进程会阻塞到第一个提交，提交后再读版本号
+    // 就已经是最新的，于是直接跳过。
     database.exec('begin immediate')
     try {
-      database.exec(MIGRATIONS[i]!)
-      database.exec(`pragma user_version = ${i + 1}`)
+      const current = (database.prepare('pragma user_version').get() as { user_version: number }).user_version
+      for (let i = current; i < MIGRATIONS.length; i += 1) {
+        database.exec(MIGRATIONS[i]!)
+        database.exec(`pragma user_version = ${i + 1}`)
+      }
       database.exec('commit')
     } catch (err) {
       database.exec('rollback')
