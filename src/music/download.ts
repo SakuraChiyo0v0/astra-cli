@@ -24,7 +24,7 @@ import { renderTemplate, resolveInside } from './paths.ts'
 import { albumArtistsFor, isCompilation, primaryArtist } from './album-artist.ts'
 import { kugouWordLyric, toEnhancedLrc } from './kugou-lyric.ts'
 import { findTrack, findByFingerprint, forgetTrack, saveTrack, trackFingerprint, type LibraryTrack } from './library.ts'
-import { preferredAlbum, type AlbumCandidate } from './album-priority.ts'
+import { albumTypeRank, preferredAlbum, type AlbumCandidate } from './album-priority.ts'
 
 export interface DownloadOptions {
   quality: Quality
@@ -202,6 +202,9 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
   const byId = findTrack('wy', track.id)
   const hit = byId ?? findByFingerprint('wy', trackFingerprint(track.title, track.artists, track.durationMs))
   let existing = hit && !hit.missing && !options.force ? hit : null
+  // 归位时要清理的旧文件。**只有新文件确认落盘后才删它**（P4#6）
+  let reassignFrom: string | null = null
+  let reassignFromId: string | null = null
 
   const warnings: string[] = []
 
@@ -222,7 +225,7 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
   //
   // 判据是年份 / 专辑类型 / 曲目号，与**下载完成顺序无关**。
   // 输了就跳过；赢了说明现在这张才是原专辑，已有那份该让位 ——
-  // 把它删掉后照常下载到本专辑目录（下面 `existing = null` 继续走）。
+  // 把它从精选集搬回原专辑（下面 `existing = null` 继续走下）。
   if (existing) {
     const mine: AlbumCandidate = {
       id: track.albumId ?? '',
@@ -237,27 +240,60 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       // 老记录没存年份，只能退回"不知道" —— 这时按类型/trackNo 比，
       // 分不出来就保持现状（不因下载顺序翻转，这是底线）
       publishTime: existing.albumYear ? new Date(`${existing.albumYear}-01-01`).getTime() : null,
-      type: null,
+      // 老记录没存类型；`albumTypeRank(null)` 是中间档，
+      // 于是 `theirsSecondary` 为 false → 不动文件。这是安全的默认值。
+      type: existing.albumType ?? null,
       trackNo: null,
     }
+
+    // 三个方向要分清（P4#6）：
+    // 1. 已有那份更该拥有 → 跳过
+    // 2. **已有那份是精选/合辑/现场，现在这张是录音室原专辑** → 归位（唯一允许动的方向）
+    // 3. 其它（新专辑反而更"二手"）→ 不动，跳过
+    //
+    // 为什么只放开方向 2：清单实测过归位方向搞反的代价 ——
+    // 下精选集时把原专辑里的歌搬走了，调用方从目录看到"新专辑里有、旧专辑没了"，
+    // 误以为新专辑那两条是重复副本、删掉之后原文件彻底丢失。
+    // 只让"精选 → 原专辑"这一个方向动文件，是因为那个方向下原专辑本来就该有，
+    // 搬过去只会让库更正确；反方向则会把用户已经整理好的目录打乱。
     if (preferredAlbum(theirs, mine)) {
       // 已有那份更该拥有 —— 正常跳过
       if (existing.id !== track.id) progress('music.dedup', { wanted: track.id, existing: existing.id, title: track.title })
       return existingResult(existing, quality)
     }
-    // 现在这张更该拥有：把已有文件挪走，让这次下载落到正确位置
-    if (existing.id !== track.id || mine.id !== theirs.id) {
-      progress('music.reassign', {
-        title: track.title,
-        from: existing.album ?? '(未知专辑)',
-        to: track.album ?? '(未知专辑)',
-        fromYear: theirs.publishTime ? new Date(theirs.publishTime).getUTCFullYear() : null,
-        toYear: mine.publishTime ? new Date(mine.publishTime).getUTCFullYear() : null,
-      })
+
+    // 到这里 mine 不输给 theirs。但**只有"精选让位给录音室原专辑"才动文件**。
+    //
+    // 判据（两个都要成立）：
+    // 1. 已有那份是"二手"专辑（精选 / 合辑 / 现场 / 原声）
+    // 2. 现在这张更早，或者已有那份类型明确是二手
+    //
+    // 只看年份是不够的：同年出的重混版不该把原版挤走。
+    // 两端信息不全时一律不动 —— 在不确定的情况下搬用户已经整理好的文件，
+    // 代价远大于"这首歌暂时待在精选集里"。
+    const theirsSecondary = albumTypeRank(theirs.type) >= 4
+    const mineMoreOriginal = albumTypeRank(mine.type) < albumTypeRank(theirs.type)
+    const strictlyOlder = theirs.publishTime !== null && mine.publishTime !== null && mine.publishTime < theirs.publishTime
+
+    if (!(theirsSecondary && (mineMoreOriginal || strictlyOlder))) {
+      if (existing.id !== track.id) progress('music.dedup', { wanted: track.id, existing: existing.id, title: track.title })
+      return existingResult(existing, quality)
     }
-    // 删掉旧记录与文件，让这次下载重新落盘到本专辑目录
-    await rm(existing.path, { force: true })
-    forgetTrack('wy', existing.id)
+
+    progress('music.reassign', {
+      title: track.title,
+      from: existing.album ?? '(未知专辑)',
+      to: track.album ?? '(未知专辑)',
+      fromYear: theirs.publishTime ? new Date(theirs.publishTime).getUTCFullYear() : null,
+      toYear: mine.publishTime ? new Date(mine.publishTime).getUTCFullYear() : null,
+    })
+
+    // **先删再下是错的**（P4#6）：中间任何失败（网络断、磁盘满、Ctrl-C）
+    // 都会让文件真的没了。实测丢过 2 首歌，只能重下整张专辑补回。
+    //
+    // 正确顺序：先把新位置下好、确认落盘，再删旧的（见下面 saveTrack 之后）。
+    reassignFrom = existing.path
+    reassignFromId = existing.id
     existing = null
   }
 
@@ -431,7 +467,25 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       albumYear: (track.publishTime ?? album?.publishTime ?? null)
         ? new Date((track.publishTime ?? album?.publishTime)! * 1000).getUTCFullYear()
         : null,
+      albumType: album?.type ?? null,
     })
+
+    // 新文件已经落盘，这时候才能清理旧位置（P4#6）。
+    // 顺序很重要：反过来的话中途失败就真的丢歌了。
+    if (reassignFrom && reassignFrom !== target) {
+      try {
+        await rm(reassignFrom, { force: true })
+        if (reassignFromId && reassignFromId !== track.id) forgetTrack('wy', reassignFromId)
+        // 顺手清掉同名的歌词 sidecar —— 它们跟着音频走，留下就是孤儿
+        const oldBase = reassignFrom.replace(/\.[^.]+$/, '')
+        for (const ext of ['.lrc', '.line.lrc', '.word.lrc']) await rm(`${oldBase}${ext}`, { force: true })
+        progress('music.reassign.done', { title: track.title, removed: reassignFrom, nowAt: target })
+      } catch (err) {
+        // 删不掉也不该让下载失败 —— 新文件已经好了，旧的多留一份只是占空间。
+        // 但要如实说，否则用户会看到两个副本不知从哪来。
+        warnings.push(`旧位置没清理掉（${reassignFrom}）：${(err as Error).message.slice(0, 100)}`)
+      }
+    }
 
     return {
       status: 'downloaded',

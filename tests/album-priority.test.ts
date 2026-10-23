@@ -101,3 +101,27 @@ test('判据与顺序无关：任意排列都选出同一张', () => {
   const results = perms.map((p) => pickOwnerAlbum(p.map((i) => items[i]!))?.id)
   assert.deepEqual(new Set(results), new Set(['b']), `不同排列给出了不同答案：${results.join(',')}`)
 })
+
+// ---- P4#6：归位只允许"精选 → 原专辑"一个方向 ----
+
+test('精选集里的歌遇到原专辑：允许归位', () => {
+  const history = album({ id: 'history', publishTime: HISTORY, type: '精选集' })
+  const thriller = album({ id: 'thriller', publishTime: THRILLER, type: '录音室版' })
+  // 原专辑更早 → 优先
+  assert.equal(preferredAlbum(thriller, history), true)
+  // 反过来不成立
+  assert.equal(preferredAlbum(history, thriller), false)
+})
+
+test('新专辑反而更"二手"时不归位（不动用户已整理的文件）', () => {
+  // 已有的是录音室原专辑，这次下的是精选集 —— 绝不能把原专辑的歌搬走
+  const original = album({ id: 'orig', publishTime: THRILLER, type: '录音室版' })
+  const best = album({ id: 'best', publishTime: HISTORY, type: '精选集' })
+  assert.equal(preferredAlbum(original, best), true, '原专辑更该拥有 → 应跳过，不搬文件')
+})
+
+test('两端信息不全时不动文件：类型判据的默认值是安全的', () => {
+  // 老记录没存类型 → albumTypeRank(null) 是中间档 → 不会被判成"二手"
+  assert.equal(albumTypeRank(null) >= 4, false, 'null 不该被判成精选/合辑档')
+  // 因此"theirsSecondary"为 false，归位条件不成立 → 不动
+})

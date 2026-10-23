@@ -965,7 +965,18 @@ const subscribeAdd: Command = {
     const { title, count } = await describeTarget(kind, target.id, signal)
     const sub = addSubscription({ kind, targetId: target.id, title, everyHours: every, quality })
     const result = await runSubscription(sub, { baselineOnly: values['download-existing'] !== true, signal, force: true })
-    return { data: { subscription: subView(findSubscription(sub.id)), preview: { tracks: count }, baseline: result.baseline, note: result.note, jobId: result.jobId } }
+    // `job` 与其它会起后台任务的命令保持同一形状（P4#7），
+    // `jobId` 是旧字段，留着不打断已有脚本
+    return {
+      data: {
+        subscription: subView(findSubscription(sub.id)),
+        preview: { tracks: count },
+        baseline: result.baseline,
+        note: result.note,
+        jobId: result.jobId,
+        ...(result.jobId ? { status: 'job_started', job: { id: result.jobId } } : {}),
+      },
+    }
   },
 }
 

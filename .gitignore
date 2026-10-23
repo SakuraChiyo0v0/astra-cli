@@ -33,3 +33,9 @@ qdy*.js
 # 路径拼错留下的目录（反斜杠丢了，Windows 绝对路径被当成单段目录名）。
 # 不删：另一个会话的代理测试可能还在用；但绝不能进仓库。
 *AppDataLocalTemp*/
+
+# 本机生成的命令树可视化产物（不是仓库内容）
+astra-命令树*.html
+astra-命令树*.svg
+astra-命令树*.png
+scripts/gen-tree.mjs

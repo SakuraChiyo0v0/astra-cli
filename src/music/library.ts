@@ -38,6 +38,8 @@ export interface LibraryTrack {
   albumId?: string | null
   /** 那张专辑的发行年份；老记录为 null。 */
   albumYear?: number | null
+  /** 那张专辑的类型（录音室版 / 精选集…）；老记录为 null。 */
+  albumType?: string | null
   createdAt: string
   /** 记录还在，但文件被删了 / 挪走了。 */
   missing: boolean
@@ -64,6 +66,7 @@ interface Row {
   source_id: string | null
   album_id: string | null
   album_year: number | null
+  album_type: string | null
   created_at: string
 }
 
@@ -98,6 +101,7 @@ function fromRow(row: Row): LibraryTrack {
     sourceId: row.source_id,
     albumId: row.album_id ?? null,
     albumYear: row.album_year ?? null,
+    albumType: row.album_type ?? null,
     createdAt: row.created_at,
     missing: !existsSync(row.file_path),
   }
@@ -152,9 +156,10 @@ export interface SaveEntry {
   hasCover?: boolean
   hasLyric?: boolean
   hasWordLyric?: boolean
-  /** 来自哪张专辑、那年发行的（P4#5）。 */
+  /** 来自哪张专辑、那年发行的、什么类型（P4#5/#6）。 */
   albumId?: string | null
   albumYear?: number | null
+  albumType?: string | null
 }
 
 export function saveTrack(entry: SaveEntry): void {
@@ -162,8 +167,8 @@ export function saveTrack(entry: SaveEntry): void {
     .prepare(
       `insert into tracks (platform, native_id, title, artists, album, duration_ms, file_path, format, quality, bytes, bps,
                            audio_sha256, source_id, created_at, sample_rate, bits_per_sample, channels, has_cover, has_lyric, has_word_lyric, fingerprint,
-                           album_id, album_year)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           album_id, album_year, album_type)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        on conflict (platform, native_id) do update set
          title = excluded.title, artists = excluded.artists, album = excluded.album, duration_ms = excluded.duration_ms,
          file_path = excluded.file_path, format = excluded.format, quality = excluded.quality, bytes = excluded.bytes,
@@ -171,7 +176,7 @@ export function saveTrack(entry: SaveEntry): void {
          sample_rate = excluded.sample_rate, bits_per_sample = excluded.bits_per_sample, channels = excluded.channels,
          has_cover = excluded.has_cover, has_lyric = excluded.has_lyric, has_word_lyric = excluded.has_word_lyric,
          fingerprint = excluded.fingerprint,
-         album_id = excluded.album_id, album_year = excluded.album_year`,
+         album_id = excluded.album_id, album_year = excluded.album_year, album_type = excluded.album_type`,
     )
     .run(
       entry.platform, entry.id, entry.title, JSON.stringify(entry.artists), entry.album, entry.durationMs, entry.path,
@@ -183,6 +188,7 @@ export function saveTrack(entry: SaveEntry): void {
       trackFingerprint(entry.title, entry.artists, entry.durationMs),
       entry.albumId ?? null,
       entry.albumYear ?? null,
+      entry.albumType ?? null,
     )
 }
 

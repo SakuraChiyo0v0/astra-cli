@@ -153,6 +153,9 @@ const MIGRATIONS: string[] = [
   // 判"哪张专辑更该拥有这首歌"需要年份和专辑类型，两者都是下载时就知道了。
   `alter table tracks add column album_id text`,
   `alter table tracks add column album_year integer`,
+  // 专辑类型（录音室版 / 精选集…）。判"精选要不要让位给原专辑"必须要它 ——
+  // 只看年份不够：同年出的重新混音版不该把原版挤走。
+  `alter table tracks add column album_type text`,
 ]
 
 export function db(): DatabaseSync {

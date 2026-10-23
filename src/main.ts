@@ -64,6 +64,9 @@ const help: Command = {
             + '（downloaded / already_have / ambiguous / job_started）；'
             + '后台任务的每项看 data.items[].status（downloaded / skipped / failed / queued / running）。',
           '  曲库里已有而跳过用 skipped；用 status == "downloaded" 过滤时记得把 skipped 也算成功',
+          // 起了后台任务的命令统一返回 data.job.id —— 写脚本时不用逐个 try 字段名（P4#7）
+          '会起后台任务的命令统一返回 data.job.id（`data.status: "job_started"`）；'
+            + '要等它跑完用 `astra job <data.job.id> --wait <秒>`。同步完成的看 data.status: "downloaded"',
         ],
         // 三个批量入口的分流只写在各自 help 里时，拿合集 URL 去喂 `bili bulk`
         // 要撞一次 BILI_BAD_TARGET 才知道该用 `bili audio`。放在组级说明里省那一轮。

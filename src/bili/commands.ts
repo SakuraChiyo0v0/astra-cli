@@ -1227,6 +1227,8 @@ const subRun: Command = {
           title: r.subscription.title,
           newCount: r.newCount,
           jobId: r.jobId,
+          // 与其它命令一致的形状（P4#7）；jobId 是旧字段，留着
+          ...(r.jobId ? { job: { id: r.jobId, total: r.newCount } } : {}),
           note: r.note,
           baseline: r.baseline,
         })),
