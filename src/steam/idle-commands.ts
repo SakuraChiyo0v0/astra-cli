@@ -27,6 +27,34 @@ import {
   type LoginState,
 } from './runtime.ts'
 import { homePath } from '../core/paths.ts'
+import { rmSync, writeFileSync } from 'node:fs'
+
+/**
+ * 「用户主动关掉」的标记文件。
+ *
+ * 探活定时任务会看到它就不再自动补挂 —— 否则用户 `steam down` 之后十分钟又被拉起来，
+ * 会以为见了鬼。`steam up` / `idle start` 会把这个标记删掉。
+ */
+function offMarker(): string {
+  return homePath('steam-idle.off')
+}
+
+function setOffMarker(on: boolean): void {
+  const file = offMarker()
+  if (on) {
+    try {
+      writeFileSync(file, new Date().toISOString() + '\n', 'utf8')
+    } catch {
+      // 写不了就算了，不影响主流程
+    }
+  } else {
+    try {
+      rmSync(file, { force: true })
+    } catch {
+      // 同上
+    }
+  }
+}
 
 /** 单账号同时「在玩」的上限，Steam 自己限制 32。 */
 const MAX_IDLE_GAMES = 32
@@ -502,6 +530,7 @@ const idleStart: Command = {
     }
 
     const appIDs = picked.map((game) => game.appId)
+    setOffMarker(false)
     initState('idle', {
       pid: 0,
       appIDs,
@@ -587,6 +616,7 @@ const idleStop: Command = {
     const wasAlive = pidAlive(state.pid)
     const killed = await terminate(state.pid)
     writeState('idle', { status: 'stopped', connectedAt: null })
+    setOffMarker(true)
     return { data: { stopped: true, wasAlive, pid: state.pid, exitClean: killed, games: state.games } }
   },
 }
@@ -610,6 +640,7 @@ const down: Command = {
   name: 'steam down',
   summary: '停止挂时长（`steam idle stop` 的简写）',
   usage: 'astra steam down',
+  notes: ['会写一个 steam-idle.off 标记，探活任务就不会自动补挂了；下次 `steam up` 自动清掉'],
   maxArgs: 0,
   async run(ctx) {
     return await idleStop.run(ctx)
