@@ -18,6 +18,15 @@ export interface SteamCredentials {
   apiKey: string | null
   /** 默认 SteamID64 —— 大多数命令不传 --user 时用它。 */
   steamId64: string | null
+  /**
+   * 客户端登录态（`astra steam login` 扫码拿到的 refreshToken）。
+   *
+   * 它等价于「这台机器能一直以你的身份登录 Steam」，所以只存本机、权限 600、
+   * 任何输出里都不回显（只给指纹）。挂时长必须靠它，Web API key 做不到。
+   */
+  refreshToken?: string | null
+  /** refreshToken 对应的账号名（登录时 Steam 告诉我们）。 */
+  accountName?: string | null
   savedAt: string
 }
 
@@ -28,7 +37,7 @@ function credentialsFile(): string {
 export function loadSteamCredentials(): SteamCredentials | null {
   try {
     const parsed = JSON.parse(readFileSync(credentialsFile(), 'utf8')) as SteamCredentials
-    if (!parsed.steamId64 && !parsed.apiKey) return null
+    if (!parsed.steamId64 && !parsed.apiKey && !parsed.refreshToken) return null
     return parsed
   } catch {
     return null
@@ -98,4 +107,23 @@ export function requireSteamId(credentials: SteamCredentials | null): string {
     })
   }
   return id
+}
+
+/** refreshToken 的指纹：用来判断「还是不是同一个登录态」，不泄露内容。 */
+export function refreshTokenDigest(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 8)
+}
+
+/**
+ * 取客户端登录态（refreshToken）。挂时长 / 任何需要「以你的身份在线」的操作都要它。
+ */
+export function requireRefreshToken(credentials: SteamCredentials | null): string {
+  const token = credentials?.refreshToken
+  if (!token) {
+    throw new AstraError('STEAM_NOT_LOGGED_IN', '还没有 Steam 客户端登录态', {
+      exitCode: 3,
+      hint: '先跑 `astra steam login` 扫码登录（只存 refreshToken，不存密码）',
+    })
+  }
+  return token
 }

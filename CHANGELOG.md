@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.13.0 — 2026-10-23
+
+**原生挂时长：`astra steam login` + `astra steam idle`，不再依赖 ASF 容器**
+
+- **新增**：`steam login` 扫码登录（steam-session，SteamClient 平台）。二维码 PNG 落到
+  `<ASTRA_HOME>/steam-qr.png` 并返回路径 + 原始 URL；命令只等二维码生成就返回，
+  扫码结果用 `steam login status` 跟。只存 refreshToken（600），**不存密码**。
+  二维码默认 10 分钟有效（`--timeout` 可调），登录成功时顺手把 SteamID64 存下来
+- **新增**：`steam login --user <账号> --password-stdin` —— 账号密码登录的兜底路径。
+  密码从**终端**读（不回显、不进 argv、不进 shell 历史、不落盘），需要 Steam Guard 时
+  同一窗口按提示输验证码；成功后同样只存 refreshToken
+- **新增**：`steam idle start <游戏...>` 起一个分离进程常驻，登录 CM → 在线 →
+  `gamesPlayed([appid])`，掉线 `autoRelogin` 自动重连并记 `reconnects`。
+  命令会等「真的上线」再返回（`--wait`，默认 30s）。`steam idle status` 读状态文件
+  （进程没了但状态还是 online → 报 `interrupted`），`steam idle stop` SIGTERM 收尾
+- **新增**：`steam library`（GetOwnedGames）按名字解析 AppID；纯数字当 AppID 直接挂；
+  名字匹配到多个**报错并列候选**，不猜。单账号最多 32 个游戏（Steam 限制）
+- **改（构建）**：单文件 bundle 现在能吃下 `steam-user`。它留了两个坑，都在 `scripts/build.mjs` 里处理：
+  ① `@doctormckay/stdlib` 在函数体里动态 `require('crypto')` → ESM 产物没有 require，
+  banner 里用 `createRequire` 补一个；② `@doctormckay/steam-crypto` 按 `__dirname` 读
+  `system.pem` → 用 esbuild 插件把这个 pem 内联成字符串。产物 8.6 MB，仍是单文件
+- **说明**：挂时长是**客户端会话**，同一账号在别处登录会把这边踢掉（ASF 也一样），
+  所以和 ASF 不能同时用；ASF 容器已停，配置保留，`docker start asf` 可随时回来
+- **不做**：挂卡（ASF 的核心逻辑，本轮明确不做）
+
 ## 0.12.25 — 2026-10-23
 
 **修并发迁移炸库（`duplicate column name`），并让代理配置可临时覆盖**
