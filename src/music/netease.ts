@@ -59,6 +59,13 @@ export interface AlbumInfo {
   publishTime: number | null
   size: number | null
   coverUrl: string | null
+  /**
+   * 专辑类型：`录音室版` / `精选集` / `现场版` / `原声带` / `EP` / `单曲`…
+   *
+   * 用途：同一首歌出现在多张专辑时，判断哪张才是"原专辑"（P4#5）。
+   * 网易云接口里有这个字段，之前没解析。
+   */
+  type: string | null
 }
 
 interface RawArtist { id?: number; name?: string }
@@ -185,7 +192,7 @@ export function albumArtistsFrom(album: { artist?: RawArtist; artists?: RawArtis
 
 /** 专辑元数据（公司、专辑歌手、发行时间），写标签用。 */
 export async function albumInfo(albumId: string, signal?: AbortSignal): Promise<{ album: AlbumInfo; tracks: Track[] }> {
-  const body = await get<CodeBody & { album?: { id: number; name: string; picUrl?: string; company?: string; publishTime?: number; size?: number; artists?: RawArtist[]; artist?: RawArtist }; songs?: RawSong[] }>(
+  const body = await get<CodeBody & { album?: { id: number; name: string; picUrl?: string; company?: string; publishTime?: number; size?: number; type?: string; artists?: RawArtist[]; artist?: RawArtist }; songs?: RawSong[] }>(
     `/api/v1/album/${encodeURIComponent(albumId)}`,
     '专辑',
     signal,
@@ -202,6 +209,7 @@ export async function albumInfo(albumId: string, signal?: AbortSignal): Promise<
       publishTime: a.publishTime && a.publishTime > 0 ? a.publishTime : null,
       size: a.size ?? null,
       coverUrl: https(a.picUrl),
+      type: a.type?.trim() || null,
     },
     tracks: (body.songs ?? []).map(toTrack),
   }

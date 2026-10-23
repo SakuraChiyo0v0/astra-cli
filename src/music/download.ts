@@ -23,7 +23,8 @@ import { audioPayload, writeTags, type TagData } from './tags.ts'
 import { renderTemplate, resolveInside } from './paths.ts'
 import { albumArtistsFor, isCompilation, primaryArtist } from './album-artist.ts'
 import { kugouWordLyric, toEnhancedLrc } from './kugou-lyric.ts'
-import { findTrack, findByFingerprint, saveTrack, trackFingerprint, type LibraryTrack } from './library.ts'
+import { findTrack, findByFingerprint, forgetTrack, saveTrack, trackFingerprint, type LibraryTrack } from './library.ts'
+import { preferredAlbum, type AlbumCandidate } from './album-priority.ts'
 
 export interface DownloadOptions {
   quality: Quality
@@ -194,19 +195,18 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
   const { quality, signal } = options
   // 先按 id 找，再按"标题 + 歌手 + 时长"指纹找。
   // 同一首歌换 id 出现（重发版 / 不同专辑 / 单曲与精选）很常见，只认 id 会重下一遍并覆盖同名文件。
+  //
+  // **但命中不等于就该跳过**（P4#5）：同一首歌可能同时在 Thriller(1982) 和
+  // HIStory(1995) 里。只在"已有那份的专辑更该拥有它"时才跳过；否则要把它
+  // 从精选集**搬**回原专辑 —— 否则并行下载时谁先下完谁占，等于随机。
   const byId = findTrack('wy', track.id)
   const hit = byId ?? findByFingerprint('wy', trackFingerprint(track.title, track.artists, track.durationMs))
-  if (hit && !hit.missing && !options.force) {
-    // 指纹命中但 id 不同：告诉调用方"这首其实已经有了"，路径指向已有文件
-    if (hit.id !== track.id) progress('music.dedup', { wanted: track.id, existing: hit.id, title: track.title })
-    return existingResult(hit, quality)
-  }
+  let existing = hit && !hit.missing && !options.force ? hit : null
 
   const warnings: string[] = []
-  const resolved = await resolveUrl(track, quality, signal)
-  if (resolved.downgraded) warnings.push(`请求 ${quality}，音源只给到 ${resolved.probe.quality}`)
 
-  // 专辑信息：专辑歌手 / 公司 / 曲目总数，写标签用；失败不影响下载
+  // 专辑信息：专辑歌手 / 公司 / 曲目总数，写标签用；失败不影响下载。
+  // 挪到取链之前是为了先做归属判断（P4#5）—— 判完要跳过的话就不必取链了。
   let album: AlbumInfo | null = null
   if (track.albumId) {
     const cache = options.albumCache
@@ -217,6 +217,52 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
     }
     album = await pending
   }
+
+  // 归属判断（P4#5）：库里已经有这首歌时，比一比"哪张专辑更该拥有它"。
+  //
+  // 判据是年份 / 专辑类型 / 曲目号，与**下载完成顺序无关**。
+  // 输了就跳过；赢了说明现在这张才是原专辑，已有那份该让位 ——
+  // 把它删掉后照常下载到本专辑目录（下面 `existing = null` 继续走）。
+  if (existing) {
+    const mine: AlbumCandidate = {
+      id: track.albumId ?? '',
+      name: track.album ?? '',
+      publishTime: track.publishTime ?? album?.publishTime ?? null,
+      type: album?.type ?? null,
+      trackNo: track.trackNo,
+    }
+    const theirs: AlbumCandidate = {
+      id: existing.albumId ?? '',
+      name: existing.album ?? '',
+      // 老记录没存年份，只能退回"不知道" —— 这时按类型/trackNo 比，
+      // 分不出来就保持现状（不因下载顺序翻转，这是底线）
+      publishTime: existing.albumYear ? new Date(`${existing.albumYear}-01-01`).getTime() : null,
+      type: null,
+      trackNo: null,
+    }
+    if (preferredAlbum(theirs, mine)) {
+      // 已有那份更该拥有 —— 正常跳过
+      if (existing.id !== track.id) progress('music.dedup', { wanted: track.id, existing: existing.id, title: track.title })
+      return existingResult(existing, quality)
+    }
+    // 现在这张更该拥有：把已有文件挪走，让这次下载落到正确位置
+    if (existing.id !== track.id || mine.id !== theirs.id) {
+      progress('music.reassign', {
+        title: track.title,
+        from: existing.album ?? '(未知专辑)',
+        to: track.album ?? '(未知专辑)',
+        fromYear: theirs.publishTime ? new Date(theirs.publishTime).getUTCFullYear() : null,
+        toYear: mine.publishTime ? new Date(mine.publishTime).getUTCFullYear() : null,
+      })
+    }
+    // 删掉旧记录与文件，让这次下载重新落盘到本专辑目录
+    await rm(existing.path, { force: true })
+    forgetTrack('wy', existing.id)
+    existing = null
+  }
+
+  const resolved = await resolveUrl(track, quality, signal)
+  if (resolved.downgraded) warnings.push(`请求 ${quality}，音源只给到 ${resolved.probe.quality}`)
 
   const root = musicRoot()
   const albumScope = { albumArtists: album?.artists ?? null, albumId: track.albumId }
@@ -380,6 +426,11 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       hasCover: cover !== null,
       hasLyric: lyricBody !== null,
       hasWordLyric: lineLyricFile !== null,
+      // 存下来给下次的归属判断用（P4#5）—— 不然每次都要再查一次专辑接口
+      albumId: track.albumId ?? null,
+      albumYear: (track.publishTime ?? album?.publishTime ?? null)
+        ? new Date((track.publishTime ?? album?.publishTime)! * 1000).getUTCFullYear()
+        : null,
     })
 
     return {

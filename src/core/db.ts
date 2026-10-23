@@ -149,6 +149,10 @@ const MIGRATIONS: string[] = [
   `alter table subscriptions add column seen_pages text not null default '{}'`,
   // 订阅音频模式的专辑名（TALB）。空 = 用 UP 名。
   `alter table subscriptions add column audio_album text`,
+  // 同曲多专辑的归属判据（P4#5）。存下来是为了**下次比较时不用再查一次 API**：
+  // 判"哪张专辑更该拥有这首歌"需要年份和专辑类型，两者都是下载时就知道了。
+  `alter table tracks add column album_id text`,
+  `alter table tracks add column album_year integer`,
 ]
 
 export function db(): DatabaseSync {

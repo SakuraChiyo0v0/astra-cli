@@ -134,10 +134,23 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
   {
     const sampleInfo = {
       bvid: 'BV1xx411c7mD',
-      title: '示例视频标题',
+      // 带《》：音频模板的 `{title}` 走 `songTitleOf`，取《》里的歌名。
+      // 写"示例视频标题"的话它会退回分 P 名，展开出"示例分P" ——
+      // 那会让人以为音频模板里也有 `{part}`（清单 P3#4f）
+      title: '示例视频标题《示例歌名》',
       owner: { mid: 0, name: '示例UP主' },
       pubdate: 0,
-      pages: [{ cid: 1, page: 1, part: '示例分P', duration: 0 }],
+      // 示例数据要让两条模板都展示得清楚：
+      // - 视频模板用 `{part}`，所以分 P 名要有个可辨认的值
+      // - 音频模板的 `{title}` 走 `songTitleOf`：标题里有《》就取歌名，
+      //   没有才退回分 P 名。这里故意给一个带《》的标题 ——
+      //   否则音频示例会显示"示例分P"，让人以为音频模板里也有 `{part}`
+      // 两个分 P：视频模板里的 `{part}` 才会展开出内容（单 P 时它是空的），
+      // 示例才看得出"分 P 名会进文件名"这件事
+      pages: [
+        { cid: 1, page: 1, part: '示例分P', duration: 0 },
+        { cid: 2, page: 2, part: '第二P', duration: 0 },
+      ],
     } as never
     const samplePage = { cid: 1, page: 1, part: '示例分P', duration: 0 }
     const audioDir = getConfig('bili.audio-dir')
