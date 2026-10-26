@@ -22,15 +22,26 @@ import {
   loadCookie,
   pageUrls,
   ranking,
+  resolveSearch,
   saveCookie,
   searchHits,
-  searchWorks,
+  searchPage,
   illustStats,
   userWorks,
   type RankMode,
 } from './api.ts'
 
 const RANK_MODES: RankMode[] = ['daily', 'weekly', 'monthly', 'rookie', 'original', 'male', 'female']
+
+/** 作品分类的本地过滤表。pixiv ajax 的 `type` 参数被忽略，只能按 `illustType` 自己筛。 */
+const TYPE_FILTER: Record<string, number[] | null> = {
+  all: null,
+  illust: [0],
+  manga: [1],
+  ugoira: [2],
+}
+
+const TYPE_LABEL: Record<number, string> = { 0: '插画', 1: '漫画', 2: '动图' }
 
 function num(value: unknown, fallback: number, min: number, max: number, label: string): number {
   if (value === undefined) return fallback
@@ -420,21 +431,67 @@ const subRun: Command = {
 
 const search: Command = {
   name: 'pixiv search',
-  summary: '按关键词搜作品（按时间倒序）',
-  usage: 'astra pixiv search <关键词> [--page 1] [--limit 20]',
+  summary: '按关键词搜作品（按时间倒序；查不到会自动放宽 tag 匹配）',
+  usage: 'astra pixiv search <关键词> [--page 1] [--limit 20] [--type all]',
+  notes: [
+    'pixiv 的 tag 是**全词精确匹配**，角色全名常常查不到：绝区零凯撒的真实 tag 是 `キング・シーザー`，搜 `カエサル・キング` 是 0 条。',
+    '所以查不到会自动放宽：精确 tag → 部分 tag → 标题/说明 → 按 ・/空格 拆词逐个查。返回里的 `matchedBy` 告诉你最后用了哪种。',
+    '`--type` 是**本地过滤**：pixiv ajax 的 `type` 参数实测被忽略（`type=illust` 和 `type=manga` 返回同一批数据），只能按 `illustType` 自己筛。',
+    '`relatedTags` 是 pixiv 给出的真正标签，找别名/同义词看这个字段。',
+  ],
   options: {
     page: { type: 'string', description: '页码，默认 1', valueName: 'n' },
     limit: { type: 'string', description: '最多返回多少条，默认 20', valueName: 'n' },
+    type: { type: 'string', description: '分类：all / illust / manga / ugoira（本地过滤），默认 all', valueName: 't' },
   },
   minArgs: 1,
   async run({ positionals, values }) {
     const keyword = positionals.join(' ')
     const page = num(values.page, 1, 1, 100, '--page')
     const limit = num(values.limit, 20, 1, 100, '--limit')
-    const ids = (await searchWorks(keyword, page)).slice(0, limit)
+    const type = typeof values.type === 'string' ? values.type.trim() : 'all'
+    if (!(type in TYPE_FILTER)) throw invalidInput('--type 只能是 all / illust / manga / ugoira')
+    const want = TYPE_FILTER[type]
+
+    const res = await resolveSearch(keyword, page)
+    // `--type` 是本地过滤，单页可能一条都不剩（凯撒的 manga 就一页 0 条），
+    // 所以按需再往后多翻几页，凑够 limit 或翻不动为止。
+    const hits = [...res.hits]
+    const seen = new Set(hits.map((h) => h.id))
+    if (want && hits.filter((h) => want.includes(h.illustType)).length < limit) {
+      for (let p = page + 1; p <= page + 4; p += 1) {
+        let more
+        try {
+          more = (await searchPage(res.matchedKeyword, p, res.sMode)).hits
+        } catch {
+          break
+        }
+        if (!more.length) break
+        for (const h of more) {
+          if (seen.has(h.id)) continue
+          seen.add(h.id)
+          hits.push(h)
+        }
+        if (hits.filter((h) => want.includes(h.illustType)).length >= limit) break
+      }
+    }
+    const picked = (want ? hits.filter((h) => want.includes(h.illustType)) : hits).slice(0, limit)
     return {
-      data: { keyword, page, count: ids.length, illustIds: ids },
-      table: { headers: ['#', 'illustId'], rows: ids.map((id, i) => [i + 1, id]) },
+      data: {
+        keyword,
+        page,
+        type,
+        matchedKeyword: res.matchedKeyword,
+        matchedBy: res.matchedBy,
+        total: res.total,
+        relatedTags: res.relatedTags,
+        count: picked.length,
+        illustIds: picked.map((h) => h.id),
+      },
+      table: {
+        headers: ['#', 'illustId', '类型'],
+        rows: picked.map((h, i) => [i + 1, h.id, TYPE_LABEL[h.illustType] ?? String(h.illustType)]),
+      },
     }
   },
 }
@@ -450,30 +507,63 @@ const top: Command = {
     '只覆盖最近的作品——老作品收藏再高也不会出现在结果里，这是和新着順共用同一个候选池的必然结果。',
   ],
   options: {
-    pages: { type: 'string', description: '拉最近几页（每页 60），默认 3', valueName: 'n' },
+    pages: { type: 'string', description: '拉最近几页（每页 60），默认 3；要全量就写 lastPage 的数（几十页）', valueName: 'n' },
+    also: { type: 'string', description: '额外关键词，逗号分隔，合并进同一个候选池再排序（如 "あめちゃん,ニディガ"）', valueName: 'kw' },
     limit: { type: 'string', description: '返回条数，默认 20', valueName: 'n' },
+    type: { type: 'string', description: '分类：all / illust / manga / ugoira（本地过滤），默认 all', valueName: 't' },
     r18: { type: 'boolean', description: '包含 R-18 作品（默认过滤掉）' },
   },
   minArgs: 1,
   async run({ positionals, values }) {
     const keyword = positionals.join(' ')
-    const pages = num(values.pages, 3, 1, 20, '--pages')
+    const pages = num(values.pages, 3, 1, 200, '--pages')
     const limit = num(values.limit, 20, 1, 100, '--limit')
 
-    const hits: { id: number; title: string; userName: string; userId: number; pageCount: number; xRestrict: number }[] = []
+    const keywords = [keyword, ...(typeof values.also === 'string'
+      ? values.also.split(',').map((k) => k.trim()).filter(Boolean)
+      : [])]
+    const type = typeof values.type === 'string' ? values.type.trim() : 'all'
+    if (!(type in TYPE_FILTER)) throw invalidInput('--type 只能是 all / illust / manga / ugoira')
+    const want = TYPE_FILTER[type]
+
+    const hits: Awaited<ReturnType<typeof searchHits>> = []
     const seen = new Set<number>()
-    for (let page = 1; page <= pages; page += 1) {
-      for (const hit of await searchHits(keyword, page)) {
-        if (seen.has(hit.id)) continue
-        seen.add(hit.id)
-        hits.push(hit)
+    const matched: { keyword: string; matchedKeyword: string; matchedBy: string }[] = []
+    const relatedTags: string[] = []
+    for (const kw of keywords) {
+      // 第一页先按回退顺序解析出真正有结果的关键词，后面几页沿用同一组（词, 匹配模式），
+      // 免得翻到第 3 页又换回精确 tag 直接断流。
+      let first
+      try {
+        first = await resolveSearch(kw, 1)
+      } catch {
+        continue
+      }
+      matched.push({ keyword: kw, matchedKeyword: first.matchedKeyword, matchedBy: first.matchedBy })
+      for (const t of first.relatedTags) if (!relatedTags.includes(t)) relatedTags.push(t)
+      let batch = first.hits
+      for (let page = 1; page <= pages; page += 1) {
+        if (page > 1) {
+          try {
+            batch = (await searchPage(first.matchedKeyword, page, first.sMode)).hits
+          } catch {
+            break
+          }
+        }
+        if (!batch.length) break
+        for (const hit of batch) {
+          if (seen.has(hit.id)) continue
+          seen.add(hit.id)
+          hits.push(hit)
+        }
       }
     }
-    const pool = values.r18 === true ? hits : hits.filter((h) => h.xRestrict === 0)
+    const typed = want ? hits.filter((h) => want.includes(h.illustType)) : hits
+    const pool = values.r18 === true ? typed : typed.filter((h) => h.xRestrict === 0)
 
     // 分批并发取收藏数，避免一次打 180 个请求被限流
     const stats = new Map<number, number>()
-    const batch = 6
+    const batch = 12
     for (let i = 0; i < pool.length; i += batch) {
       const chunk = pool.slice(i, i + batch)
       const results = await Promise.all(chunk.map(async (h) => {
@@ -494,6 +584,10 @@ const top: Command = {
     return {
       data: {
         keyword,
+        keywords,
+        type,
+        matched,
+        relatedTags,
         scanned: pool.length,
         pages,
         count: ranked.length,

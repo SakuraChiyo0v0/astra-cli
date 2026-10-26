@@ -198,22 +198,49 @@ export interface SearchHit {
   userId: number
   pageCount: number
   xRestrict: number
+  /** 0=插画 1=漫画 2=动图。pixiv 的 `type` 参数在 ajax 搜索里被忽略（实测
+   *  `type=illust` 和 `type=manga` 返回完全相同的数据），所以分类只能拿这个字段本地过滤。 */
+  illustType: number
 }
 
-export async function searchHits(keyword: string, page = 1): Promise<SearchHit[]> {
+/** pixiv 的 tag 匹配方式：`s_tag_full` 完全一致 / `s_tag` 部分一致 / `s_tc` 标题与说明。 */
+export type SearchMode = 's_tag_full' | 's_tag' | 's_tc'
+
+export interface SearchPage {
+  hits: SearchHit[]
+  total: number
+  /** 这个关键词在 pixiv 上真正被用的标签（别名的主要来源，如 绝区零 凯撒 → キング・シーザー）。 */
+  relatedTags: string[]
+}
+
+interface RawSearch {
+  illustManga?: {
+    data?: {
+      id?: string
+      title?: string
+      userName?: string
+      userId?: string
+      pageCount?: number
+      xRestrict?: number
+      illustType?: number
+    }[]
+    total?: number
+  }
+  relatedTags?: (string | { tag?: string })[]
+}
+
+export async function searchPage(keyword: string, page: number, sMode: SearchMode): Promise<SearchPage> {
   const q = new URLSearchParams({
     word: keyword,
     order: 'date_d',
     mode: 'all',
     p: String(page),
-    s_mode: 's_tag_full',
+    s_mode: sMode,
     type: 'all',
     lang: 'zh',
   })
-  const body = await ajax<{
-    illustManga?: { data?: { id?: string; title?: string; userName?: string; userId?: string; pageCount?: number; xRestrict?: number }[] }
-  }>(`/ajax/search/artworks/${encodeURIComponent(keyword)}?${q.toString()}`)
-  return (body.illustManga?.data ?? [])
+  const body = await ajax<RawSearch>(`/ajax/search/artworks/${encodeURIComponent(keyword)}?${q.toString()}`)
+  const hits = (body.illustManga?.data ?? [])
     .map((d) => ({
       id: Number(d.id),
       title: d.title ?? '',
@@ -221,24 +248,88 @@ export async function searchHits(keyword: string, page = 1): Promise<SearchHit[]
       userId: Number(d.userId ?? 0),
       pageCount: d.pageCount ?? 1,
       xRestrict: d.xRestrict ?? 0,
+      illustType: d.illustType ?? 0,
     }))
     .filter((d) => Number.isFinite(d.id))
+  const relatedTags = (body.relatedTags ?? [])
+    .map((t) => (typeof t === 'string' ? t : (t.tag ?? '')))
+    .filter(Boolean)
+  return { hits, total: body.illustManga?.total ?? hits.length, relatedTags }
+}
+
+export async function searchHits(keyword: string, page = 1): Promise<SearchHit[]> {
+  return (await searchPage(keyword, page, 's_tag_full')).hits
 }
 
 export async function searchWorks(keyword: string, page = 1): Promise<number[]> {
-  const q = new URLSearchParams({
-    word: keyword,
-    order: 'date_d',
-    mode: 'all',
-    p: String(page),
-    s_mode: 's_tag_full',
-    type: 'all',
-    lang: 'zh',
-  })
-  const body = await ajax<{ illustManga?: { data?: { id?: string }[] } }>(
-    `/ajax/search/artworks/${encodeURIComponent(keyword)}?${q.toString()}`,
-  )
-  return (body.illustManga?.data ?? []).map((d) => Number(d.id)).filter((n) => Number.isFinite(n))
+  return (await searchHits(keyword, page)).map((h) => h.id)
+}
+
+/** 把关键词拆成候选片段：`カエサル・キング` → `['カエサル','キング']`。
+ *  单片段返回空数组（没什么可拆的，别让回退退化成重查自己）。 */
+export function searchTokens(keyword: string): string[] {
+  const parts = keyword
+    .split(/[・･·/／,，、+＋\s]+/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const uniq = [...new Set(parts)]
+  return uniq.length > 1 ? uniq : []
+}
+
+export type MatchKind = 'tag' | 'tag_partial' | 'caption' | 'token'
+
+export interface SearchAttempt {
+  keyword: string
+  sMode: SearchMode
+  matchedBy: MatchKind
+}
+
+/** 搜索回退顺序（纯函数，方便测）：精确 tag → 部分 tag → 标题/说明 → 分词逐个查。
+ *
+ *  为什么要回退：pixiv 的角色 tag 常常不是角色全名（绝区零凯撒是 `キング・シーザー`，
+ *  不是 `カエサル・キング`），`s_tag_full` 是全词精确匹配，写错一个字就是 0 条。
+ *  实测 `カエサル・キング` 在 pixiv 上 total=0，而 `绝区零 凯撒` 有 44 条。 */
+export function searchPlan(keyword: string, page = 1): SearchAttempt[] {
+  const plan: SearchAttempt[] = [
+    { keyword, sMode: 's_tag_full', matchedBy: 'tag' },
+    { keyword, sMode: 's_tag', matchedBy: 'tag_partial' },
+    { keyword, sMode: 's_tc', matchedBy: 'caption' },
+  ]
+  // 分词只在第一页有意义：翻页时换关键词会让页数语义彻底乱掉。
+  if (page <= 1) {
+    for (const t of searchTokens(keyword)) plan.push({ keyword: t, sMode: 's_tag_full', matchedBy: 'token' })
+  }
+  return plan
+}
+
+export interface ResolvedSearch extends SearchPage {
+  /** 用户输入的原关键词。 */
+  keyword: string
+  /** 真正命中结果的词（回退时可能和 keyword 不同）。 */
+  matchedKeyword: string
+  matchedBy: MatchKind
+  sMode: SearchMode
+}
+
+/** 按 `searchPlan` 逐级放宽，返回第一个有结果的尝试；全空则回最后一次的结果。 */
+export async function resolveSearch(keyword: string, page = 1): Promise<ResolvedSearch> {
+  let last: { a: SearchAttempt; r: SearchPage } | null = null
+  for (const a of searchPlan(keyword, page)) {
+    let r: SearchPage
+    try {
+      r = await searchPage(a.keyword, page, a.sMode)
+    } catch {
+      continue
+    }
+    last = { a, r }
+    if (r.hits.length) {
+      return { ...r, keyword, matchedKeyword: a.keyword, matchedBy: a.matchedBy, sMode: a.sMode }
+    }
+  }
+  if (last) {
+    return { ...last.r, keyword, matchedKeyword: last.a.keyword, matchedBy: last.a.matchedBy, sMode: last.a.sMode }
+  }
+  return { hits: [], total: 0, relatedTags: [], keyword, matchedKeyword: keyword, matchedBy: 'tag', sMode: 's_tag_full' }
 }
 
 /** 多页作品的原图地址要把 `_p0` 换成对应页号。 */

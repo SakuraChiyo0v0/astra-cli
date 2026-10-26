@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.18.0 — 2026-10-26
+
+**`pixiv search`：查不到自动放宽 tag 匹配 + `--type` 分类 + `relatedTags`**
+
+- **新增回退**：精确 tag → 部分 tag（`s_tag`）→ 标题/说明（`s_tc`）→ 按 `・`/空格/斜杠拆词逐个查。
+  返回里带 `matchedBy`（`tag` / `tag_partial` / `caption` / `token`）和 `matchedKeyword`，
+  放宽了会明说，不静默
+- **为什么需要**：pixiv 的 tag 是全词精确匹配，而角色 tag 经常不是角色全名。
+  实测 `カエサル・キング`（绝区零凯撒的全名）**total=0**，真实 tag 是 `キング・シーザー`/`CaesarKing`，
+  搜 `绝区零 凯撒` 有 44 条。以前这种情况只会返回空列表，不报错也不提示
+- **新增 `--type all|illust|manga|ugoira`**（`search` 和 `top` 都支持）：**本地过滤**。
+  pixiv ajax 的 `type` 参数实测被忽略 —— `type=illust` 和 `type=manga` 返回完全相同的数据
+  （同一批 id，illustType 同时包含 0 和 1），所以只能按结果里的 `illustType` 自己筛
+- **新增 `relatedTags`**：pixiv 返回的真实标签列表，找别名/同义词看这里
+- **`pixiv top`** 同样走回退，且第一页解析出「真正命中的词 + 匹配模式」后，后续翻页沿用同一组，
+  不会翻到第 3 页因为换回精确 tag 而断流
+- **翻页不做分词回退**：`--page 2` 之后只试原词的三种匹配模式，避免换词导致页数语义错乱
+
 ## 0.17.0 — 2026-10-26
 
 **`pixiv top`：按收藏数看热门（绕开会员的「人気順」）**
