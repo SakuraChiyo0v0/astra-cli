@@ -251,16 +251,18 @@ const rank: Command = {
 const user: Command = {
   name: 'pixiv user',
   summary: '看画师作品 id 列表；加 --pull 直接批量下载',
-  usage: 'astra pixiv user <userId> [--limit 20] [--pull] [--out 目录] [--r18] [--dry]',
+  usage: 'astra pixiv user <userId> [--limit 20] [--pull] [--out 目录] [--quality regular] [--r18] [--dry]',
   notes: [
     '不带 --pull 只列 id（新的在前）；带 --pull 会把这一批全下下来，落盘规则与 `pixiv pull` 一致。',
     '目录优先 `--out`，其次 `pixiv.dir`；R-18 默认跳过。',
+    '`--quality regular` 取 1200px（原图一张 4000×6000 实测要 138s，1200px 只要 20s）；批量预览建议开。',
   ],
   options: {
     limit: { type: 'string', description: '最多处理多少个作品，默认 20，--pull 时可放大到 500', valueName: 'n' },
     pull: { type: 'boolean', description: '下载这些作品（不加只列 id）' },
     out: { type: 'string', description: '落盘目录（覆盖 pixiv.dir）', valueName: 'dir' },
     pages: { type: 'string', description: '每个作品最多下几页（只要首图写 1）', valueName: 'n' },
+    quality: { type: 'string', description: 'original（默认，原图）/ regular（1200px，快很多）', valueName: 'q' },
     r18: { type: 'boolean', description: '允许下载 R-18 作品（默认跳过）' },
     dry: { type: 'boolean', description: '配合 --pull：只打印会写哪些文件' },
   },
@@ -283,6 +285,7 @@ const user: Command = {
       r18: values.r18 === true,
       dry: values.dry === true,
       limit,
+      quality: values.quality === 'regular' ? 'regular' : 'original',
       ...(values.pages ? { pages: num(values.pages, 0, 1, 100, '--pages') } : {}),
     })
     return {
@@ -483,6 +486,7 @@ const search: Command = {
         type,
         matchedKeyword: res.matchedKeyword,
         matchedBy: res.matchedBy,
+        cookieStale: res.cookieStale,
         total: res.total,
         relatedTags: res.relatedTags,
         count: picked.length,
@@ -530,6 +534,7 @@ const top: Command = {
     const seen = new Set<number>()
     const matched: { keyword: string; matchedKeyword: string; matchedBy: string }[] = []
     const relatedTags: string[] = []
+    let cookieStale = false
     for (const kw of keywords) {
       // 第一页先按回退顺序解析出真正有结果的关键词，后面几页沿用同一组（词, 匹配模式），
       // 免得翻到第 3 页又换回精确 tag 直接断流。
@@ -540,6 +545,7 @@ const top: Command = {
         continue
       }
       matched.push({ keyword: kw, matchedKeyword: first.matchedKeyword, matchedBy: first.matchedBy })
+      if (first.cookieStale) cookieStale = true
       for (const t of first.relatedTags) if (!relatedTags.includes(t)) relatedTags.push(t)
       let batch = first.hits
       for (let page = 1; page <= pages; page += 1) {
@@ -563,7 +569,7 @@ const top: Command = {
 
     // 分批并发取收藏数，避免一次打 180 个请求被限流
     const stats = new Map<number, number>()
-    const batch = 12
+    const batch = 24
     for (let i = 0; i < pool.length; i += batch) {
       const chunk = pool.slice(i, i + batch)
       const results = await Promise.all(chunk.map(async (h) => {
@@ -588,6 +594,7 @@ const top: Command = {
         type,
         matched,
         relatedTags,
+        cookieStale,
         scanned: pool.length,
         pages,
         count: ranked.length,
@@ -681,6 +688,48 @@ const cookieSet: Command = {
   },
 }
 
+const cookieCheck: Command = {
+  name: 'pixiv cookie check',
+  summary: '验证存的 cookie 还能不能用（过期会让 pixiv 静默返回空结果）',
+  usage: 'astra pixiv cookie check',
+  notes: [
+    'pixiv 对失效的 PHPSESSID **不报错**，而是返回 HTTP 200 + 空结果，看起来就像「这个词查不到」。',
+    '这条命令用一个固定关键词分别带 cookie / 不带 cookie 各搜一次，带 cookie 0 条而不带有条 → cookie 过期。',
+  ],
+  maxArgs: 0,
+  async run() {
+    const raw = loadCookie()
+    if (!raw) return { data: { configured: false, valid: null, hint: '没存 cookie，匿名可用' } }
+    const probe = 'オリジナル'
+    // pixiv 突发后会返回 HTTP 200 + 空结果，和「cookie 失效」表现一样，
+    // 所以判定「失效」必须复测一次，别被限流骗了（实测踩过）。
+    const probeOnce = async (): Promise<'valid' | 'stale' | 'unknown'> => {
+      const withCookie = await searchPage(probe, 1, 's_tag_full', false)
+      if (withCookie.hits.length) return 'valid'
+      const anonymous = await searchPage(probe, 1, 's_tag_full', true)
+      return anonymous.hits.length ? 'stale' : 'unknown'
+    }
+    let verdict = await probeOnce()
+    if (verdict === 'stale') {
+      await new Promise((r) => setTimeout(r, 3000))
+      verdict = await probeOnce()
+    }
+    return {
+      data: {
+        configured: true,
+        valid: verdict === 'valid' ? true : verdict === 'stale' ? false : null,
+        probed: probe,
+        hint:
+          verdict === 'valid'
+            ? 'cookie 可用'
+            : verdict === 'stale'
+              ? 'cookie 已失效，建议 `pixiv cookie clear` 或重新 set'
+              : '带 cookie 和匿名都搜不到，可能是限流或代理问题，不能断定 cookie 失效',
+      },
+    }
+  },
+}
+
 const cookieShow: Command = {
   name: 'pixiv cookie show',
   summary: '看 cookie 状态（不回显值）',
@@ -705,5 +754,5 @@ const cookieClear: Command = {
 export const pixivCommands: Command[] = [
   info, rank, top, user, search, pull,
   subAdd, subRemove, subList, subRun,
-  cookieSet, cookieShow, cookieClear,
+  cookieSet, cookieShow, cookieCheck, cookieClear,
 ]

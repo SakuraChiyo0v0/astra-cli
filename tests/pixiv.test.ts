@@ -85,6 +85,7 @@ test('命令都登记上了，且名字以 pixiv 开头', () => {
     'pixiv sub run',
     'pixiv cookie set',
     'pixiv cookie show',
+    'pixiv cookie check',
     'pixiv cookie clear',
   ])
   for (const c of pixivCommands) {

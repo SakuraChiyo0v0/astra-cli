@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.18.1 — 2026-10-26
+
+**pixiv：提速 + 「静默空结果」防护**
+
+- **`pixiv top` 收藏数并发 12 → 24**：同一命令（`--pages 2`）实测 11.7s → 3.6–6.5s。
+  实测 **48 会翻车**：突发之后 pixiv 返回 HTTP 200 + 空结果（`total:0`），看起来像「这个词没有作品」
+- **防护静默空结果**：带 cookie 搜索全空时，自动去掉 cookie 再搜一轮；命中就返回匿名结果并标
+  `cookieStale: true`。`userWorks` 同样处理（否则订阅会永远「没有新作品」，一声不响）
+- **新增 `pixiv cookie check`**：用固定关键词分别带/不带 cookie 各搜一次，
+  带 cookie 0 条而匿名有条 → cookie 失效；两边都是 0 → 判不了（网络/限流），不误报
+- **`pixiv user --pull` 支持 `--quality regular`**：之前只有 `pixiv pull` 有，批量下原图一张 138s，
+  20 张能跑 7 分钟还超时
+- **`pixiv search` / `pixiv top` 输出加 `cookieStale`**
+
+### 慢在哪（实测数据，留档）
+
+| 环节 | 耗时 |
+|---|---|
+| 进程启动 | 0.18s |
+| 单个 pixiv ajax 请求（走 mihomo 代理） | 0.38s（TLS 0.15 + TTFB 0.31） |
+| `pixiv search`（1 次请求） | 1.1s |
+| `pixiv top --pages 1`（60 候选 → 60 次详情） | 3.5s（batch=12）→ 1.8s（batch=24） |
+| `pixiv pull` 原图 4000×6000 | 138s/张 |
+| `pixiv pull --quality regular` | 20s/张 |
+
+结论：慢的不是 CLI 本身，是 **`top` 的请求数 = 页数 × 60**（每个作品要单独查 `bookmarkCount`）
+和 **原图下载**。前者靠并发（已到 24，再高触发限流），后者只能靠 `--quality regular`。
+
 ## 0.18.0 — 2026-10-26
 
 **`pixiv search`：查不到自动放宽 tag 匹配 + `--type` 分类 + `relatedTags`**

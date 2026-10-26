@@ -65,8 +65,8 @@ export function cookieDigest(raw: string): { has: boolean; keys: number } {
   return { has: keys.includes('PHPSESSID'), keys: keys.length }
 }
 
-function headers(extra: Record<string, string> = {}): Record<string, string> {
-  const cookie = loadCookie()
+function headers(extra: Record<string, string> = {}, noCookie = false): Record<string, string> {
+  const cookie = noCookie ? '' : loadCookie()
   return {
     'User-Agent': UA,
     Referer: `${BASE}/`,
@@ -76,9 +76,9 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
   }
 }
 
-async function ajax<T>(path: string): Promise<T> {
+async function ajax<T>(path: string, opts: { noCookie?: boolean } = {}): Promise<T> {
   const raw = await httpJson<{ error: boolean; message?: string; body: T }>(`${BASE}${path}`, {
-    headers: headers(),
+    headers: headers({}, opts.noCookie === true),
     timeoutMs: 20_000,
   })
   if (raw.error) {
@@ -146,10 +146,20 @@ export async function illustDetail(illustId: number): Promise<IllustDetail> {
   }
 }
 
-/** 画师全部作品 id（插画 + 漫画），按 id 倒序（新的在前）。 */
+/** 画师全部作品 id（插画 + 漫画），按 id 倒序（新的在前）。
+ *
+ *  **过期 cookie 会让 pixiv 静默返回空列表**（不报错、HTTP 200），订阅会因此永远「没有新作品」。
+ *  所以带 cookie 拿到空结果时，无 cookie 重试一次——匿名能看的部分照样能拿到。 */
 export async function userWorks(userId: number): Promise<number[]> {
+  const ids = await userWorksOnce(userId, false)
+  if (ids.length || !loadCookie()) return ids
+  return userWorksOnce(userId, true)
+}
+
+async function userWorksOnce(userId: number, noCookie: boolean): Promise<number[]> {
   const body = await ajax<{ illusts?: Record<string, unknown>; manga?: Record<string, unknown> }>(
     `/ajax/user/${userId}/profile/all`,
+    { noCookie },
   )
   const ids = [...Object.keys(body.illusts ?? {}), ...Object.keys(body.manga ?? {})]
   return [...new Set(ids.map(Number).filter((n) => Number.isFinite(n)))].sort((a, b) => b - a)
@@ -229,7 +239,7 @@ interface RawSearch {
   relatedTags?: (string | { tag?: string })[]
 }
 
-export async function searchPage(keyword: string, page: number, sMode: SearchMode): Promise<SearchPage> {
+export async function searchPage(keyword: string, page: number, sMode: SearchMode, noCookie = false): Promise<SearchPage> {
   const q = new URLSearchParams({
     word: keyword,
     order: 'date_d',
@@ -239,7 +249,7 @@ export async function searchPage(keyword: string, page: number, sMode: SearchMod
     type: 'all',
     lang: 'zh',
   })
-  const body = await ajax<RawSearch>(`/ajax/search/artworks/${encodeURIComponent(keyword)}?${q.toString()}`)
+  const body = await ajax<RawSearch>(`/ajax/search/artworks/${encodeURIComponent(keyword)}?${q.toString()}`, { noCookie })
   const hits = (body.illustManga?.data ?? [])
     .map((d) => ({
       id: Number(d.id),
@@ -309,27 +319,73 @@ export interface ResolvedSearch extends SearchPage {
   matchedKeyword: string
   matchedBy: MatchKind
   sMode: SearchMode
+  /** true = 带 cookie 全空、去掉 cookie 才搜到，说明存的 cookie 已过期。 */
+  cookieStale: boolean
 }
 
-/** 按 `searchPlan` 逐级放宽，返回第一个有结果的尝试；全空则回最后一次的结果。 */
-export async function resolveSearch(keyword: string, page = 1): Promise<ResolvedSearch> {
+async function runPlan(
+  keyword: string,
+  page: number,
+  noCookie: boolean,
+): Promise<{ r: SearchPage; a: SearchAttempt } | null> {
   let last: { a: SearchAttempt; r: SearchPage } | null = null
   for (const a of searchPlan(keyword, page)) {
     let r: SearchPage
     try {
-      r = await searchPage(a.keyword, page, a.sMode)
+      r = await searchPage(a.keyword, page, a.sMode, noCookie)
     } catch {
       continue
     }
     last = { a, r }
-    if (r.hits.length) {
-      return { ...r, keyword, matchedKeyword: a.keyword, matchedBy: a.matchedBy, sMode: a.sMode }
+    if (r.hits.length) return { r, a }
+  }
+  return last
+}
+
+/** 按 `searchPlan` 逐级放宽，返回第一个有结果的尝试；全空则回最后一次的结果。
+ *
+ *  **过期 cookie 是最大的坑**：pixiv 对失效的 `PHPSESSID` 不报错，而是静默返回空结果
+ *  （HTTP 200 + `total:0`）。表现就像「这个词查不到」，还会触发一整套回退重试。
+ *  所以带 cookie 全空时，无 cookie 再来一轮，命中了就用匿名结果并标 `cookieStale`。 */
+export async function resolveSearch(keyword: string, page = 1): Promise<ResolvedSearch> {
+  const withCookie = await runPlan(keyword, page, false)
+  if (withCookie?.r.hits.length || !loadCookie()) {
+    const hit = withCookie
+    if (!hit) {
+      return { hits: [], total: 0, relatedTags: [], keyword, matchedKeyword: keyword, matchedBy: 'tag', sMode: 's_tag_full', cookieStale: false }
+    }
+    return {
+      ...hit.r,
+      keyword,
+      matchedKeyword: hit.a.keyword,
+      matchedBy: hit.a.matchedBy,
+      sMode: hit.a.sMode,
+      cookieStale: false,
     }
   }
-  if (last) {
-    return { ...last.r, keyword, matchedKeyword: last.a.keyword, matchedBy: last.a.matchedBy, sMode: last.a.sMode }
+  const anonymous = await runPlan(keyword, page, true)
+  if (anonymous?.r.hits.length) {
+    return {
+      ...anonymous.r,
+      keyword,
+      matchedKeyword: anonymous.a.keyword,
+      matchedBy: anonymous.a.matchedBy,
+      sMode: anonymous.a.sMode,
+      cookieStale: true,
+    }
   }
-  return { hits: [], total: 0, relatedTags: [], keyword, matchedKeyword: keyword, matchedBy: 'tag', sMode: 's_tag_full' }
+  const fallback = anonymous ?? withCookie
+  if (!fallback) {
+    return { hits: [], total: 0, relatedTags: [], keyword, matchedKeyword: keyword, matchedBy: 'tag', sMode: 's_tag_full', cookieStale: false }
+  }
+  return {
+    ...fallback.r,
+    keyword,
+    matchedKeyword: fallback.a.keyword,
+    matchedBy: fallback.a.matchedBy,
+    sMode: fallback.a.sMode,
+    cookieStale: false,
+  }
 }
 
 /** 多页作品的原图地址要把 `_p0` 换成对应页号。 */
