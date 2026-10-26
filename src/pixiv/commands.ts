@@ -61,6 +61,8 @@ interface PullOptions {
   r18: boolean
   dry: boolean
   limit?: number
+  /** 每个作品最多下多少页；undefined = 全部。日报只要首图时传 1。 */
+  pages?: number
 }
 
 interface PullSummary {
@@ -95,7 +97,8 @@ async function pullWorks(ids: number[], opts: PullOptions): Promise<PullSummary>
       continue
     }
     out.works += 1
-    const pages = pageUrls(detail)
+    const allPages = pageUrls(detail)
+    const pages = opts.pages ? allPages.slice(0, opts.pages) : allPages
     out.pages += pages.length
     const target = join(opts.dir, detail.userId)
     if (!opts.dry) await mkdir(target, { recursive: true })
@@ -236,6 +239,7 @@ const user: Command = {
     limit: { type: 'string', description: '最多处理多少个作品，默认 20，--pull 时可放大到 500', valueName: 'n' },
     pull: { type: 'boolean', description: '下载这些作品（不加只列 id）' },
     out: { type: 'string', description: '落盘目录（覆盖 pixiv.dir）', valueName: 'dir' },
+    pages: { type: 'string', description: '每个作品最多下几页（只要首图写 1）', valueName: 'n' },
     r18: { type: 'boolean', description: '允许下载 R-18 作品（默认跳过）' },
     dry: { type: 'boolean', description: '配合 --pull：只打印会写哪些文件' },
   },
@@ -258,6 +262,7 @@ const user: Command = {
       r18: values.r18 === true,
       dry: values.dry === true,
       limit,
+      ...(values.pages ? { pages: num(values.pages, 0, 1, 100, '--pages') } : {}),
     })
     return {
       data: { userId: uid, total: all.length, dir, ...summary },
@@ -427,7 +432,7 @@ const search: Command = {
 const pull: Command = {
   name: 'pixiv pull',
   summary: '下载单个作品的全部页（原图优先，失败回落 1200px）',
-  usage: 'astra pixiv pull <illustId> [--out 目录] [--r18] [--dry]',
+  usage: 'astra pixiv pull <illustId> [--out 目录] [--pages N] [--r18] [--dry]',
   notes: [
     '落盘 `<目录>/<userId>/<illustId>_p<N>.<ext>`，已存在的文件跳过（只认 id + 页号）。',
     'R-18 作品默认跳过，要下得显式加 `--r18`。',
@@ -435,6 +440,7 @@ const pull: Command = {
   ],
   options: {
     out: { type: 'string', description: '落盘目录（覆盖 pixiv.dir）', valueName: 'dir' },
+    pages: { type: 'string', description: '每个作品最多下几页（多页作品只想要首图就写 1）', valueName: 'n' },
     r18: { type: 'boolean', description: '允许下载 R-18 作品（默认跳过）' },
     dry: { type: 'boolean', description: '只打印会写哪些文件，不真下' },
   },
@@ -443,6 +449,7 @@ const pull: Command = {
   async run({ positionals, values }) {
     const id = requireId(positionals[0], 'illustId')
     const dir = resolveDir(values.out)
+    const pages = values.pages ? num(values.pages, 0, 1, 100, '--pages') : undefined
     const detail = await illustDetail(id)
     if (detail.xRestrict > 0 && values.r18 !== true) {
       throw new AstraError('R18_BLOCKED', '这是 R-18 作品，默认不下载', {
@@ -451,55 +458,23 @@ const pull: Command = {
         details: { illustId: id, xRestrict: detail.xRestrict },
       })
     }
-    const pages = pageUrls(detail)
-    const target = join(dir, detail.userId)
-    const planned = pages.map((p) => join(target, `${detail.id}_p${p.page}.${p.ext}`))
-
-    if (values.dry === true) {
-      return { data: { illustId: id, userId: Number(detail.userId), pages: pages.length, dry: true, files: planned } }
-    }
-
-    await mkdir(target, { recursive: true })
-    const downloaded: string[] = []
-    const skipped: string[] = []
-    const failed: { file: string; error: string }[] = []
-
-    for (let i = 0; i < pages.length; i += 1) {
-      const page = pages[i]!
-      const file = planned[i]!
-      if (existsSync(file) && statSync(file).size > 0) {
-        skipped.push(file)
-        continue
-      }
-      try {
-        let buf: Buffer
-        try {
-          buf = await downloadImage(page.original)
-        } catch {
-          // 原图偶尔 403/404，回落到 1200px 版本
-          buf = await downloadImage(page.regular)
-        }
-        await writeFile(`${file}.part`, buf)
-        await writeFile(file, buf)
-        const { rm } = await import('node:fs/promises')
-        await rm(`${file}.part`, { force: true })
-        downloaded.push(file)
-      } catch (err) {
-        failed.push({ file, error: err instanceof Error ? err.message : String(err) })
-      }
-    }
-
+    const summary = await pullWorks([id], {
+      dir,
+      r18: values.r18 === true,
+      dry: values.dry === true,
+      ...(pages ? { pages } : {}),
+    })
     return {
       data: {
         illustId: id,
         title: detail.title,
         userId: Number(detail.userId),
-        pages: pages.length,
-        downloaded: downloaded.length,
-        skipped: skipped.length,
-        failed: failed.length,
-        files: downloaded,
-        ...(failed.length ? { errors: failed } : {}),
+        pages: summary.pages,
+        downloaded: summary.downloaded,
+        skipped: summary.skipped,
+        failed: summary.failed,
+        files: summary.files,
+        ...(summary.errors.length ? { errors: summary.errors } : {}),
       },
     }
   },
