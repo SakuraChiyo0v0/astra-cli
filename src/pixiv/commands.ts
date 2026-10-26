@@ -63,6 +63,8 @@ interface PullOptions {
   limit?: number
   /** 每个作品最多下多少页；undefined = 全部。日报只要首图时传 1。 */
   pages?: number
+  /** original = 原图（几 MB~几十 MB）；regular = 1200px（几百 KB，快 5-10 倍）。 */
+  quality?: 'original' | 'regular'
 }
 
 interface PullSummary {
@@ -115,10 +117,15 @@ async function pullWorks(ids: number[], opts: PullOptions): Promise<PullSummary>
       }
       try {
         let buf: Buffer
-        try {
-          buf = await downloadImage(page.original)
-        } catch {
+        if (opts.quality === 'regular') {
+          // 直接拿 1200px：原图动辄 4000×6000、十几 MB，日报/预览根本用不上
           buf = await downloadImage(page.regular)
+        } else {
+          try {
+            buf = await downloadImage(page.original)
+          } catch {
+            buf = await downloadImage(page.regular)
+          }
         }
         await writeFile(file, buf)
         out.downloaded += 1
@@ -441,6 +448,7 @@ const pull: Command = {
   options: {
     out: { type: 'string', description: '落盘目录（覆盖 pixiv.dir）', valueName: 'dir' },
     pages: { type: 'string', description: '每个作品最多下几页（多页作品只想要首图就写 1）', valueName: 'n' },
+    quality: { type: 'string', description: 'original（默认，原图）/ regular（1200px，快很多）', valueName: 'q' },
     r18: { type: 'boolean', description: '允许下载 R-18 作品（默认跳过）' },
     dry: { type: 'boolean', description: '只打印会写哪些文件，不真下' },
   },
@@ -458,10 +466,12 @@ const pull: Command = {
         details: { illustId: id, xRestrict: detail.xRestrict },
       })
     }
+    const quality = values.quality === 'regular' ? 'regular' as const : 'original' as const
     const summary = await pullWorks([id], {
       dir,
       r18: values.r18 === true,
       dry: values.dry === true,
+      quality,
       ...(pages ? { pages } : {}),
     })
     return {
