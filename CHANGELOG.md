@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.14.0 — 2026-10-26
+
+**新增 `astra model`：模型资产下载（Civitai / HuggingFace / 直链）**
+
+- **新增**：`model find <关键词> [--type Checkpoint|LORA] [--limit] [--period]` —— 搜 Civitai，按下载量排序
+- **新增**：`model info <modelId>` —— 版本、文件名、大小、现成的 pull 命令
+- **新增**：`model pull <civitai:版本id | hf:org/repo/文件 | https://…> --out 目录 [--threads N]` ——
+  分片并行下载、边下边写盘（不把大文件攒在内存里）、可续传、sha256 校验
+- **新增**：`model token set/show/clear` —— Civitai token 存 `<ASTRA_HOME>/civitai.json`（600），
+  只回显前后各 4 位；环境变量 `CIVITAI_TOKEN` 优先
+- **为什么单独一个域**：模型目录因整合包而异，写死路径只会错，所以落点由 `--out` 指定，CLI 只管「找到 → 拉下来」
+
+## 0.15.0 — 2026-10-26
+
+**新增 `astra pixiv`：Pixiv 查询 + 单作品下载（走 web/ajax，不依赖 refresh-token）**
+
+- **新增**：`pixiv info <illustId>` —— 作者、页数、尺寸、标签、是否 R-18。只读
+- **新增**：`pixiv rank [--mode daily|weekly|monthly|rookie|original|male|female] [--pages N]` —— 排行榜 id 列表
+- **新增**：`pixiv user <userId> [--limit N]` —— 画师作品 id 列表（插画 + 漫画，新的在前）
+- **新增**：`pixiv search <关键词> [--page N]` —— 按时间倒序搜作品
+- **新增**：`pixiv pull <illustId> [--out 目录] [--r18] [--dry]` —— 下载单作品全部页。
+  落盘 `<目录>/<userId>/<illustId>_p<N>.<ext>`（只存不可变标识，不建系列目录）；
+  原图优先、失败回落 1200px；已存在跳过；R-18 默认跳过
+- **新增**：`pixiv cookie set/show/clear` —— cookie 可选，只在看登录可见内容时需要；
+  存 `<ASTRA_HOME>/pixiv-cookie.txt`（600），只回显有没有 `PHPSESSID`
+- **新增配置**：`pixiv.dir`（留空则 `pull` 必须给 `--out`，不瞎写默认路径）
+- **为什么走 ajax 而不是 App API**：App API 要 refresh-token，30 秒窗口的 OAuth 在聊天里基本拿不到；
+  web/ajax 匿名就能查作品/画师/排行/搜索，原图在 `i.pximg.net` 上带 `Referer` 即可直下（2026-10 实测）
+- **注意（部署）**：容器直连 pixiv.net 超时，需要把 `pixiv.net,pximg.net` 加进 `proxy.include`
+- **修（多页）**：换页号要匹配 `_p<N>` 后跟 `.` 或 `_`，否则 `_p0_master1200.jpg` 这类 1200px 地址换不掉
+  （单测覆盖，没修的话多页作品每一页都会下成 p0）
+
 ## 0.13.0 — 2026-10-23
 
 **原生挂时长：`astra steam login` + `astra steam idle`，不再依赖 ASF 容器**
