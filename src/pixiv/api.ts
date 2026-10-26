@@ -170,6 +170,61 @@ export async function ranking(mode: RankMode, pages = 1): Promise<number[]> {
   return out
 }
 
+/** 作品的互动数据。`bookmarkCount` 匿名也能拿到——`人気順` 排序是会员功能，
+ *  但「按收藏数本地排序」不用会员，这是 `pixiv top` 的基础。 */
+export interface IllustStats {
+  id: number
+  bookmarkCount: number
+  likeCount: number
+  viewCount: number
+}
+
+export async function illustStats(illustId: number): Promise<IllustStats> {
+  const body = await ajax<{ bookmarkCount?: number; likeCount?: number; viewCount?: number }>(
+    `/ajax/illust/${illustId}`,
+  )
+  return {
+    id: illustId,
+    bookmarkCount: body.bookmarkCount ?? 0,
+    likeCount: body.likeCount ?? 0,
+    viewCount: body.viewCount ?? 0,
+  }
+}
+
+export interface SearchHit {
+  id: number
+  title: string
+  userName: string
+  userId: number
+  pageCount: number
+  xRestrict: number
+}
+
+export async function searchHits(keyword: string, page = 1): Promise<SearchHit[]> {
+  const q = new URLSearchParams({
+    word: keyword,
+    order: 'date_d',
+    mode: 'all',
+    p: String(page),
+    s_mode: 's_tag_full',
+    type: 'all',
+    lang: 'zh',
+  })
+  const body = await ajax<{
+    illustManga?: { data?: { id?: string; title?: string; userName?: string; userId?: string; pageCount?: number; xRestrict?: number }[] }
+  }>(`/ajax/search/artworks/${encodeURIComponent(keyword)}?${q.toString()}`)
+  return (body.illustManga?.data ?? [])
+    .map((d) => ({
+      id: Number(d.id),
+      title: d.title ?? '',
+      userName: d.userName ?? '',
+      userId: Number(d.userId ?? 0),
+      pageCount: d.pageCount ?? 1,
+      xRestrict: d.xRestrict ?? 0,
+    }))
+    .filter((d) => Number.isFinite(d.id))
+}
+
 export async function searchWorks(keyword: string, page = 1): Promise<number[]> {
   const q = new URLSearchParams({
     word: keyword,

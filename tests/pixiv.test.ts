@@ -75,6 +75,7 @@ test('命令都登记上了，且名字以 pixiv 开头', () => {
   assert.deepEqual(names, [
     'pixiv info',
     'pixiv rank',
+    'pixiv top',
     'pixiv user',
     'pixiv search',
     'pixiv pull',

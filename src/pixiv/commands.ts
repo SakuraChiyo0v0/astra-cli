@@ -23,7 +23,9 @@ import {
   pageUrls,
   ranking,
   saveCookie,
+  searchHits,
   searchWorks,
+  illustStats,
   userWorks,
   type RankMode,
 } from './api.ts'
@@ -203,6 +205,7 @@ const info: Command = {
         size: `${d.width}x${d.height}`,
         xRestrict: d.xRestrict,
         r18: d.xRestrict > 0,
+        bookmarks: (await illustStats(id)).bookmarkCount,
         tags: d.tags,
         original: d.urls.original,
       },
@@ -436,6 +439,82 @@ const search: Command = {
   },
 }
 
+const top: Command = {
+  name: 'pixiv top',
+  summary: '按收藏数排序看某个关键词的热门作品（Pixiv 的「人気順」要会员，这里是本地排序）',
+  usage: 'astra pixiv top <关键词> [--pages 3] [--limit 20] [--r18]',
+  notes: [
+    'Pixiv 搜索的 `order=popular_d`（人気順）是会员功能，非会员调用会被静默忽略、返回的仍是新着順。',
+    '所以这里走「先拉最近 N 页新作 → 再逐个取 bookmarkCount → 本地倒序」，不需要会员。',
+    '代价：`--pages` 越大请求越多（每页 60 个作品、每个一次详情）。默认 3 页 = 180 个，约 20-40 秒。',
+    '只覆盖最近的作品——老作品收藏再高也不会出现在结果里，这是和新着順共用同一个候选池的必然结果。',
+  ],
+  options: {
+    pages: { type: 'string', description: '拉最近几页（每页 60），默认 3', valueName: 'n' },
+    limit: { type: 'string', description: '返回条数，默认 20', valueName: 'n' },
+    r18: { type: 'boolean', description: '包含 R-18 作品（默认过滤掉）' },
+  },
+  minArgs: 1,
+  async run({ positionals, values }) {
+    const keyword = positionals.join(' ')
+    const pages = num(values.pages, 3, 1, 20, '--pages')
+    const limit = num(values.limit, 20, 1, 100, '--limit')
+
+    const hits: { id: number; title: string; userName: string; userId: number; pageCount: number; xRestrict: number }[] = []
+    const seen = new Set<number>()
+    for (let page = 1; page <= pages; page += 1) {
+      for (const hit of await searchHits(keyword, page)) {
+        if (seen.has(hit.id)) continue
+        seen.add(hit.id)
+        hits.push(hit)
+      }
+    }
+    const pool = values.r18 === true ? hits : hits.filter((h) => h.xRestrict === 0)
+
+    // 分批并发取收藏数，避免一次打 180 个请求被限流
+    const stats = new Map<number, number>()
+    const batch = 6
+    for (let i = 0; i < pool.length; i += batch) {
+      const chunk = pool.slice(i, i + batch)
+      const results = await Promise.all(chunk.map(async (h) => {
+        try {
+          return await illustStats(h.id)
+        } catch {
+          return { id: h.id, bookmarkCount: -1, likeCount: 0, viewCount: 0 }
+        }
+      }))
+      for (const r of results) stats.set(r.id, r.bookmarkCount)
+    }
+
+    const ranked = pool
+      .map((h) => ({ ...h, bookmarks: stats.get(h.id) ?? -1 }))
+      .sort((a, b) => b.bookmarks - a.bookmarks)
+      .slice(0, limit)
+
+    return {
+      data: {
+        keyword,
+        scanned: pool.length,
+        pages,
+        count: ranked.length,
+        items: ranked.map((r) => ({
+          illustId: r.id,
+          title: r.title,
+          userName: r.userName,
+          userId: r.userId,
+          pages: r.pageCount,
+          bookmarks: r.bookmarks,
+          url: `https://www.pixiv.net/artworks/${r.id}`,
+        })),
+      },
+      table: {
+        headers: ['illustId', '收藏', '页', '作品名', '作者'],
+        rows: ranked.map((r) => [r.id, r.bookmarks, r.pageCount, r.title.slice(0, 34), r.userName.slice(0, 14)]),
+      },
+    }
+  },
+}
+
 const pull: Command = {
   name: 'pixiv pull',
   summary: '下载单个作品的全部页（原图优先，失败回落 1200px）',
@@ -530,7 +609,7 @@ const cookieClear: Command = {
 }
 
 export const pixivCommands: Command[] = [
-  info, rank, user, search, pull,
+  info, rank, top, user, search, pull,
   subAdd, subRemove, subList, subRun,
   cookieSet, cookieShow, cookieClear,
 ]
