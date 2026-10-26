@@ -7,12 +7,13 @@
  * 这一批只做「查得到 + 单作品下得下来」，画师全量 / 订阅留到后面加，
  * 免得一次铺太开、把上游改动撞得稀碎。
  */
-import { existsSync, statSync } from 'node:fs'
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command } from '../core/command.ts'
 import { getConfig } from '../core/config.ts'
+import { ensureDir, homePath } from '../core/paths.ts'
 import {
   clearCookie,
   cookieDigest,
@@ -53,6 +54,120 @@ function resolveDir(out: unknown): string {
     exitCode: 2,
     hint: '`astra config set pixiv.dir /host-root/volume1/图片/pixiv`，或本次用 `--out <目录>`',
   })
+}
+
+interface PullOptions {
+  dir: string
+  r18: boolean
+  dry: boolean
+  limit?: number
+}
+
+interface PullSummary {
+  works: number
+  pages: number
+  downloaded: number
+  skipped: number
+  failed: number
+  r18Skipped: number
+  files: string[]
+  errors: { file: string; error: string }[]
+}
+
+/** 一批作品 id → 落盘。pull / user --pull / sub run 都走这里，行为保持一致。 */
+async function pullWorks(ids: number[], opts: PullOptions): Promise<PullSummary> {
+  const out: PullSummary = { works: 0, pages: 0, downloaded: 0, skipped: 0, failed: 0, r18Skipped: 0, files: [], errors: [] }
+  const seen = new Set<number>()
+  for (const id of ids) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    if (opts.limit !== undefined && out.works >= opts.limit) break
+    let detail
+    try {
+      detail = await illustDetail(id)
+    } catch (err) {
+      out.failed += 1
+      out.errors.push({ file: String(id), error: err instanceof Error ? err.message : String(err) })
+      continue
+    }
+    if (detail.xRestrict > 0 && !opts.r18) {
+      out.r18Skipped += 1
+      continue
+    }
+    out.works += 1
+    const pages = pageUrls(detail)
+    out.pages += pages.length
+    const target = join(opts.dir, detail.userId)
+    if (!opts.dry) await mkdir(target, { recursive: true })
+
+    for (const page of pages) {
+      const file = join(target, `${detail.id}_p${page.page}.${page.ext}`)
+      if (existsSync(file) && statSync(file).size > 0) {
+        out.skipped += 1
+        continue
+      }
+      if (opts.dry) {
+        out.files.push(file)
+        continue
+      }
+      try {
+        let buf: Buffer
+        try {
+          buf = await downloadImage(page.original)
+        } catch {
+          buf = await downloadImage(page.regular)
+        }
+        await writeFile(file, buf)
+        out.downloaded += 1
+        out.files.push(file)
+      } catch (err) {
+        out.failed += 1
+        out.errors.push({ file, error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+  }
+  return out
+}
+
+/** 订阅表：<ASTRA_HOME>/pixiv-subs.json。只存 uid 与已见过的最大作品 id。 */
+interface SubEntry {
+  userId: number
+  userName: string
+  lastSeenId: number
+  addedAt: string
+}
+
+const SUBS_FILE = () => homePath('pixiv-subs.json')
+
+function loadSubs(): SubEntry[] {
+  const file = SUBS_FILE()
+  if (!existsSync(file)) return []
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as unknown
+    if (!Array.isArray(raw)) return []
+    return raw
+      .map((e) => e as Partial<SubEntry>)
+      .filter((e) => Number.isFinite(e.userId))
+      .map((e) => ({
+        userId: Number(e.userId),
+        userName: String(e.userName ?? ''),
+        lastSeenId: Number(e.lastSeenId ?? 0),
+        addedAt: String(e.addedAt ?? ''),
+      }))
+  } catch {
+    return []
+  }
+}
+
+function saveSubs(list: SubEntry[]): void {
+  ensureDir(homePath())
+  const file = SUBS_FILE()
+  writeFileSync(file, JSON.stringify(list, null, 2))
+  try {
+    chmodSync(file, 0o600)
+  } catch {
+    // Windows 上 chmod 无效
+  }
 }
 
 const info: Command = {
@@ -111,11 +226,18 @@ const rank: Command = {
 
 const user: Command = {
   name: 'pixiv user',
-  summary: '看画师的作品 id 列表（插画 + 漫画，新的在前）',
-  usage: 'astra pixiv user <userId> [--limit 20]',
-  notes: ['只读，返回 id 列表；批量下载留到 `pixiv pull` 后续扩展。'],
+  summary: '看画师作品 id 列表；加 --pull 直接批量下载',
+  usage: 'astra pixiv user <userId> [--limit 20] [--pull] [--out 目录] [--r18] [--dry]',
+  notes: [
+    '不带 --pull 只列 id（新的在前）；带 --pull 会把这一批全下下来，落盘规则与 `pixiv pull` 一致。',
+    '目录优先 `--out`，其次 `pixiv.dir`；R-18 默认跳过。',
+  ],
   options: {
-    limit: { type: 'string', description: '最多返回多少条，默认 20', valueName: 'n' },
+    limit: { type: 'string', description: '最多处理多少个作品，默认 20，--pull 时可放大到 500', valueName: 'n' },
+    pull: { type: 'boolean', description: '下载这些作品（不加只列 id）' },
+    out: { type: 'string', description: '落盘目录（覆盖 pixiv.dir）', valueName: 'dir' },
+    r18: { type: 'boolean', description: '允许下载 R-18 作品（默认跳过）' },
+    dry: { type: 'boolean', description: '配合 --pull：只打印会写哪些文件' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -124,9 +246,159 @@ const user: Command = {
     const limit = num(values.limit, 20, 1, 500, '--limit')
     const all = await userWorks(uid)
     const ids = all.slice(0, limit)
+    if (values.pull !== true) {
+      return {
+        data: { userId: uid, total: all.length, count: ids.length, illustIds: ids },
+        table: { headers: ['#', 'illustId'], rows: ids.map((id, i) => [i + 1, id]) },
+      }
+    }
+    const dir = resolveDir(values.out)
+    const summary = await pullWorks(ids, {
+      dir,
+      r18: values.r18 === true,
+      dry: values.dry === true,
+      limit,
+    })
     return {
-      data: { userId: uid, total: all.length, count: ids.length, illustIds: ids },
-      table: { headers: ['#', 'illustId'], rows: ids.map((id, i) => [i + 1, id]) },
+      data: { userId: uid, total: all.length, dir, ...summary },
+      table: {
+        headers: ['项目', '数量'],
+        rows: [['作品', summary.works], ['页', summary.pages], ['新下载', summary.downloaded],
+               ['已存在', summary.skipped], ['R-18 跳过', summary.r18Skipped], ['失败', summary.failed]],
+      },
+    }
+  },
+}
+
+const subAdd: Command = {
+  name: 'pixiv sub add',
+  summary: '订阅画师：之后 `pixiv sub run` 只拉新作品',
+  usage: 'astra pixiv sub add <userId>',
+  notes: [
+    '订阅表在 <ASTRA_HOME>/pixiv-subs.json（600），只记 userId、画师名、已见过的最大作品 id。',
+    '加入时会把当前最新作品 id 记为基线，所以第一次 run 不会把历史作品全下一遍。',
+  ],
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    const uid = requireId(positionals[0], 'userId')
+    const list = loadSubs()
+    if (list.some((e) => e.userId === uid)) {
+      return { data: { userId: uid, added: false, reason: 'already-subscribed', total: list.length } }
+    }
+    const ids = await userWorks(uid)
+    let userName = ''
+    if (ids.length) {
+      try {
+        userName = (await illustDetail(ids[0]!)).userName
+      } catch {
+        // 拿不到名字不影响订阅
+      }
+    }
+    list.push({ userId: uid, userName, lastSeenId: ids[0] ?? 0, addedAt: new Date().toISOString() })
+    saveSubs(list)
+    return {
+      data: { userId: uid, userName, added: true, baseline: ids[0] ?? 0, total: list.length },
+    }
+  },
+}
+
+const subRemove: Command = {
+  name: 'pixiv sub remove',
+  summary: '取消订阅画师',
+  usage: 'astra pixiv sub remove <userId>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals }) {
+    const uid = requireId(positionals[0], 'userId')
+    const list = loadSubs()
+    const next = list.filter((e) => e.userId !== uid)
+    if (next.length !== list.length) saveSubs(next)
+    return { data: { userId: uid, removed: next.length !== list.length, total: next.length } }
+  },
+}
+
+const subList: Command = {
+  name: 'pixiv sub list',
+  summary: '看订阅了哪些画师',
+  usage: 'astra pixiv sub list',
+  maxArgs: 0,
+  async run() {
+    const list = loadSubs()
+    return {
+      data: { total: list.length, items: list },
+      table: {
+        headers: ['userId', '画师', '已见最大作品', '加入时间'],
+        rows: list.map((e) => [e.userId, e.userName || '-', e.lastSeenId || '-', e.addedAt.slice(0, 10)]),
+      },
+    }
+  },
+}
+
+const subRun: Command = {
+  name: 'pixiv sub run',
+  summary: '拉取所有订阅画师的新作品（配合定时任务用）',
+  usage: 'astra pixiv sub run [--out 目录] [--per-user 10] [--r18] [--dry]',
+  notes: [
+    '只处理 id 大于「已见最大 id」的作品，所以重复跑不会重复下载。',
+    '给 cron 用：没有新作品时返回 newWorks: 0，不产生噪音。',
+  ],
+  options: {
+    out: { type: 'string', description: '落盘目录（覆盖 pixiv.dir）', valueName: 'dir' },
+    'per-user': { type: 'string', description: '每个画师最多处理多少个新作品，默认 10', valueName: 'n' },
+    r18: { type: 'boolean', description: '允许下载 R-18 作品（默认跳过）' },
+    dry: { type: 'boolean', description: '只打印会写哪些文件' },
+  },
+  maxArgs: 0,
+  async run({ values }) {
+    const dir = resolveDir(values.out)
+    const perUser = num(values['per-user'], 10, 1, 100, '--per-user')
+    const list = loadSubs()
+    if (!list.length) return { data: { subscribed: 0, newWorks: 0, downloaded: 0, note: '还没有订阅，用 `pixiv sub add <userId>`' } }
+
+    let newWorks = 0
+    let downloaded = 0
+    let skipped = 0
+    let failed = 0
+    let r18Skipped = 0
+    const perUserReport: { userId: number; userName: string; newWorks: number; downloaded: number }[] = []
+
+    for (const entry of list) {
+      let ids: number[] = []
+      try {
+        ids = await userWorks(entry.userId)
+      } catch (err) {
+        failed += 1
+        perUserReport.push({ userId: entry.userId, userName: entry.userName, newWorks: 0, downloaded: 0 })
+        continue
+      }
+      const fresh = ids.filter((id) => id > entry.lastSeenId).slice(0, perUser)
+      if (!fresh.length) {
+        perUserReport.push({ userId: entry.userId, userName: entry.userName, newWorks: 0, downloaded: 0 })
+        continue
+      }
+      newWorks += fresh.length
+      const summary = await pullWorks(fresh, { dir, r18: values.r18 === true, dry: values.dry === true })
+      downloaded += summary.downloaded
+      skipped += summary.skipped
+      failed += summary.failed
+      r18Skipped += summary.r18Skipped
+      perUserReport.push({ userId: entry.userId, userName: entry.userName, newWorks: fresh.length, downloaded: summary.downloaded })
+      if (!values.dry && ids[0]) entry.lastSeenId = Math.max(entry.lastSeenId, ids[0])
+    }
+    if (!values.dry) saveSubs(list)
+
+    return {
+      data: {
+        subscribed: list.length,
+        newWorks,
+        downloaded,
+        skipped,
+        r18Skipped,
+        failed,
+        dir,
+        perUser: perUserReport,
+      },
     }
   },
 }
@@ -272,4 +544,8 @@ const cookieClear: Command = {
   },
 }
 
-export const pixivCommands: Command[] = [info, rank, user, search, pull, cookieSet, cookieShow, cookieClear]
+export const pixivCommands: Command[] = [
+  info, rank, user, search, pull,
+  subAdd, subRemove, subList, subRun,
+  cookieSet, cookieShow, cookieClear,
+]

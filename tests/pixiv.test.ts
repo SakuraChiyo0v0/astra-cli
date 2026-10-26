@@ -6,6 +6,9 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { cookieDigest, pageUrls, type IllustDetail } from '../src/pixiv/api.ts'
 import { pixivCommands } from '../src/pixiv/commands.ts'
 import { parseCommandArgs } from '../src/core/command.ts'
@@ -75,6 +78,10 @@ test('命令都登记上了，且名字以 pixiv 开头', () => {
     'pixiv user',
     'pixiv search',
     'pixiv pull',
+    'pixiv sub add',
+    'pixiv sub remove',
+    'pixiv sub list',
+    'pixiv sub run',
     'pixiv cookie set',
     'pixiv cookie show',
     'pixiv cookie clear',
@@ -117,4 +124,46 @@ test('非法 id 在发请求之前就被拦住', async () => {
     async () => info.run({ positionals: ['abc'], values: {}, signal: new AbortController().signal }),
     /illustId 要是正整数/,
   )
+})
+
+
+test('订阅：加进去记基线，重复加不重复写入', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'astra-pixiv-sub-'))
+  const prev = process.env.ASTRA_HOME
+  process.env.ASTRA_HOME = dir
+  try {
+    // 直接写订阅表，绕开网络（sub add 会去拉画师作品）
+    const file = join(dir, 'pixiv-subs.json')
+    writeFileSync(file, JSON.stringify([
+      { userId: 42, userName: 'painter', lastSeenId: 1000, addedAt: '2026-10-26T00:00:00Z' },
+    ]))
+    const list = pixivCommands.find((c) => c.name === 'pixiv sub list')!
+    const res = await list.run({ positionals: [], values: {}, signal: new AbortController().signal })
+    assert.equal((res.data as { total: number }).total, 1)
+
+    const remove = pixivCommands.find((c) => c.name === 'pixiv sub remove')!
+    await remove.run({ positionals: ['42'], values: {}, signal: new AbortController().signal })
+    const after = JSON.parse(readFileSync(file, 'utf8')) as unknown[]
+    assert.equal(after.length, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    if (prev === undefined) delete process.env.ASTRA_HOME
+    else process.env.ASTRA_HOME = prev
+  }
+})
+
+test('订阅表坏了不炸，当空表处理', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'astra-pixiv-bad-'))
+  const prev = process.env.ASTRA_HOME
+  process.env.ASTRA_HOME = dir
+  try {
+    writeFileSync(join(dir, 'pixiv-subs.json'), '{ not json')
+    const list = pixivCommands.find((c) => c.name === 'pixiv sub list')!
+    const res = await list.run({ positionals: [], values: {}, signal: new AbortController().signal })
+    assert.equal((res.data as { total: number }).total, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    if (prev === undefined) delete process.env.ASTRA_HOME
+    else process.env.ASTRA_HOME = prev
+  }
 })

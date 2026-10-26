@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.0 — 2026-10-26
+
+**Pixiv：画师批量下载 + 订阅追新**
+
+- **新增**：`pixiv user <userId> --pull` —— 直接把这个画师的作品批量下下来（`--limit/--out/--r18/--dry`）
+- **新增**：`pixiv sub add <userId>` / `sub remove` / `sub list` / `sub run` ——
+  订阅表存 `<ASTRA_HOME>/pixiv-subs.json`（600），只记 userId、画师名、已见过的最大作品 id
+- **订阅只拉新的**：加入时把当前最新 id 记成基线，`sub run` 只处理 id 更大的作品，
+  重复跑不会重复下载，没新作品时 `newWorks: 0`
+- **重构**：`pull` / `user --pull` / `sub run` 共用同一套下载逻辑，行为（R-18 跳过、原图回落 1200px、
+  已存在跳过、按 `<userId>/<illustId>_p<N>` 落盘）保持一致
+
 ## 0.14.0 — 2026-10-26
 
 **新增 `astra model`：模型资产下载（Civitai / HuggingFace / 直链）**
