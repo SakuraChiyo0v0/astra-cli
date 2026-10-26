@@ -37,6 +37,10 @@ export const CONFIG_KEYS: ConfigKey[] = [
   { key: 'music.ffmpeg', description: 'ffmpeg 可执行文件路径（B 站合并音视频也用它）；留空则从 PATH 查找', default: '' },
   { key: 'bili.dir', description: '视频根目录（绝对路径）；环境变量 ASTRA_VIDEO_DIR 优先', default: '',
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
+  // Pixiv 图片库。留空 = 必须每次 `--out`，不瞎写默认路径。
+  // 落盘规范：<dir>/<userId>/<illustId>_p<N>.<ext>，只存不可变标识。
+  { key: 'pixiv.dir', description: 'Pixiv 图片根目录（绝对路径）；留空则 `pixiv pull` 必须给 --out', default: '',
+    validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   // `bili.template` 是 v0.12.x 的老名字。加了 `bili.audio-template` 之后它就不再是
   // "模板"而是"视频模板"，两个键并列时语义不对等 —— 看配置的人得先猜哪个管视频。
   // `bili.video-template` 是正式名；老名保留为别名，读写互通（见 ALIASES）。
