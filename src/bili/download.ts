@@ -224,6 +224,37 @@ export function buildBvidIndex(dir: string): Map<string, string> {
 }
 
 /**
+ * TIT2 到底写什么。
+ *
+ * 默认是 `songTitleOf()` 抽出来的歌名（标题里最后一个《》）。但这会把**版本标记**
+ * 丢掉：`清姬（DJ）` 和 `清姬` 两个不同 bvid 的视频，TIT2 都是 `清姬`，播放器里
+ * 显示成两条一模一样的记录（实测库里 19 组 39 个文件这样）。
+ *
+ * 规则：文件名以歌名开头、后面只跟一段短的括号修饰时，TIT2 用**文件名**——
+ * 那个修饰（`（DJ）` / `（日语填词）` / `（升调）`）就是唯一能区分它们的东西，
+ * 而且文件名本来就是落盘时算好的、天然不重复。
+ *
+ * 两道闸：
+ * - 必须以歌名开头。用户手工削过的短名（`伯虎说` 之于 `伯虎说（“明月万年…”）`）不符合，
+ *   保持歌名不动。
+ * - 修饰不超过 14 字。`七月七日晴（“七月七日晴，忽然下起了大雪”《七月七日晴》）`
+ *   这种 87 字的长名，宁可继续撞名也不把标签写成一长串。
+ */
+export function tagTitleFor(
+  info: VideoInfo,
+  page: { page: number; part: string },
+  target: string,
+): string {
+  const base = songTitleOf(info, page)
+  const stem = path.basename(target).replace(/\.[^.]+$/, '')
+  if (stem === base) return base
+  if (!stem.startsWith(base)) return base
+  const suffix = stem.slice(base.length)
+  if (suffix.length === 0 || suffix.length > 14) return base
+  return stem
+}
+
+/**
  * 写进视频容器的溯源标签。
  *
  * 为什么要有：视频侧原来一条标签都不写（只有 B 站自己塞的 `description`），
@@ -524,7 +555,7 @@ export async function downloadPage(
         info: {
           // TIT2 用**歌名**（标题里《》的最后一个），不是分 P 名。
           // 分 P 名常是「绿色」这种短标签，播放器里跟别的歌对不上（P0#2c）。
-          title: songTitleOf(info, page),
+          title: tagTitleFor(info, page, target),
           uploader: info.owner.name || '未知UP',
           coverUrl: info.pic,
           pubdate: info.pubdate || null,
