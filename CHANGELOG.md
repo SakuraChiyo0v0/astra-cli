@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.18.2 — 2026-10-27
+
+**bili audio：按 BVID 判重，改模板不再整批重下**
+
+- **`bili audio` 判重从「目标路径」改成「BVID」**：以前只认模板算出来的那个路径，
+  用户改一次 `bili.audio-template` 老文件就全对不上，整批重下一遍。
+  实测 `season:1049571`：408 个文件里 **200 个是同 BVID 重复（49%）**，码率还退化了
+  （旧的 180kbps 与新下的 320kbps 并存）。现在落盘前按目录内音频标签的
+  `BILIBILI_BVID` / `SOURCE_ID` 建一次索引（懒加载、只读头 512KB + 尾 128KB），
+  命中即 `skipped` 并回 `existingPath`。同一合集连跑第二次实测 `downloaded: 0 / skipped: 202`
+- **`ownerBvidOf` 认 `BILIBILI_BVID`**：之前只匹配 `SOURCE_ID`，而音频标签两个都写；
+  只写 `BILIBILI_BVID` 的文件会被当成「别人的」，于是走消歧分支再存一份 —— 这是重复的直接来源
+- **`{title}` 里的 `/` 已由 `sanitizeSegment` 处理**（本次复核确认，无需改动）：
+  `打火机（…《打火机》/AI東 雪蓮` → `…《打火机》_AI東 雪蓮`。历史目录里残留的伪子目录
+  是旧构建留下的，用 `fix_bili_dir.py` 迁回即可
+
 ## 0.18.1 — 2026-10-26
 
 **pixiv：提速 + 「静默空结果」防护**

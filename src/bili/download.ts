@@ -13,7 +13,7 @@ import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 import { AstraError } from '../core/errors.ts'
 import { biliAudioRoot, getConfig, mediaRoot } from '../core/config.ts'
-import { existsSync, readFileSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
 import { httpRequest } from '../core/http.ts'
 import { progress } from '../core/output.ts'
 import { loadBiliSession, cookieHeader } from './auth.ts'
@@ -153,6 +153,77 @@ export function resolveTargetPath(
 }
 
 /**
+ * 目录内 bvid 索引：扫一遍 dir 下的音频文件，返回 bvid → 路径。
+ *
+ * 为什么需要：判重只看「模板算出来的那个路径」是错的 —— 用户改一次
+ * `bili.audio-template`，所有老文件都对不上，整批重下一遍（实测 408 个文件里
+ * 200 个是同 bvid 重复）。bvid 写在标签里，跟文件名无关，按它认才稳。
+ *
+ * 读文件时只取头 512KB + 尾 128KB：ID3v2 在头、ID3v1/APE 在尾，
+ * 整文件读进内存会把几百个文件跑成几分钟。
+ */
+const AUDIO_EXTS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg'])
+
+function bvidOfFile(file: string): string | null {
+  try {
+    const fd = openSync(file, 'r')
+    try {
+      const size = statSync(file).size
+      const headLen = Math.min(size, 512 * 1024)
+      const head = Buffer.alloc(headLen)
+      readSync(fd, head, 0, headLen, 0)
+      const tailLen = Math.min(Math.max(size - headLen, 0), 128 * 1024)
+      let tail = Buffer.alloc(0)
+      if (tailLen > 0) {
+        tail = Buffer.alloc(tailLen)
+        readSync(fd, tail, 0, tailLen, size - tailLen)
+      }
+      const buf = Buffer.concat([head, tail]).toString('latin1')
+      const hit = buf.match(/(?:BILIBILI_BVID|SOURCE_ID)[\x00=](BV[0-9A-Za-z]{10})/)
+      if (hit) return hit[1]!
+      // 消歧时 astra 会把 bvid 写进文件名（`绿色DJ（BV1GEn26uEDT）.mp3`）
+      const fromName = path.basename(file).match(/（(BV[0-9A-Za-z]{10})）/)
+      return fromName ? fromName[1]! : null
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    return null
+  }
+}
+
+export function buildBvidIndex(dir: string): Map<string, string> {
+  const index = new Map<string, string>()
+  const walk = (current: string, depth: number): void => {
+    if (depth > 3) return
+    let entries: string[]
+    try {
+      entries = readdirSync(current)
+    } catch {
+      return
+    }
+    for (const name of entries) {
+      const full = path.join(current, name)
+      let st
+      try {
+        st = statSync(full)
+      } catch {
+        continue
+      }
+      if (st.isDirectory()) {
+        walk(full, depth + 1)
+        continue
+      }
+      if (!AUDIO_EXTS.has(path.extname(name).toLowerCase())) continue
+      const bvid = bvidOfFile(full)
+      if (bvid && !index.has(bvid)) index.set(bvid, full)
+    }
+  }
+  walk(dir, 0)
+  return index
+}
+
+/**
  * 看磁盘上一个路径的现状，给 `resolveTargetPath` 用。
  *
  * **怎么判断"这个文件属于哪个视频"**：
@@ -192,7 +263,7 @@ function ownerBvidOf(target: string): string | null {
   //    比这里更精确的解析不值得 —— 读不出来就走"别人的"分支，那是安全的。
   try {
     const buf = readFileSync(target)
-    const hit = buf.toString('latin1').match(/SOURCE_ID[\x00=](BV[0-9A-Za-z]{10})/)
+    const hit = buf.toString('latin1').match(/(?:BILIBILI_BVID|SOURCE_ID)[\x00=](BV[0-9A-Za-z]{10})/)
     if (hit) return hit[1]!
   } catch {
     // 读不了就当别人的

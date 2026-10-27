@@ -18,7 +18,7 @@
  * - **并发有上限**：默认 4，遇到 412 / 风控自动降到 1
  */
 import { progress } from '../core/output.ts'
-import { fetchInfo, downloadPage, probePath, targetPathFor } from './download.ts'
+import { fetchInfo, downloadPage, probePath, targetPathFor, buildBvidIndex } from './download.ts'
 import { renderTemplate } from '../core/template.ts'
 import { resolveInside } from '../core/template.ts'
 import { spaceVideos } from './space.ts'
@@ -57,7 +57,7 @@ export interface AudioSyncResult {
   planned: number
   downloaded: { bvid: string; title: string; path: string }[]
   /** 已存在而跳过的。 */
-  skipped: { bvid: string; title: string }[]
+  skipped: { bvid: string; title: string; existingPath?: string }[]
   failed: { bvid: string; title: string; error: string }[]
   /** 因重名改过名的。 */
   renamed: { bvid: string; from: string; to: string }[]
@@ -143,13 +143,14 @@ async function previewTargetPath(
   info: Awaited<ReturnType<typeof fetchInfo>>,
   page: NonNullable<Awaited<ReturnType<typeof fetchInfo>>['pages'][number]>,
   album: string | null,
-): Promise<{ path: string; exists: boolean; ownedByBvid: boolean }> {
+): Promise<{ path: string; root: string; exists: boolean; ownedByBvid: boolean }> {
   void album
   const { root, template, vars } = targetPathFor(info, page, { audioOnly: true }, 80)
   const target = resolveInside(root, renderTemplate(template, vars))
   const occ = probePath(target, info.bvid)
   return {
     path: target,
+    root,
     exists: occ.state !== 'free',
     ownedByBvid: occ.state === 'same',
   }
@@ -198,6 +199,22 @@ export async function runAudioSync(options: AudioSyncOptions): Promise<AudioSync
   let done = 0
 
   /**
+   * 每个落盘根目录只扫一次 bvid 索引（懒加载）。
+   *
+   * 代价：首次调用要读一遍目录里所有音频的头尾各几百 KB（200 个文件约 1~2 秒），
+   * 换来的是「改过模板也不重下」。只在目标路径空着时才建，纯新增场景不受影响。
+   */
+  const indexes = new Map<string, Map<string, string>>()
+  const indexFor = (root: string): Map<string, string> => {
+    let index = indexes.get(root)
+    if (!index) {
+      index = buildBvidIndex(root)
+      indexes.set(root, index)
+    }
+    return index
+  }
+
+  /**
    * 下一项下载。返回 'skipped' 表示它本来就在（同 bvid 同路径）。
    *
    * 怎么区分"下了"和"本来就在"：`downloadPage` 会先算目标路径、
@@ -207,12 +224,18 @@ export async function runAudioSync(options: AudioSyncOptions): Promise<AudioSync
    * 所以这里**下之前先探一次**：目标文件已存在且属于这个 bvid，就当跳过。
    * 这比等到下完再猜准。
    */
-  const planOne = async (item: AudioSyncItem): Promise<{ kind: 'skip' } | { kind: 'go'; pageIndex: number; path: string }> => {
+  const planOne = async (item: AudioSyncItem): Promise<{ kind: 'skip'; existingPath?: string } | { kind: 'go'; pageIndex: number; path: string }> => {
     const info = await fetchInfo(item.bvid, signal)
     const page = info.pages[0]
     if (!page) throw new Error('没有分 P')
     const preview = await previewTargetPath(info, page, options.album ?? null)
     if (preview.exists && preview.ownedByBvid) return { kind: 'skip' }
+    // 目标路径上要么没有、要么被「读不出归属」的文件占着 —— 两种都再按 bvid
+    // 认一次：**同一个视频可能以别的文件名躺在同一个库里**（用户改过
+    // `bili.audio-template`、手工改过名，或者标签里只有 BILIBILI_BVID）。
+    // 认到就跳过；否则改一次模板就整批重下（实测 200/408 重复）。
+    const hit = indexFor(preview.root).get(item.bvid)
+    if (hit) return { kind: 'skip', existingPath: hit }
     return { kind: 'go', pageIndex: 0, path: preview.path }
   }
 
@@ -220,7 +243,7 @@ export async function runAudioSync(options: AudioSyncOptions): Promise<AudioSync
     try {
       const plan = await planOne(item)
       if (plan.kind === 'skip') {
-        result.skipped.push({ bvid: item.bvid, title: item.title })
+        result.skipped.push({ bvid: item.bvid, title: item.title, ...(plan.existingPath ? { existingPath: plan.existingPath } : {}) })
         return
       }
       const info = await fetchInfo(item.bvid, signal)
