@@ -224,6 +224,37 @@ export function buildBvidIndex(dir: string): Map<string, string> {
 }
 
 /**
+ * 写进视频容器的溯源标签。
+ *
+ * 为什么要有：视频侧原来一条标签都不写（只有 B 站自己塞的 `description`），
+ * 认文件只能靠文件名 —— 改一次 `bili.video-template` 就全对不上，跟音频之前
+ * 那个「整批重下」的坑一模一样。音频侧已经写了 SOURCE_ID / BILIBILI_BVID /
+ * BILIBILI_URL，视频这边对齐同一套键名，日后按 bvid 判重/去重都能直接用。
+ *
+ * 只写平台给的原值，不推测：title 用分 P 名（多 P 时那才是"这一个"的名字），
+ * artist 用 UP 主，date 用投稿日期。
+ */
+export function videoMetadata(
+  info: VideoInfo,
+  page: { page: number; part: string },
+): Record<string, string> {
+  const multi = info.pages.length > 1
+  const title = multi && page.part ? page.part : info.title
+  const meta: Record<string, string> = {
+    title,
+    artist: info.owner.name,
+    album: info.title,
+    comment: `https://www.bilibili.com/video/${info.bvid}`,
+    SOURCE: 'bilibili',
+    SOURCE_ID: info.bvid,
+    BILIBILI_BVID: info.bvid,
+    BILIBILI_URL: `https://www.bilibili.com/video/${info.bvid}`,
+  }
+  if (info.pubdate > 0) meta.date = new Date(info.pubdate * 1000).toISOString().slice(0, 10)
+  return meta
+}
+
+/**
  * 看磁盘上一个路径的现状，给 `resolveTargetPath` 用。
  *
  * **怎么判断"这个文件属于哪个视频"**：
@@ -544,7 +575,7 @@ export async function downloadPage(
       if (options.audioOnly) {
         await toAudio(tmpAudio)
       } else {
-        await mux(tmpVideo, audioStream ? tmpAudio : null, tmpOut, ffmpegConfigured, signal)
+        await mux(tmpVideo, audioStream ? tmpAudio : null, tmpOut, ffmpegConfigured, signal, videoMetadata(info, page))
         if (!audioStream) warnings.push('这个视频没有音频流，成品是无声的')
       }
       await rename(tmpOut, target)

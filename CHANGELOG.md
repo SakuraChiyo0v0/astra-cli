@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.18.3 — 2026-10-27
+
+**bili 视频：把溯源标签写进容器（对齐音频侧）**
+
+- **视频侧以前一条标签都不写**（只有 B 站原片里的 `Packed by Bilibili XCoder`），
+  认文件只能靠文件名 —— 改一次 `bili.video-template` 就全对不上，跟音频 0.18.2 修的
+  「整批重下」是同一个病。现在 `mux` 里顺带写：`title` / `artist`(UP 主) / `album`(视频标题) /
+  `date`(投稿日) / `comment`(视频链接) + `SOURCE` / `SOURCE_ID` / `BILIBILI_BVID` / `BILIBILI_URL`，
+  键名与音频完全一致，日后按 bvid 判重/去重可以直接复用。
+- **`-movflags +use_metadata_tags` 是必须的**：mp4 muxer 默认只认白名单键
+  （title/artist/album/date…），`BILIBILI_BVID` 这种自定义键会被**静默丢掉** ——
+  第一次实现就是这样，ffprobe 只剩 5 个标准键，加上这个 flag 才写进 `mdta`。
+- **`-map_metadata -1` 先清空输入元数据**：否则 B 站那句 junk description 会被带过来，
+  还会把 `major_brand` / `compatible_brands` 复制成重复的 mdta 条目
+  （实测出现 `isomiso2avc1mp41;isomiso2avc1mp41iso5`）。
+- 多 P 时 `title` 用分 P 名、`album` 用视频标题；分 P 名为空退回视频标题。
+- 新增 `tests/bili-video-metadata.test.ts`（4 例）。实测：`bili get BV19K421a7kx` →
+  ffprobe 拿到全部 10 个键，156s / h264+aac / 45MB，抽帧解码正常。
+
 ## 0.18.2 — 2026-10-27
 
 **bili audio：按 BVID 判重，改模板不再整批重下**

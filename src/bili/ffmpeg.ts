@@ -9,14 +9,31 @@ import { runFfmpeg, runFfprobe } from '../media/run.ts'
 export { ffmpegPath, ffprobePath } from '../media/run.ts'
 
 /** 把分轨的音视频合成一个文件。`-c copy` 不重编码，快且无损。 */
-export async function mux(video: string, audio: string | null, output: string, configured: string, signal?: AbortSignal): Promise<void> {
+export async function mux(
+  video: string,
+  audio: string | null,
+  output: string,
+  configured: string,
+  signal?: AbortSignal,
+  metadata?: Record<string, string>,
+): Promise<void> {
   const args = ['-hide_banner', '-loglevel', 'error', '-y']
   args.push('-i', video)
   if (audio) args.push('-i', audio)
   args.push('-c', 'copy', '-map', '0:v:0')
   if (audio) args.push('-map', '1:a:0')
-  // mp4 里放不了某些 codec 的原生封装（例如 AV1 的某些 annexb），有明显兼容问题就转封装
-  args.push('-movflags', '+faststart', output)
+  // 溯源标签：视频侧原来一条都不写，只能靠文件名认，改一次模板就认不出来了。
+  // `-c copy` 顺带写元数据不额外花时间（不重编码），所以就在合并这一步一起做。
+  // `-map_metadata -1` 先清空输入自带的元数据：B 站原片里只有一句
+  // "Packed by Bilibili XCoder"，还会把 major_brand 之类的容器键复制成重复的 mdta 条目。
+  args.push('-map_metadata', '-1')
+  for (const [key, value] of Object.entries(metadata ?? {})) {
+    if (value) args.push('-metadata', `${key}=${value}`)
+  }
+  // mp4 里放不了某些 codec 的原生封装（例如 AV1 的某些 annexb），有明显兼容问题就转封装。
+  // `use_metadata_tags` 是必须的：mp4 muxer 默认只认白名单键（title/artist/album/date…），
+  // 自定义键（BILIBILI_BVID / SOURCE_ID）会被静默丢掉，写进 `mdta` 才留得住。
+  args.push('-movflags', '+faststart+use_metadata_tags', output)
   const result = await runFfmpeg(configured, args, signal)
   if (result.code !== 0) {
     throw new AstraError('FFMPEG_FAILED', `ffmpeg 合并失败（退出码 ${result.code}）：${result.stderr.trim().slice(0, 300)}`, { exitCode: 5 })
