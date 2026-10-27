@@ -56,6 +56,22 @@ test('修饰超过 14 字：宁可撞名也不写一长串', () => {
   assert.equal(tagTitleFor(i, { page: 1, part: '七月七日晴' }, `/m/东洋雪莲/${long}.mp3`), '七月七日晴')
 })
 
+test('标题里没有《》：文件名更干净，用文件名', () => {
+  const i = info('【补档】东雪莲の兔子洞（全年龄版）/AI東 雪蓮')
+  assert.equal(
+    tagTitleFor(i, { page: 1, part: '东雪莲の兔子洞' }, '/m/东洋雪莲/东雪莲の兔子洞（全年龄版）.mp3'),
+    '东雪莲の兔子洞（全年龄版）',
+  )
+})
+
+test('标题没有《》但带装饰引号：还是用文件名', () => {
+  const i = info('“我期待的不是雪，而是有你的冬天”/AI東 雪蓮')
+  assert.equal(
+    tagTitleFor(i, { page: 1, part: '我期待的不是雪' }, '/m/东洋雪莲/我期待的不是雪，而是有你的冬天.mp3'),
+    '我期待的不是雪，而是有你的冬天',
+  )
+})
+
 test('文件名与歌名毫无关系：保持歌名', () => {
   const i = info('难却（“待上浓妆好戏开场”《难却》/AI東 雪蓮')
   assert.equal(tagTitleFor(i, { page: 1, part: '难却' }, '/m/东洋雪莲/难却.mp3'), '难却')

@@ -230,15 +230,16 @@ export function buildBvidIndex(dir: string): Map<string, string> {
  * 丢掉：`清姬（DJ）` 和 `清姬` 两个不同 bvid 的视频，TIT2 都是 `清姬`，播放器里
  * 显示成两条一模一样的记录（实测库里 19 组 39 个文件这样）。
  *
- * 规则：文件名以歌名开头、后面只跟一段短的括号修饰时，TIT2 用**文件名**——
- * 那个修饰（`（DJ）` / `（日语填词）` / `（升调）`）就是唯一能区分它们的东西，
- * 而且文件名本来就是落盘时算好的、天然不重复。
+ * 规则（按优先级）：
+ * 1. 文件名比歌名**更短** → 用文件名。B 站标题里没有《》时 `songTitleOf()` 只能退回整条
+ *    标题（`「カサネテク」（千层套路）/AI東 雪蓮`、`【补档】东雪莲の兔子洞（全年龄版）/AI東 雪蓮`），
+ *    而落盘时算出来的文件名是干净的（`カサネテク（千层套路）`）。
+ * 2. 文件名 = 歌名 + ≤14 字的括号修饰 → 用文件名。那个修饰（`（DJ）` / `（日语填词）` / `（升调）`）
+ *    是唯一能区分同名不同版本的东西，丢了播放器里就是两条一模一样的记录。
+ * 3. 其余（文件名更长、或用户手工削成了别的短名）→ 保持歌名。
  *
- * 两道闸：
- * - 必须以歌名开头。用户手工削过的短名（`伯虎说` 之于 `伯虎说（“明月万年…”）`）不符合，
- *   保持歌名不动。
- * - 修饰不超过 14 字。`七月七日晴（“七月七日晴，忽然下起了大雪”《七月七日晴》）`
- *   这种 87 字的长名，宁可继续撞名也不把标签写成一长串。
+ * 两条闸：修饰不超过 14 字；文件名更长时不动（`七月七日晴（“七月七日晴，忽然下起了大雪”《七月七日晴》）`
+ * 这种 87 字的长名，宁可标签保持干净的歌名）。
  */
 export function tagTitleFor(
   info: VideoInfo,
@@ -248,6 +249,7 @@ export function tagTitleFor(
   const base = songTitleOf(info, page)
   const stem = path.basename(target).replace(/\.[^.]+$/, '')
   if (stem === base) return base
+  if (stem.length < base.length) return stem
   if (!stem.startsWith(base)) return base
   const suffix = stem.slice(base.length)
   if (suffix.length === 0 || suffix.length > 14) return base
