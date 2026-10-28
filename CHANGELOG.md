@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.18.6 — 2026-10-28
+
+**bili 新增两条命令：`dyn`（图文动态）与 `album`（相簿）**
+
+- 之前 `bili` 只能拿视频（get / info / space / collection / bulk / audio / subscribe），
+  图文动态和官方海报拿不到。补两条：
+  - `astra bili dyn <UP|mid:xxx> [--limit 20] [--images] [--out 目录]`
+  - `astra bili album <UP|mid:xxx> [--limit 40] [--images] [--out 目录]`
+- **两个接口的可靠性差一个量级，所以拆成两条命令**：
+  - 相簿 `/x/dynamic/feed/draw/doc_list`：免签名免登录，实测无风控，给**完整图集**
+    （官方号实测 1920×1080、1080×2853 竖版海报）。
+  - 动态 `/x/polymer/web-dynamic/v1/opus/feed/space`：要 `buvid3/buvid4` + wbi 签名，
+    给**正文 + 一张封面图**，**不返回发布时间**（`pub_time` 恒空，`opus/detail` 又被 -352 挡），
+    所以 `date` 为 null、存图名是 `undated_<opusId>_<n>`。
+- **踩到的坑（值得记）**：网页版动态接口 `/x/polymer/web-dynamic/v1/feed/space`
+  在 Node 的 fetch 下**恒返回 `code:0` + 空 items**，同样参数用 Python 请求能拿到 12 条 ——
+  按客户端指纹做的软拦截。加 `origin` / `accept-language` 不但没用，反而升级成 `-412`。
+  换 `opus/feed/space` 后 Node 下一次 20 条正常。所以命令走 opus 入口。
+- 频率风控的另一半：取完 wbi key 立刻请求会被挡，隔 1.5 秒以上才稳；每次重试换新 buvid + wbi key。
+- `--images` 落盘 `<前缀><日期|undated>_<id>_<序号>.<ext>`，< 20KB 的图标自动跳过。
+- 无新增测试（纯网络 IO）；`npm test` 413 个全过，typecheck 干净。
+
 ## 0.18.5 — 2026-10-27
 
 **bili 音频：标题里没有《》时，TIT2 用干净的文件名**

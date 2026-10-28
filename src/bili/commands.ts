@@ -24,6 +24,7 @@ import { watchLater, watchHistory } from './account-lists.ts'
 import { httpRequest } from '../core/http.ts'
 import { searchUsers, searchVideos } from './search.ts'
 import { parseMid, spaceOverview, spaceVideos } from './space.ts'
+import { fetchAlbum, fetchDynamics, saveImages } from './dynamics.ts'
 import { addBiliSubscription, dueBiliSubscriptions, findBiliSubscription, listBiliSubscriptions, removeBiliSubscription, runBiliSubscription, setBiliSubscription } from './subscribe.ts'
 
 import { mediaRoot } from '../core/config.ts'
@@ -1317,8 +1318,109 @@ const spaceCmd: Command = {
   },
 }
 
+
+const dynCmd: Command = {
+  name: 'bili dyn',
+  summary: '看某个 UP 的动态（图文），可把图存下来',
+  usage: 'astra bili dyn <UP链接|mid:546195> [--limit 20] [--images] [--out <目录>]',
+  notes: [
+    '返回正文 + 一张封面图（opus 接口只给 cover），要完整图集用 bili album',
+    '走 opus/feed/space（Node 下可用）；网页版那个 feed/space 在 Node 里恒返回空列表，改 header 也没用',
+    '**opus 接口不返回发布时间**，所以 date 为 null、存图文件名是 undated_<opusId>_<序号>；要日期用 bili album',
+    '每条只带一张封面图（官方号通常是主视觉），要完整图集用 `bili album`',
+    '--images 把图下到 --out（默认 <ASTRA_HOME>/bili-dyn），文件名 undated_<opusId>_<序号>',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '最多取多少条，默认 20', valueName: 'n' },
+    images: { type: 'boolean', description: '把动态里的图下载到本地' },
+    out: { type: 'string', description: '图片保存目录（配合 --images）', valueName: 'dir' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const mid = parseMid(positionals[0]!)
+    if (!mid) throw invalidInput(`认不出这是哪个 UP：${positionals[0]!.slice(0, 40)}`, '给 space.bilibili.com/<mid> 链接，或 mid:<数字>')
+    const limit = Math.max(1, Math.min(200, Number(values.limit ?? '20') || 20))
+    const { items, pages, riskLimited } = await fetchDynamics(mid, limit, signal)
+    const list = items.map((item) => ({
+      dynId: item.dynId,
+      kind: item.kind,
+      date: item.pubTs ? new Date(item.pubTs * 1000).toISOString().slice(0, 10) : null,
+      text: item.text.slice(0, 120),
+      imageCount: item.images.length,
+      url: `https://t.bilibili.com/${item.dynId}`,
+      ...(item.images.length > 0 ? { images: item.images } : {}),
+    }))
+
+    let saved: unknown[] = []
+    if (values.images === true) {
+      const dir = typeof values.out === 'string' && values.out ? values.out : homePath('bili-dyn')
+      const done = await saveImages(items.map((i) => ({ id: i.dynId, pubTs: i.pubTs, images: i.images })), dir, '', signal)
+      saved = done.map((d) => ({ file: d.file, bytes: d.bytes }))
+    }
+
+    return {
+      data: {
+        mid, pages, riskLimited, count: list.length,
+        ...(saved.length > 0 ? { savedCount: saved.length, savedDir: typeof values.out === 'string' && values.out ? values.out : homePath('bili-dyn'), saved } : {}),
+        items: list,
+        ...(riskLimited ? { hint: '动态接口被风控挡过一轮，结果可能不全；相簿接口（bili album）不受影响' } : {}),
+      },
+    }
+  },
+}
+
+const albumCmd: Command = {
+  name: 'bili album',
+  summary: '看某个 UP 的相簿（官方海报/立绘/表情包），可批量存图',
+  usage: 'astra bili album <UP链接|mid:1636034895> [--limit 40] [--images] [--out <目录>]',
+  notes: [
+    '相簿接口 `/x/dynamic/feed/draw/doc_list` **免签名免登录**，比动态流稳，实测没有风控',
+    '官方号的高清图基本都在这里（实测 1920×1080、1080×2853 的竖版海报）',
+    '返回里不含图片分辨率，需要就自己读文件（PIL / identify）',
+    '--images 把图下到 --out（默认 <ASTRA_HOME>/bili-album）',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '最多取多少条相簿，默认 40', valueName: 'n' },
+    images: { type: 'boolean', description: '把相簿里的图下载到本地' },
+    out: { type: 'string', description: '图片保存目录（配合 --images）', valueName: 'dir' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const mid = parseMid(positionals[0]!)
+    if (!mid) throw invalidInput(`认不出这是哪个 UP：${positionals[0]!.slice(0, 40)}`, '给 space.bilibili.com/<mid> 链接，或 mid:<数字>')
+    const limit = Math.max(1, Math.min(500, Number(values.limit ?? '40') || 40))
+    const { items, pages } = await fetchAlbum(mid, limit, signal)
+    const list = items.map((item) => ({
+      docId: item.docId,
+      date: item.pubTs ? new Date(item.pubTs * 1000).toISOString().slice(0, 10) : null,
+      desc: item.desc.slice(0, 120),
+      imageCount: item.images.length,
+      ...(item.images.length > 0 ? { images: item.images } : {}),
+    }))
+
+    let savedCount = 0
+    let savedDir = ''
+    if (values.images === true) {
+      savedDir = typeof values.out === 'string' && values.out ? values.out : homePath('bili-album')
+      const done = await saveImages(items.map((i) => ({ id: i.docId, pubTs: i.pubTs, images: i.images })), savedDir, 'album_', signal)
+      savedCount = done.length
+    }
+
+    return {
+      data: {
+        mid, pages, count: list.length,
+        ...(savedCount > 0 ? { savedCount, savedDir } : {}),
+        items: list,
+      },
+    }
+  },
+}
+
 export const biliCommands: Command[] = [
   get, info, subtitle, danmaku, popular, weekly, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk, audioCmd,
+  dynCmd, albumCmd,
   jobCmd, jobList, jobCancel, jobResume, workerCmd,
   loginStart, loginPoll, account, logout, doctor,
   subAdd, subList, subSet, subRemove, subRun,
