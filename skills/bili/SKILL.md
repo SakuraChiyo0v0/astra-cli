@@ -50,6 +50,9 @@ stdout 只有一个 JSON。`ok:true` 看 `data`，`ok:false` 看 `error.code` / 
 | 只要音频 | `astra bili get <...> --audio-only`（默认 mp3，自动写歌名 / UP 主 / 封面 / BV 号） |
 | 先看有什么 | `astra bili info <...>`（加 `--probe` 看实际能拿到什么画质） |
 | 存字幕 | `astra bili subtitle <...> [--page 1]` |
+| 看某 UP 的图文动态 | `astra bili dyn <UP链接\|mid:xxx> --limit 20` |
+| 抓某 UP 的相簿（官方海报/立绘） | `astra bili album <UP链接\|mid:xxx> --limit 40` |
+| 把图存下来 | 上面两条加 `--images --out <目录>` |
 
 ## Procedure
 
@@ -61,6 +64,18 @@ stdout 只有一个 JSON。`ok:true` 看 `data`，`ok:false` 看 `error.code` / 
      **不要自作主张一次下几百集**，先问清楚。
 3. 下载完成后告诉用户：文件路径、实际分辨率、时长、大小。
 
+## 抓图文（dyn / album）
+
+两个接口的可靠性差一个量级，别混用：
+
+| 命令 | 接口 | 给什么 | 稳定性 |
+|-|-|-|-|
+| `bili album` | `draw/doc_list` | **完整图集**（官方号实测 1920×1080、1080×2853 竖版海报） | 免签名免登录，实测无风控 |
+| `bili dyn` | `opus/feed/space` | 正文 + **一张封面图**，**无发布时间** | 要 buvid + wbi，有频率风控 |
+
+**要官方高清图优先用 `album`**：`astra bili album mid:1636034895 --limit 40 --images --out /path`
+（1636034895 是绝区零官号）。`dyn` 更适合要**文案**的场景，图片只是封面。
+
 ## Pitfalls
 
 - **未登录画质封顶 360P**，这不是 bug。想拿高画质需要 `astra bili login start` 扫码（二维码是 PNG，
@@ -69,6 +84,10 @@ stdout 只有一个 JSON。`ok:true` 看 `data`，`ok:false` 看 `error.code` / 
 - `BILI_API_ERROR` 里 code `-403` 是私密或地区限制，`-404` 是视频不存在。
 - 番剧 / 部分老视频没有 DASH 分轨，成品可能画质选项少，`warnings` 会说明。
 - 下载体积可能很大（4K 一集几百 MB），用户没说要高画质时默认 1080p 就够。
+- **`dyn` 和 `album` 别指望有日期**：`opus` 接口 `pub_time` 恒空、`opus/detail` 被 -352 挡，
+  所以 `dyn` 的 `date` 是 null、存图名是 `undated_<opusId>_<n>`；`album` 有 `ctime`。
+- **`dyn` 报 `BILI_DYN_RISK`** 是频率风控，等几分钟再试；抓几百张图时用 `album`（无风控），
+  大批量抓完再抓动态，否则会把动态接口打到 -412。
 
 ## Verification
 
