@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.24.0 — 2026-10-29
+
+**切到 PostgreSQL：`db use` 持久化连接串 + 两个只有真库才暴露的 bug**
+
+- `astra db use <连接串>` / `astra db use --sqlite`
+  - 连接串写进 `<ASTRA_HOME>/db-url`（600），优先级：环境变量 > 文件 > 本机 SQLite
+  - 为什么要文件：`ASTRA_DB_URL` 只活在进程环境里，cron 拿不到，改它还得重启网关
+  - `db use` 会先 ping，连不上就不写，避免把 CLI 切到坏库
+- 修 **PG 导入后 events 主键冲突**：`bigserial` 不会因为「显式插入 id」自动前进，
+  导入完第一次写事件就撞 `events_pkey`。`db import` 现在会 `setval` 重置序列
+- 修 **图片库的 jpg 被当附属文件跳过**：之前一律跳过图片扩展名，导致 pixiv 资产
+  永远匹配不上、被误标 missing。现在按「这个 root 里有没有图片类资产」决定是否跳过
+- 线上已切 PG：310 assets / 310 files / 13.11 GB，`lib scan` 0.5 秒跑完 1655 个文件
+
+测试 456 全过（新增 1 个图片库用例）。
+
 ## 0.23.1 — 2026-10-29
 
 **修 `lib verify` 全线误报：回填的 sha256 根本不是文件哈希**

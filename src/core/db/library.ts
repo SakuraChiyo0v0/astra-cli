@@ -287,6 +287,13 @@ export async function scan(
     // 还有 size 未知的行时不能按 size 剪枝（否则「移动 + 未知 size」的文件会被误判成孤儿）
     const canPruneBySize = unknownSize === 0
 
+    // 图片在音乐库里是附属（cover.jpg），在 pixiv 库里就是资产本身。
+    // 按「这个 root 里有没有图片类资产」决定要不要跳过图片，不能一刀切。
+    const imageRoot = rows.some((r) => /\.(jpe?g|png|webp|gif|bmp)$/i.test(r.rel_path))
+    const skipExt = imageRoot
+      ? /\.(tmp|part|log|json|txt|md|nfo|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i
+      : /\.(tmp|part|log|json|txt|md|jpg|jpeg|png|webp|gif|bmp|nfo|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i
+
     const seen = new Set<string>()
     const files = await walk(root.abs_path)
     const candidates: { abs: string; rel: string; size: number }[] = []
@@ -296,7 +303,7 @@ export async function scan(
     for (const abs of files) {
       const base = path.basename(abs)
       if (base.startsWith('.')) continue
-      if (/\.(tmp|part|log|json|txt|md|jpg|jpeg|png|nfo|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i.test(base)) continue
+      if (skipExt.test(base)) continue
       scanned += 1
       const rel = path.relative(root.abs_path, abs)
       const size = sizeOf(abs)

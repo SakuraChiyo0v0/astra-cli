@@ -149,6 +149,25 @@ test('扫描会跳过 .lrc / 图片等非资产文件', async () => {
   }
 })
 
+test('图片库（pixiv）里的 jpg 是资产，不能被当附属文件跳过', async () => {
+  const { db, root, close } = setup()
+  try {
+    await migrate(db)
+    const r0 = await addRoot(db, 'pixiv', root)
+    mkdirSync(path.join(root, '62834074'), { recursive: true })
+    const body = 'fake-jpeg-bytes'
+    writeFileSync(path.join(root, '62834074', '151211681_p0.jpg'), body)
+    await recordDownload(db, { platform: 'pixiv', nativeId: '151211681_p0', title: 'x', kind: 'image' },
+      { rootId: r0.id, relPath: path.join('62834074', '151211681_p0.jpg'), size: body.length })
+
+    const r = await scan(db)
+    assert.equal(r.unchanged, 1)
+    assert.equal(r.missing.length, 0)
+  } finally {
+    await close()
+  }
+})
+
 test('有文件引用的 root 不能删', async () => {
   const { db, root, close } = setup()
   try {

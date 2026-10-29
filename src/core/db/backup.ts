@@ -165,6 +165,17 @@ export async function importJson(
         }
       }
     }
+    // PostgreSQL 的 bigserial 不会因为「显式插入 id」自动前进 ——
+    // 不重置序列，导入后第一次 insert 就撞 events_pkey（实测踩到）。
+    if (db.dialect.name === 'postgres') {
+      for (const table of TABLES) {
+        try {
+          await tx.exec(`select setval(pg_get_serial_sequence('${table}', 'id'), coalesce((select max(id) from ${table}), 1))`)
+        } catch {
+          // 没有 serial 列的表（roots/assets/files 的 id 是 text）直接跳过
+        }
+      }
+    }
   })
   return { inserted }
 }

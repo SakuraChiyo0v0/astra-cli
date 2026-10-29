@@ -11,7 +11,7 @@ import path from 'node:path'
 import { invalidInput } from '../errors.ts'
 import { consume, prepare } from '../confirm.ts'
 import type { Command } from '../command.ts'
-import { openDatabase, redact, dbUrl } from './index.ts'
+import { openDatabase, redact, dbUrl, saveDbUrl, clearDbUrl } from './index.ts'
 import { appliedMigrations, MIGRATIONS, migrate } from './migrations.ts'
 import { backupDatabase, doctor, exportJson, importJson, restoreDatabase } from './backup.ts'
 
@@ -226,7 +226,46 @@ export const dbCommands: Command[] = [
     usage: 'astra db url',
     async run() {
       const raw = dbUrl()
-      return { data: { url: redact(raw), fromEnv: Boolean(process.env.ASTRA_DB_URL?.trim()) } }
+      const fromEnv = Boolean(process.env.ASTRA_DB_URL?.trim())
+      return {
+        data: {
+          url: redact(raw),
+          fromEnv,
+          fromFile: !fromEnv && raw !== `sqlite:${process.env.ASTRA_HOME ?? ''}/astra.db`,
+          dialect: raw.startsWith('postgres') ? 'postgres' : raw.startsWith('mysql') ? 'mysql' : 'sqlite',
+        },
+      }
+    },
+  },
+  {
+    name: 'db use',
+    summary: '切换数据库：写进 <ASTRA_HOME>/db-url（600 权限），不用改环境变量',
+    usage: 'astra db use <连接串> | astra db use --sqlite',
+    options: {
+      sqlite: { type: 'boolean', description: '回到本机 SQLite（删掉 db-url 文件）' },
+    },
+    maxArgs: 1,
+    notes: [
+      '会先 ping 一次，连不上就不写，避免把 CLI 切到一个坏库上',
+      '切过去之后别忘了 astra db migrate（新库还没有表）',
+      '环境变量 ASTRA_DB_URL 优先级更高；临时测试请用环境变量，别写文件',
+    ],
+    async run({ positionals, values }) {
+      if (values.sqlite === true) {
+        const removed = clearDbUrl()
+        return { data: { switched: false, sqlite: true, removedFile: removed, url: redact(dbUrl()) } }
+      }
+      const target = positionals[0]
+      if (!target) throw invalidInput('缺少连接串', '用法：astra db use postgres://user:pass@host:5432/astra')
+      const db = await openDatabase(target)
+      try {
+        const ok = await db.conn.ping()
+        if (!ok) throw new Error('ping 失败')
+        saveDbUrl(target)
+        return { data: { switched: true, dialect: db.dialect.name, url: redact(target), next: 'astra db migrate' } }
+      } finally {
+        await db.conn.close()
+      }
     },
   },
 ]

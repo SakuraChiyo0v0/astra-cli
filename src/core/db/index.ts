@@ -6,6 +6,7 @@
  * - `postgres://…` → PostgreSQL
  * - `mysql://…` → 暂未实现，明确报错而不是静默回落
  */
+import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { AstraError } from '../errors.ts'
 import { homePath } from '../paths.ts'
 import { dialectOf, sqlitePath, type Conn, type Dialect } from './adapter.ts'
@@ -19,9 +20,40 @@ export interface Database {
   url: string
 }
 
+/**
+ * 连接串优先级：环境变量 > `<ASTRA_HOME>/db-url` 文件 > 本机 SQLite。
+ *
+ * 为什么要文件：`ASTRA_DB_URL` 只存在于进程环境里，Hermes 的 cron/子进程拿不到，
+ * 切换数据库就得改容器环境变量并重启网关。文件方式让切换只是「写一行」。
+ * 文件里放密码，所以创建时 chmod 600。
+ */
 export function dbUrl(): string {
   const fromEnv = process.env.ASTRA_DB_URL?.trim()
-  return fromEnv && fromEnv !== '' ? fromEnv : `sqlite:${homePath('astra.db')}`
+  if (fromEnv && fromEnv !== '') return fromEnv
+  try {
+    const fromFile = readFileSync(homePath('db-url'), 'utf8').trim()
+    if (fromFile !== '') return fromFile
+  } catch {
+    // 没有文件就是没配，正常路径
+  }
+  return `sqlite:${homePath('astra.db')}`
+}
+
+/** 把连接串写进 `<ASTRA_HOME>/db-url`（600 权限，含密码）。 */
+export function saveDbUrl(url: string): void {
+  const file = homePath('db-url')
+  writeFileSync(file, `${url.trim()}\n`, { encoding: 'utf8', mode: 0o600 })
+  chmodSync(file, 0o600)
+}
+
+/** 删掉 db-url 文件，回落到本机 SQLite。 */
+export function clearDbUrl(): boolean {
+  try {
+    rmSync(homePath('db-url'))
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** 打日志用：把连接串里的密码抹掉。 */
