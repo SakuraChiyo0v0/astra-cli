@@ -35,6 +35,54 @@ function locate(roots: { id: string; abs_path: string }[], abs: string): { rootI
   return null
 }
 
+export interface MirrorFile {
+  platform: string
+  nativeId: string
+  kind: string
+  title: string
+  artists?: string | null
+  album?: string | null
+  durationMs?: number | null
+  meta?: unknown
+  path: string
+  bytes?: number | null
+  sha256?: string | null
+}
+
+/** 把任意落盘文件同步进资产库（音乐/视频/图片都走这里）。内部吞掉所有错误。 */
+export async function mirrorFile(entry: MirrorFile): Promise<boolean> {
+  try {
+    const db = await openDatabase()
+    try {
+      const roots = await listRoots(db)
+      if (roots.length === 0) return false
+      const spot = locate(roots, path.resolve(entry.path))
+      if (!spot) return false
+      const size = existsSync(entry.path) ? statSync(entry.path).size : entry.bytes ?? null
+      await recordDownload(
+        db,
+        {
+          platform: entry.platform,
+          nativeId: entry.nativeId,
+          kind: entry.kind,
+          title: entry.title,
+          artists: entry.artists ?? null,
+          album: entry.album ?? null,
+          durationMs: entry.durationMs ?? null,
+          meta: entry.meta,
+        },
+        { rootId: spot.rootId, relPath: spot.rel, size },
+        { sha256: entry.sha256 ?? null },
+      )
+      return true
+    } finally {
+      await db.conn.close()
+    }
+  } catch {
+    return false
+  }
+}
+
 /** 把一条曲目同步进资产库。调用方不需要 await；内部吞掉所有错误。 */
 export async function mirrorTrack(entry: MirrorTrack): Promise<boolean> {
   try {

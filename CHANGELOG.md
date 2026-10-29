@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.22.0 — 2026-10-29
+
+**bili / pixiv 落盘也写进资产库 + `lib root auto`**
+
+之前只有 `music` 会影子写入，视频和图片在资产库里是空白。
+
+- `mirrorFile()`：通用落盘登记（音乐/视频/图片共用），按 root 前缀算相对路径，
+  找不到匹配 root 就返回 false 而不是报错
+- `bili downloadPage`：下载成功后登记 `bili:<BV号>_p<分P>`，`kind` 区分 video/audio，
+  `meta` 带 bvid/page/cid/part/画质
+- `pixiv pull`：每张图登记 `pixiv:<作品id>_p<页码>`，`meta` 带 illustId/page/userId/quality
+- `astra lib root auto`：按 astra 自己的配置（music.dir / bili.dir / pixiv.dir / comic.dir /
+  pixiv.sensitive-dir）批量注册存储根；**已被现有 root 覆盖的路径会跳过**，
+  避免两个 root 圈同一片文件
+
+测试 451 全过（新增 2 个 mirror 用例）。
+
 ## 0.21.0 — 2026-10-29
 
 **资产库落地：`tracks` 回填 + `astra lib` 命令 + 移动自动纠回**

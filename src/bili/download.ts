@@ -8,6 +8,7 @@
  */
 import { createWriteStream } from 'node:fs'
 import { mkdir, rename, rm, stat } from 'node:fs/promises'
+import { mirrorFile } from '../core/db/mirror.ts'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
@@ -640,6 +641,19 @@ export async function downloadPage(
     // 只下音频时，内嵌封面会被 ffprobe 报成一条 mjpeg 视频流。这不是问题，但要说清楚，
     // 否则 AI 看到 videoCodec 会以为"不是说只要音频吗，怎么下了个视频"
     const coverStream = options.audioOnly && probed.videoCodec !== null && ['mjpeg', 'png', 'bmp', 'gif', 'webp'].includes(probed.videoCodec)
+
+    // 同步进资产库（位置与身份分离）。不 await：资产库出错不能影响下载结果。
+    void mirrorFile({
+      platform: 'bili',
+      nativeId: `${info.bvid}_p${page.page}`,
+      kind: options.audioOnly ? 'audio' : 'video',
+      title: songTitleOf(info, page) || info.title,
+      artists: info.owner?.name ?? null,
+      album: options.album ?? null,
+      durationMs: probed.durationSec ? Math.round(probed.durationSec * 1000) : null,
+      meta: { bvid: info.bvid, page: page.page, cid: page.cid, part: page.part, quality: qualityName(actualQuality) },
+      path: target,
+    })
 
     return {
       status: 'downloaded',

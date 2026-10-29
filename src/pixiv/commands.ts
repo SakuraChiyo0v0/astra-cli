@@ -10,6 +10,7 @@
 import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { mirrorFile } from '../core/db/mirror.ts'
 import { getConfig } from '../core/config.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command } from '../core/command.ts'
@@ -209,6 +210,16 @@ async function pullWorks(ids: number[], opts: PullOptions): Promise<PullSummary>
         await writeFile(file, buf)
         out.downloaded += 1
         out.files.push(file)
+        // 同步进资产库（不 await：资产库出错不能影响下载结果）
+        void mirrorFile({
+          platform: 'pixiv',
+          nativeId: `${detail.id}_p${page.page}`,
+          kind: 'image',
+          title: detail.title || `pixiv ${detail.id}`,
+          artists: detail.userName ?? null,
+          meta: { illustId: detail.id, page: page.page, userId: detail.userId, quality: opts.quality },
+          path: file,
+        })
       } catch (err) {
         out.failed += 1
         out.errors.push({ file, error: err instanceof Error ? err.message : String(err) })

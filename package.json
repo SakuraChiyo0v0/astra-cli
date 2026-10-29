@@ -1,6 +1,6 @@
 {
   "name": "astra-cli",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "private": true,
   "description": "给 AI 调用的个人能力 CLI：一条命令办完一件事，输出统一 JSON",
   "type": "module",

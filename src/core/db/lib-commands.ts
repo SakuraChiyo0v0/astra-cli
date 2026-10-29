@@ -4,8 +4,10 @@
  * 和 `db …` 的分工：`db` 是数据库本身的运维（迁移/备份/导出），`lib` 是**内容**的操作
  * （根目录、对账、查询）。
  */
+import path from 'node:path'
 import { AstraError, invalidInput } from '../errors.ts'
 import type { Command } from '../command.ts'
+import { getConfig, musicRoot } from '../config.ts'
 import { openDatabase, redact } from './index.ts'
 import { MIGRATIONS, appliedMigrations } from './migrations.ts'
 import {
@@ -32,8 +34,8 @@ async function open(): Promise<Awaited<ReturnType<typeof openDatabase>>> {
 export const libCommands: Command[] = [
   {
     name: 'lib root',
-    summary: '管理存储根：add / list / rm',
-    usage: 'astra lib root <add|list|rm> [标签] [绝对路径] [--note <说明>]',
+    summary: '管理存储根：add / list / rm / auto（按配置自动注册）',
+    usage: 'astra lib root <add|list|rm|auto> [标签] [绝对路径] [--note <说明>]',
     options: {
       note: { type: 'string', valueName: '说明', description: '给人看的备注（如「NAS 视角是 /volume1」）' },
     },
@@ -48,6 +50,37 @@ export const libCommands: Command[] = [
       try {
         if (action === 'list') {
           return { data: { roots: await listRoots(db), url: redact(db.url) } }
+        }
+        if (action === 'auto') {
+          // 按 astra 自己的配置注册存储根：music / bili / pixiv / comic
+          const wanted: { label: string; path: string; note: string }[] = [
+            { label: 'music', path: musicRoot(), note: 'music.dir' },
+            { label: 'bili', path: getConfig('bili.dir'), note: 'bili.dir' },
+            { label: 'pixiv', path: getConfig('pixiv.dir'), note: 'pixiv.dir' },
+            { label: 'comic', path: getConfig('comic.dir'), note: 'comic.dir' },
+          ]
+          try {
+            const sensitive = getConfig('pixiv.sensitive-dir')
+            if (sensitive.trim() !== '') wanted.push({ label: 'pixiv-r18', path: sensitive, note: 'pixiv.sensitive-dir' })
+          } catch {
+            // 这个配置项不存在时忽略
+          }
+          const existing = await listRoots(db)
+          const added: string[] = []
+          const skipped: string[] = []
+          for (const w of wanted) {
+            if (!w.path || w.path.trim() === '') continue
+            const target = path.resolve(w.path)
+            // 已有 root 覆盖这个路径（同路径或是它的上级）就跳过，避免两个 root 圈同一片文件
+            const covered = existing.some((r) => target === r.abs_path || target.startsWith(r.abs_path + path.sep))
+            if (covered) {
+              skipped.push(`${w.label}（已被现有 root 覆盖）`)
+              continue
+            }
+            await addRoot(db, w.label, target, w.note)
+            added.push(`${w.label} → ${target}`)
+          }
+          return { data: { added, skipped, roots: await listRoots(db) } }
         }
         if (action === 'add') {
           if (!label || !absPath) throw invalidInput('缺少参数', '用法：astra lib root add <标签> <绝对路径>')
