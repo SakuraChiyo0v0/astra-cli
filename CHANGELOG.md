@@ -1,11 +1,46 @@
 # Changelog
 
+## 0.20.0 — 2026-10-29
+
+**新增数据库适配层 + `astra db` 运维命令（PostgreSQL / SQLite）**
+
+起因：曲库把位置存成绝对路径（`tracks.file_path`），文件一挪就失真；而且只有 SQLite，
+多进程并发写、跨机器访问、模糊搜索都受限。这一版先把**底座**做出来，业务表迁移下一版做。
+
+- `src/core/db/adapter.ts`：方言接口（占位符转换 / DDL 类型 / upsert 子句 / 标识符引用），
+  `?` → `$n` 的转换会跳过字符串字面量、引号标识符和注释（有单测）
+- `src/core/db/sqlite.ts`：`node:sqlite`，零依赖，事务用 `begin immediate` + 嵌套 savepoint
+- `src/core/db/pg.ts`：`pg`（纯 JS，能进 esbuild 单文件包），事务 + `pg_advisory_lock` 防并发迁移
+- `src/core/db/migrations.ts`：`schema_migrations` 表 + checksum 校验（历史迁移被改就报错）+
+  按方言分开的 SQL；迁移不自动执行，只提示
+- 迁移 `0001_assets_files`：`roots` / `assets` / `files` / `events` —— **身份与位置分离**，
+  位置存 `root_id + rel_path`，换挂载点只改一行
+- 命令：`db ping` / `status` / `migrate [--dry-run]` / `backup [--logical]` / `export` /
+  `import [--truncate]` / `restore` / `doctor` / `url`
+- **逻辑导出（JSON）是跨方言迁移通道**：SQLite → PostgreSQL 实测通过
+- `restore` 和 `import --truncate` 走二次确认令牌，不会一句话就把库覆盖掉
+- PG 原生备份依赖本机 `pg_dump`（镜像里没有），缺了会明确提示改用 `--logical`
+- 连接串由 `ASTRA_DB_URL` 决定，不设则用本机 SQLite，CLI 开箱行为不变
+
+测试 442 全过（新增 7 个），单文件包 8.9 MB。
+
+## 0.19.2 — 2026-10-29
+
+**修 `comic get` 落盘到 NAS 时整本失败（EXDEV）**
+
+- `descrambleToFile()` 用 `rename` 把临时文件搬到最终路径，但临时目录在容器根分区、
+  落盘目录通常是 NAS 挂载点，跨文件系统 rename 直接抛
+  `EXDEV: cross-device link not permitted` —— 每页都在第 3 页左右整本失败。
+- 现在 `EXDEV` 退回「复制 + 删源」。**只要 `comic.dir` 指向挂载盘就必然踩到**，
+  而指向 NAS 正是这个功能的正常用法。
+
 ## 0.19.1 — 2026-10-29
 
 **comic search 可按标签、作者、作品、角色搜**
 
 - 新增 `--scope site|work|author|tag|actor`，默认 `site`（原来的站内全文）
 - `tag` 对的是 `info` 里的站内标签，不再拿关键词去撞标题
+
 
 ## 0.19.0 — 2026-10-29
 

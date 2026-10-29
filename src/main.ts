@@ -20,6 +20,7 @@ import { closeDb } from './core/db.ts'
 import { runDoctor } from './core/doctor.ts'
 import { allSessions, clearSessions, type Domain } from './core/sessions.ts'
 import { musicCommands } from './music/commands.ts'
+import { dbCommands } from './core/db/commands.ts'
 import { biliCommands } from './bili/commands.ts'
 import { mediaCommands } from './media/commands.ts'
 import { steamCommands } from './steam/commands.ts'
@@ -363,6 +364,7 @@ const commands: Command[] = [
 
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest,
   ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands, ...modelCommands,
+  ...dbCommands,
   ...pixivCommands, ...comicCommands,
 ]
 

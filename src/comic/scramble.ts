@@ -3,7 +3,7 @@
  *
  * 不引入 sharp 等原生依赖 —— Hermes 里只有单文件 astra.mjs，解混淆复用已有的 ffmpeg。
  */
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash, randomBytes } from 'node:crypto'
@@ -71,6 +71,24 @@ async function imageSize(file: string, configured: string, signal?: AbortSignal)
  * `num === 0` 时直接落盘（不经 ffmpeg）。
  * 输出扩展名跟源文件名走；ffmpeg 按扩展名选编码器。
  */
+/**
+ * 把临时文件搬到最终路径。
+ *
+ * **`rename` 不能跨文件系统**：临时目录在容器根分区（`/tmp`），
+ * 而落盘目录常是 NAS 挂载点（`/host-root/volume1/...`），
+ * 直接 rename 会抛 `EXDEV: cross-device link not permitted`。
+ * 这种情况退回「复制 + 删源」，代价是一次额外读写，但路径必须是用户配的那个。
+ */
+async function moveIntoPlace(from: string, to: string): Promise<void> {
+  try {
+    await rename(from, to)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'EXDEV') throw err
+    await copyFile(from, to)
+    await rm(from, { force: true })
+  }
+}
+
 export async function descrambleToFile(options: {
   scrambled: Buffer
   scrambleId: number
@@ -125,7 +143,7 @@ export async function descrambleToFile(options: {
         hint: '确认 ffmpeg 能解码 webp/jpg',
       })
     }
-    await rename(dst, options.outputPath)
+    await moveIntoPlace(dst, options.outputPath)
     return { slices: num }
   } finally {
     await rm(work, { recursive: true, force: true })
