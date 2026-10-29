@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.8 — 2026-10-29
+
+**pixiv：R-18 放行改成配置项**
+
+- 新增 `pixiv.r18`（默认 `false`）：设为 `true` 后 `pull` / `user --pull` / `sub run` / `top`
+  都不再跳过 `xRestrict != 0` 的作品。命令行 `--r18` 仍然有效，两者取并集。
+- 之前只有命令行开关，定时任务没法继承，等于每次都得在脚本里硬塞 `--r18`。
+
 ## 0.18.7 — 2026-10-29
 
 **pixiv：带 cookie 时改走 curl 子进程（绕开 Cloudflare 指纹判定）**

@@ -10,10 +10,20 @@
 import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { getConfig } from '../core/config.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command } from '../core/command.ts'
-import { getConfig } from '../core/config.ts'
 import { ensureDir, homePath } from '../core/paths.ts'
+
+/**
+ * R-18 到底放不放行。
+ *
+ * 两种来源取并集：命令行的 `--r18`，以及配置 `pixiv.r18=true`（默认 false）。
+ * 配置化的原因：库是自己的，用户说过「R-18 问题不大」之后，不该每天靠命令行开关兜。
+ */
+function r18Allowed(flag: unknown): boolean {
+  return flag === true || (getConfig('pixiv.r18') || '').trim() === 'true'
+}
 import {
   clearCookie,
   cookieDigest,
@@ -282,7 +292,7 @@ const user: Command = {
     const dir = resolveDir(values.out)
     const summary = await pullWorks(ids, {
       dir,
-      r18: values.r18 === true,
+      r18: r18Allowed(values.r18),
       dry: values.dry === true,
       limit,
       quality: values.quality === 'regular' ? 'regular' : 'original',
@@ -407,7 +417,7 @@ const subRun: Command = {
         continue
       }
       newWorks += fresh.length
-      const summary = await pullWorks(fresh, { dir, r18: values.r18 === true, dry: values.dry === true })
+      const summary = await pullWorks(fresh, { dir, r18: r18Allowed(values.r18), dry: values.dry === true })
       downloaded += summary.downloaded
       skipped += summary.skipped
       failed += summary.failed
@@ -565,7 +575,7 @@ const top: Command = {
       }
     }
     const typed = want ? hits.filter((h) => want.includes(h.illustType)) : hits
-    const pool = values.r18 === true ? typed : typed.filter((h) => h.xRestrict === 0)
+    const pool = r18Allowed(values.r18) ? typed : typed.filter((h) => h.xRestrict === 0)
 
     // 分批并发取收藏数，避免一次打 180 个请求被限流
     const stats = new Map<number, number>()
@@ -649,7 +659,7 @@ const pull: Command = {
     const quality = values.quality === 'regular' ? 'regular' as const : 'original' as const
     const summary = await pullWorks([id], {
       dir,
-      r18: values.r18 === true,
+      r18: r18Allowed(values.r18),
       dry: values.dry === true,
       quality,
       ...(pages ? { pages } : {}),
