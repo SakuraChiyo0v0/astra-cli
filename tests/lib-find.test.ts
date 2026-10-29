@@ -42,6 +42,22 @@ test('按路径能搜到标题只有文件名的资产', async () => {
   }
 })
 
+test('按存储根标签能搜到（如「本子」「pixiv」）', async () => {
+  const { db, root, close } = setup()
+  try {
+    await migrate(db)
+    await addRoot(db, '本子', root)
+    writeFileSync(path.join(root, '44935801', 'x_p0.jpg'), 'img-c')
+    await adopt(db, { kinds: ['image'] })
+
+    const hit = await findAssets(db, '本子')
+    assert.equal(hit.length, 1)
+    assert.equal(hit[0]!.rel_path, '44935801/x_p0.jpg')
+  } finally {
+    await close()
+  }
+})
+
 test('搜标题仍然有效，结果带位置', async () => {
   const { db, root, close } = setup()
   try {

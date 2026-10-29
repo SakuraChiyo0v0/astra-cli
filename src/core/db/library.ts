@@ -692,9 +692,13 @@ export async function findAssets(db: Database, keyword: string, limit = 20): Pro
               order by case f.state when 'present' then 0 else 1 end, f.rel_path limit 1) as rel_path
      from assets a
      where a.title like ? or a.artists like ? or a.album like ? or a.native_id like ?
-        or exists (select 1 from files f where f.asset_id = a.id and f.rel_path like ?)
+        or exists (
+          select 1 from files f join roots r on r.id = f.root_id
+           where f.asset_id = a.id
+             and (f.rel_path like ? or r.label like ? or r.abs_path like ?)
+        )
      order by a.title limit ?`,
-    [like, like, like, like, like, limit],
+    [like, like, like, like, like, like, like, limit],
   )
 }
 
