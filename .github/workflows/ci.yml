@@ -37,11 +37,14 @@ jobs:
       - name: 类型检查
         run: npm run typecheck
 
-      - name: 测试
-        run: npm test
-
+      # 先打包再测试：tests/entry.test.ts 测的就是 dist/astra.mjs 能不能被执行。
+      # 顺序反了它会在 copyFileSync 处 ENOENT，报错完全不像"顺序问题"——
+      # 这个 CI 因此连续红了 25 次。测试内部也会在缺产物时自己 build，双保险。
       - name: 打包
         run: npm run build
+
+      - name: 测试
+        run: npm test
 
       # 打包产物要能真的跑起来 —— 光"编译成功"不算
       - name: 冒烟：打包产物能执行

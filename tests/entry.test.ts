@@ -21,8 +21,15 @@ const run = promisify(execFile)
 const dist = path.resolve('dist/astra.mjs')
 let buildRoot = ''
 
-before(() => {
+before(async () => {
   buildRoot = mkdtempSync(path.join(tmpdir(), 'astra-entry-'))
+  // 这个文件测的是**打包产物**，所以缺 dist 时自己先打一次包。
+  // 以前靠"CI 里先 build 再 test"的隐含顺序，一旦步骤调换（CI 现在是 typecheck → test → build）
+  // 就变成 copyFileSync ENOENT，而且报错信息完全看不出是顺序问题。
+  if (!existsSync(dist)) {
+    console.log('[entry.test] 没有 dist/astra.mjs，先打包一次')
+    await run(process.execPath, ['scripts/build.mjs'], { timeout: 120_000 })
+  }
 })
 
 after(() => {
