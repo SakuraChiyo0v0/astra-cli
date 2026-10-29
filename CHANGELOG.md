@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.29.0 — 2026-10-29
+
+**墓碑认回 + 读时自愈：文件怎么挪都能自己接上**
+
+- **墓碑**：扫不到的文件标 `missing` 但保留指纹，不删记录（git-annex 的 location log 思路）
+  - 同 root 换名放回 → `revived`
+  - **跨 root 搬家 → 也能认回，`root_id` 跟着改**（新增全局墓碑索引，绕过按 root 的 size 剪枝）
+- **读时自愈**：`lib where` 查询时 `lstat` 每个位置，存在就修回 `present`，
+  不存在立刻标 `missing`，不用等巡检
+- 事件区分 `moved` / `revived`，`via` 记 inode / fingerprint / read-repair
+
+实测（真实文件，不经 CLI 直接 `mv`）：
+
+```
+mv pixiv/31339955/100357556_p0.png → 本子/_跨root测试/moved.png
+lib where   → 立刻 missing（read-repair，0 次扫描）
+lib scan --root comic → revived，342ms，root 从 pixiv 变 comic
+mv 回来 → scan 后 again revived，全库 missing 回到 0
+```
+
+踩坑两条：
+
+- **`moved` 数组漏 push**：`revived` 分支只发事件没进结果，调用方看到的是「什么都没发生」
+- **空 root 把图片当 sidecar 跳过**：`imageRoot` 靠库里的记录判断，空目录没有记录 → jpg 被跳过，
+  跨 root 复活永远失败。改成空 root 时按盘上文件类型分布判断
+
+测试 481 全过（新增 4 个 heal 用例：同 root 复活、跨 root 复活、读时自愈两个方向）。
+
 ## 0.28.0 — 2026-10-29
 
 **扫描提速 9.5 倍 + 零拷贝移动识别（抄 restic / Filebeat 的作业）**

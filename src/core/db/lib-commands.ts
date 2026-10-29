@@ -187,15 +187,19 @@ export const libCommands: Command[] = [
   },
   {
     name: 'lib where',
-    summary: '查某个资产在哪些位置（含已丢失的）',
+    summary: '查某个资产在哪些位置（查的时候顺手核对磁盘）',
     usage: 'astra lib where <资产id>',
+    notes: [
+      '读时自愈：查到的那一刻会 lstat 每个位置，存在就修回 present，不存在就立刻标 missing',
+      '文件被挪走了这里只会标 missing —— 找新位置要靠 lib scan（它用 inode / 指纹认回）',
+    ],
     minArgs: 1,
     maxArgs: 1,
     async run({ positionals }) {
       const id = positionals[0]!
       const db = await open()
       try {
-        const files = await whereAsset(db, id)
+        const files = await whereAsset(db, id, { repair: true })
         return {
           data: { id, files },
           table: {

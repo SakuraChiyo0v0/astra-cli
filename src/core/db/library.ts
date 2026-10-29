@@ -283,6 +283,17 @@ export async function scan(
     : allRoots
   const concurrency = options.concurrency ?? 8
 
+  // 跨 root 的墓碑：文件从 A 挪到 B 时，A 里是 missing、B 里是孤儿，
+  // 只看本 root 的记录永远接不上（抄 git-annex 的 location log 思路：位置可跨库迁移）。
+  const tombstones = await db.conn.query<{
+    id: string; asset_id: string; rel_path: string; root_id: string; hash: string; state: string
+    size: number | string | null
+  }>("select id, asset_id, rel_path, root_id, hash, state, size from files where state = 'missing' and hash is not null")
+  const tombByHash = new Map(tombstones.map((t) => [t.hash, t]))
+  // 墓碑的 size 也要参与「按 size 剪枝」的豁免：否则跨 root 搬家的文件在
+  // 目标 root 里 size 对不上任何记录，会被直接判成孤儿，根本走不到指纹那一步。
+  const tombSizes = new Set(tombstones.map((t) => Number(t.size)).filter((n) => Number.isFinite(n)))
+
   const moved: ScanResult['moved'] = []
   const missing: ScanResult['missing'] = []
   const orphans: { relPath: string; size: number }[] = []
@@ -294,8 +305,8 @@ export async function scan(
   for (const root of targets) {
     const rows = await db.conn.query<{
       id: string; asset_id: string; rel_path: string; size: number | null; hash: string | null
-      dev: string | null; ino: string | null; mtime_ms: number | null
-    }>('select id, asset_id, rel_path, size, hash, dev, ino, mtime_ms from files where root_id = ?', [root.id])
+      dev: string | null; ino: string | null; mtime_ms: number | null; state: string
+    }>('select id, asset_id, rel_path, size, hash, dev, ino, mtime_ms, state from files where root_id = ?', [root.id])
       // PG 的 bigint 走 JSON 是**字符串**（size / mtime_ms 都可能），不转成数字的话
       // `row.size === entry.size` 永远为 false —— 表现是每次扫描都全量重算指纹，
       // 实测第二遍 220 秒，比第一遍还慢。这个坑很隐蔽，必须在这里统一转。
@@ -327,16 +338,21 @@ export async function scan(
     // 还有 size 未知的行时不能按 size 剪枝（否则「移动 + 未知 size」的文件会被误判成孤儿）
     const canPruneBySize = unknownSize === 0
 
+    const seen = new Set<string>()
+    const files = await walk(root.abs_path)
+
     // 图片在音乐库里是附属（cover.jpg），在 pixiv 库里就是资产本身。
-    // 按「这个 root 里有没有图片类资产」决定要不要跳过图片，不能一刀切。
-    const imageRoot = rows.some((r) => /\.(jpe?g|png|webp|gif|bmp)$/i.test(r.rel_path))
+    // 空 root（第一次扫描）没有记录可参考，就看盘上文件的类型分布 ——
+    // 否则「往空目录里搬进来一张图」会被当成 sidecar 直接跳过，跨 root 复活永远失败。
+    const isImage = (p: string): boolean => /\.(jpe?g|png|webp|gif|bmp)$/i.test(p)
+    const isAv = (p: string): boolean => /\.(mp4|mkv|flv|webm|mov|mp3|flac|m4a|wav)$/i.test(p)
+    const imageRoot = rows.length > 0
+      ? rows.some((r) => isImage(r.rel_path))
+      : files.filter((f) => isImage(f.abs)).length > files.filter((f) => isAv(f.abs)).length
     // .nfo/.ass/.srt 这类是 sidecar，永远不是资产
     const skipExt = imageRoot
       ? /\.(tmp|part|log|json|txt|md|nfo|ass|ssa|vtt|srt|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i
       : /\.(tmp|part|log|json|txt|md|jpg|jpeg|png|webp|gif|bmp|nfo|ass|ssa|vtt|srt|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i
-
-    const seen = new Set<string>()
-    const files = await walk(root.abs_path)
     const candidates: { abs: string; rel: string; size: number; dev: string; ino: string; mtimeMs: number }[] = []
     /** inode 命中、直接判为移动的（不读内容）。 */
     const inodeMoves: { entry: WalkEntry; rel: string; row: typeof rows[number] }[] = []
@@ -363,7 +379,7 @@ export async function scan(
         inodeMoves.push({ entry, rel, row: byIno })
         continue
       }
-      if (canPruneBySize && !bySize.has(size)) {
+      if (canPruneBySize && !bySize.has(size) && !tombSizes.has(size)) {
         // size 在库里根本不存在 → 一定是新文件，不用读内容
         orphanCount += 1
         if (orphans.length < 50) orphans.push({ relPath: rel, size })
@@ -407,8 +423,10 @@ export async function scan(
         [item.rel, item.entry.size, 'present', new Date().toISOString(),
           item.entry.dev, item.entry.ino, item.entry.mtimeMs, item.row.id],
       )
-      if (from !== item.rel) {
-        await event(db, 'moved', item.row.asset_id, item.row.id, { from, to: item.rel, root: root.label, via: 'inode' })
+      // 删除后重建经常复用同一个 inode，所以这里也要区分「移动」和「复活」
+      const inodeKind = item.row.state === 'missing' ? 'revived' : 'moved'
+      if (inodeKind === 'revived' || from !== item.rel) {
+        await event(db, inodeKind, item.row.asset_id, item.row.id, { from, to: item.rel, root: root.label, via: 'inode' })
         moved.push({ assetId: item.row.asset_id, from, to: item.rel })
       }
     }
@@ -429,8 +447,10 @@ export async function scan(
           'update files set rel_path = ?, size = ?, hash = ?, state = ?, last_seen = ?, dev = ?, ino = ?, mtime_ms = ? where id = ?',
           [item.rel, item.size, fp, 'present', new Date().toISOString(), item.dev, item.ino, item.mtimeMs, hit.id],
         )
-        if (from !== item.rel) {
-          await event(db, 'moved', hit.asset_id, hit.id, { from, to: item.rel, root: root.label, via: 'fingerprint' })
+        // 墓碑复活（之前扫不到、现在回来了）与移动都要记进 moved，否则调用方看不到
+        const kind = hit.state === 'missing' ? 'revived' : 'moved'
+        if (kind === 'revived' || from !== item.rel) {
+          await event(db, kind, hit.asset_id, hit.id, { from, to: item.rel, root: root.label, via: 'fingerprint' })
           moved.push({ assetId: hit.asset_id, from, to: item.rel })
         }
         return
@@ -449,6 +469,24 @@ export async function scan(
         )
         await event(db, 'moved', target.asset_id, target.id, { from, to: item.rel, root: root.label, via: 'size-heal' })
         moved.push({ assetId: target.asset_id, from, to: item.rel })
+        return
+      }
+      // 跨 root 复活：这个文件的指纹在别的 root 里是一条 missing 记录
+      const tomb = tombByHash.get(fp)
+      if (tomb && !seen.has(tomb.id)) {
+        seen.add(tomb.id)
+        tombByHash.delete(fp)
+        const fromRoot = allRoots.find((r) => r.id === tomb.root_id)?.label ?? '?'
+        await db.conn.exec(
+          `update files set rel_path = ?, root_id = ?, size = ?, hash = ?, state = 'present', last_seen = ?,
+                            dev = ?, ino = ?, mtime_ms = ? where id = ?`,
+          [item.rel, root.id, item.size, fp, new Date().toISOString(),
+            item.dev, item.ino, item.mtimeMs, tomb.id],
+        )
+        await event(db, 'revived', tomb.asset_id, tomb.id, {
+          from: tomb.rel_path, to: item.rel, fromRoot, toRoot: root.label, via: 'fingerprint',
+        })
+        moved.push({ assetId: tomb.asset_id, from: tomb.rel_path, to: item.rel })
         return
       }
       orphanCount += 1
@@ -785,14 +823,37 @@ export interface FileRow {
   root_path: string
 }
 
-export async function whereAsset(db: Database, id: string): Promise<FileRow[]> {
+export async function whereAsset(
+  db: Database,
+  id: string,
+  options: { repair?: boolean } = {},
+): Promise<FileRow[]> {
   const rows = await db.conn.query<Omit<FileRow, 'abs_path'>>(
     `select f.id, f.rel_path, f.size, f.state, f.last_seen, r.label as root_label, r.abs_path as root_path
      from files f join roots r on r.id = f.root_id
      where f.asset_id = ? order by f.state, f.rel_path`,
     [id],
   )
-  return rows.map((r) => ({ ...r, abs_path: path.join(r.root_path, r.rel_path) }))
+  const withAbs = rows.map((r) => ({ ...r, abs_path: path.join(r.root_path, r.rel_path) }))
+  if (options.repair !== true) return withAbs
+
+  // 读时自愈（抄 Jellyfin 的「局部扫描」思路）：查到的那一刻就核对磁盘，
+  // 存在就顺手把 state 修回 present，不存在就立刻标 missing ——
+  // 不等到下一次巡检，查询结果永远不说谎。
+  for (const row of withAbs) {
+    const exists = existsSync(row.abs_path)
+    if (exists && row.state !== 'present') {
+      await db.conn.exec("update files set state = 'present', last_seen = ? where id = ?",
+        [new Date().toISOString(), row.id])
+      row.state = 'present'
+      await event(db, 'revived', id, row.id, { rel_path: row.rel_path, via: 'read-repair' })
+    } else if (!exists && row.state !== 'missing') {
+      await db.conn.exec("update files set state = 'missing' where id = ?", [row.id])
+      row.state = 'missing'
+      await event(db, 'missing', id, row.id, { rel_path: row.rel_path, via: 'read-repair' })
+    }
+  }
+  return withAbs
 }
 
 export async function assetEvents(db: Database, id: string, limit = 30): Promise<Record<string, unknown>[]> {
