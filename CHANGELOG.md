@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.18.7 — 2026-10-29
+
+**pixiv：带 cookie 时改走 curl 子进程（绕开 Cloudflare 指纹判定）**
+
+- 根因：Cloudflare 按 TLS/HTTP 指纹认客户端。**同一个 cookie**，Node 的 undici 请求
+  `www.pixiv.net` 回 403，`curl` 回 200（2026-10-28 实测，当天日报 50 张只下到 16 张、
+  34 条 403 就是它造成的）。
+- 新增 `pixiv.transport` 配置：`auto`（默认，有 cookie 用 curl、匿名用 fetch）/ `fetch` / `curl`。
+- `curlArgs()` 纯函数 + `pickTransport()`；curl 走 `-sS --compressed`，UA / Referer / Cookie /
+  `-x <proxy>` 由 `core/proxy.ts` 的 `shouldProxy()` 决定，与 fetch 通道同一套代理规则。
+- 效果：astra 终于能带 cookie 干活——`sl=4`/`sl=6` 的作品（匿名拿不到 `urls.original`）现在能正常取。
+  日报里那 14 个「astra 失败 → python 兜底」也可以省掉（兜底先留着当保险）。
+- 新增 `tests/pixiv-curl-transport.test.ts`（5 例，418 全过）。
+
 ## 0.18.6 — 2026-10-28
 
 **bili 新增两条命令：`dyn`（图文动态）与 `album`（相簿）**

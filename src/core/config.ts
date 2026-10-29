@@ -41,6 +41,11 @@ export const CONFIG_KEYS: ConfigKey[] = [
   // 落盘规范：<dir>/<userId>/<illustId>_p<N>.<ext>，只存不可变标识。
   { key: 'pixiv.dir', description: 'Pixiv 图片根目录（绝对路径）；留空则 `pixiv pull` 必须给 --out', default: '',
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
+  // 为什么要这个：Cloudflare 按 TLS/HTTP 指纹判定客户端。Node 的 undici **带 cookie** 请求
+  // www.pixiv.net 会被 403，而同一个 cookie 用 curl 就是 200（2026-10-28 实测）。
+  // 所以带 cookie 时默认改用 curl 子进程；不带 cookie（匿名）走原来的 fetch 更快。
+  { key: 'pixiv.transport', description: 'Pixiv 请求通道：auto（有 cookie 用 curl，否则 fetch）/ fetch / curl', default: 'auto',
+    validate: (v) => (['auto', 'fetch', 'curl'].includes(v) ? null : '只能是 auto / fetch / curl') },
   // `bili.template` 是 v0.12.x 的老名字。加了 `bili.audio-template` 之后它就不再是
   // "模板"而是"视频模板"，两个键并列时语义不对等 —— 看配置的人得先猜哪个管视频。
   // `bili.video-template` 是正式名；老名保留为别名，读写互通（见 ALIASES）。

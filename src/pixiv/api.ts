@@ -20,8 +20,11 @@
  * 表现像"站点挂了"。
  */
 import { existsSync, readFileSync, rmSync, chmodSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { AstraError } from '../core/errors.ts'
+import { getConfig } from '../core/config.ts'
 import { httpJson, httpRequest } from '../core/http.ts'
+import { proxyConfig, shouldProxy } from '../core/proxy.ts'
 import { ensureDir, homePath } from '../core/paths.ts'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
@@ -76,11 +79,89 @@ function headers(extra: Record<string, string> = {}, noCookie = false): Record<s
   }
 }
 
-async function ajax<T>(path: string, opts: { noCookie?: boolean } = {}): Promise<T> {
-  const raw = await httpJson<{ error: boolean; message?: string; body: T }>(`${BASE}${path}`, {
-    headers: headers({}, opts.noCookie === true),
-    timeoutMs: 20_000,
+/**
+ * curl 的调用参数（纯函数，方便单测）。
+ *
+ * 为什么要 curl：Cloudflare 按 TLS/HTTP 指纹判定。Node 的 undici **带 cookie** 请求
+ * www.pixiv.net 会被 403；同一个 cookie 换成 curl 就是 200（2026-10-28 实测，
+ * 当时日报 50 张只下到 16 张，34 条 403 就是它造成的）。
+ */
+export function curlArgs(url: string, cookie: string, proxyUrl: string | null): string[] {
+  const args = [
+    '-sS', // 静默但保留错误
+    '--max-time', '30',
+    '--compressed',
+    '-H', `User-Agent: ${UA}`,
+    '-H', `Referer: ${BASE}/`,
+    '-H', 'Accept: application/json',
+  ]
+  if (cookie) args.push('-H', `Cookie: ${cookie}`)
+  if (proxyUrl) args.push('-x', proxyUrl)
+  args.push(url)
+  return args
+}
+
+/** 走 curl 子进程拿 JSON。只在需要带 cookie 时用（匿名用 fetch 更快）。 */
+async function curlJson<T>(url: string, cookie: string): Promise<T> {
+  const host = new URL(url).host
+  const proxyUrl = shouldProxy(host) ? (proxyConfig()?.url ?? null) : null
+  const args = curlArgs(url, cookie, proxyUrl)
+  const { code, stdout, stderr } = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn('curl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    let err = ''
+    child.stdout.on('data', (chunk) => {
+      out += String(chunk)
+    })
+    child.stderr.on('data', (chunk) => {
+      err += String(chunk)
+    })
+    child.on('error', (error) => reject(new AstraError('NETWORK_ERROR', `curl 起不来：${error.message}`, { exitCode: 5 })))
+    child.on('close', (exitCode) => resolve({ code: exitCode ?? 1, stdout: out, stderr: err }))
   })
+  if (code !== 0) {
+    // curl 的 22 = HTTP >= 400（配合 -f 才有）；这里没用 -f，所以非 0 基本都是网络/代理问题
+    throw new AstraError('NETWORK_ERROR', `curl 请求 ${host} 失败（退出码 ${code}）：${stderr.trim().slice(0, 200)}`, {
+      exitCode: 5,
+      retryable: true,
+    })
+  }
+  // curl 不带 -w 拿不到状态码，用 -w 会污染 body；这里靠 body 是不是 JSON 判断，
+  // 4xx 的 body 通常不是 JSON，会落到下面的 BAD_RESPONSE。
+  try {
+    return JSON.parse(stdout) as T
+  } catch {
+    throw new AstraError('HTTP_ERROR', `${host} 返回的不是 JSON（可能被拦或登录态失效）`, {
+      exitCode: 5,
+      details: { preview: stdout.slice(0, 120) },
+    })
+  }
+}
+
+/** 该用哪条通道：有 cookie 且没被强制 fetch 时走 curl。 */
+export function pickTransport(cookie: string): 'curl' | 'fetch' {
+  const mode = (getConfig('pixiv.transport') || 'auto').trim()
+  if (mode === 'curl') return 'curl'
+  if (mode === 'fetch') return 'fetch'
+  return cookie ? 'curl' : 'fetch'
+}
+
+/** 统一出口：按 `pixiv.transport` 决定走 curl 还是 fetch（ranking 这类非 ajax 接口也要走它）。 */
+async function getJson<T>(url: string, accept = 'application/json'): Promise<T> {
+  const cookie = loadCookie()
+  if (pickTransport(cookie) === 'curl') return curlJson<T>(url, cookie)
+  return httpJson<T>(url, { headers: headers({ Accept: accept }), timeoutMs: 20_000 })
+}
+
+async function ajax<T>(path: string, opts: { noCookie?: boolean } = {}): Promise<T> {
+  const url = `${BASE}${path}`
+  const raw = opts.noCookie === true
+    // 故意匿名的那条路（cookie check 要拿它做对照），必须走 fetch 且不带 cookie
+    ? await httpJson<{ error: boolean; message?: string; body: T }>(url, {
+        headers: headers({}, true),
+        timeoutMs: 20_000,
+      })
+    : await getJson<{ error: boolean; message?: string; body: T }>(url)
   if (raw.error) {
     throw new AstraError('PIXIV_ERROR', `pixiv 返回错误：${raw.message ?? '未知'}`, {
       exitCode: 4,
@@ -171,10 +252,7 @@ export async function ranking(mode: RankMode, pages = 1): Promise<number[]> {
   const out: number[] = []
   for (let p = 1; p <= pages; p += 1) {
     const url = `${BASE}/ranking.php?mode=${mode}&content=illust&format=json&p=${p}`
-    const data = await httpJson<{ contents?: { illust_id?: number }[] }>(url, {
-      headers: headers({ Accept: 'application/json' }),
-      timeoutMs: 20_000,
-    })
+    const data = await getJson<{ contents?: { illust_id?: number }[] }>(url)
     out.push(...(data.contents ?? []).map((c) => Number(c.illust_id)).filter((n) => Number.isFinite(n)))
   }
   return out
