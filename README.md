@@ -78,6 +78,7 @@ DASH 的音视频是**分开的两个流**，下完用 ffmpeg 合并 —— 所�
 
 ```sh
 astra comic search 关键词
+astra comic search 全彩 --scope tag      # site / work / author / tag / actor
 astra comic info 123456
 astra comic get 123456                 # 整本
 astra comic get 123456 --chapter 3     # 只下一话

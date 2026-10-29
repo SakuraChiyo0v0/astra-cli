@@ -58,11 +58,29 @@ export interface SearchHit {
 
 export interface SearchPage {
   query: string
+  scope: SearchScope
   total: number
   page: number
   items: SearchHit[]
   /** 搜车号时接口会直接跳到该本。 */
   redirectId: string | null
+}
+
+/** 上游 `/search` 的 main_tag。site 是站内全文，其余是精确范围。 */
+export const SEARCH_SCOPES = ['site', 'work', 'author', 'tag', 'actor'] as const
+export type SearchScope = (typeof SEARCH_SCOPES)[number]
+
+const SEARCH_MAIN_TAG: Record<SearchScope, string> = {
+  site: '0',
+  work: '1',
+  author: '2',
+  tag: '3',
+  actor: '4',
+}
+
+export function searchMainTag(scope: string): string {
+  if ((SEARCH_SCOPES as readonly string[]).includes(scope)) return SEARCH_MAIN_TAG[scope as SearchScope]
+  throw new AstraError('INVALID_INPUT', `--scope 只能是 ${SEARCH_SCOPES.join(' / ')}`, { exitCode: 2 })
 }
 
 function nowTs(): string {
@@ -312,9 +330,9 @@ export class JmClient {
     return String(SCRAMBLE_220980)
   }
 
-  async search(query: string, page = 1, signal?: AbortSignal): Promise<SearchPage> {
+  async search(query: string, page = 1, scope: SearchScope = 'site', signal?: AbortSignal): Promise<SearchPage> {
     const qs = new URLSearchParams({
-      main_tag: '0',
+      main_tag: searchMainTag(scope),
       search_query: query,
       page: String(page),
       o: ORDER_BY_LATEST,
@@ -326,6 +344,7 @@ export class JmClient {
       const album = await this.getAlbum(redirect, signal)
       return {
         query,
+        scope,
         total: 1,
         page,
         redirectId: redirect,
@@ -335,6 +354,7 @@ export class JmClient {
     const content = Array.isArray(data.content) ? data.content : []
     return {
       query,
+      scope,
       total: Number(data.total ?? 0) || content.length,
       page,
       redirectId: null,

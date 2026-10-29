@@ -47,13 +47,14 @@ stdout 只有一个 JSON。`ok:true` 看 `data`，`ok:false` 看 `error.code` / 
 | 下载整本 | `astra comic get <车号\|链接>` |
 | 只下一话 | `astra comic get <车号> --chapter 3` |
 | 先看信息 | `astra comic info <车号\|链接>` |
-| 搜标题 | `astra comic search <关键词>` |
+| 搜标题 / 正文 | `astra comic search <关键词>` |
+| 按标签 / 作者 / 角色 | `astra comic search <词> --scope tag`（还有 `author` / `actor` / `work`） |
 | 自检 | `astra comic doctor` |
 
 ## Procedure
 
 1. 用户给车号或链接 → 直接 `astra comic get <...>`。
-2. 用户只给标题 → `astra comic search <标题>`：
+2. 用户只给标题 → `astra comic search <标题>`。点名标签、作者或角色时加 `--scope tag|author|actor`：
    - 有 `redirectId` 或只有一条 → 用那个 id 再 `get`
    - 多条 → 把 `items`（id / title / author）列给用户选，**不要替用户挑**
 3. `data.status`：

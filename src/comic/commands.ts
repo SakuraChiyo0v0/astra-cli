@@ -8,7 +8,7 @@ import type { Command } from '../core/command.ts'
 import { checkWritable } from '../core/doctor.ts'
 import { getConfig } from '../core/config.ts'
 import { mkdirSync } from 'node:fs'
-import { comicClient } from './client.ts'
+import { comicClient, searchMainTag, type SearchScope } from './client.ts'
 import { downloadAlbum } from './download.ts'
 import { comicRoot } from './paths.ts'
 import { parseComicTarget } from './target.ts'
@@ -90,12 +90,15 @@ const info: Command = {
 const search: Command = {
   name: 'comic search',
   summary: '按关键词搜漫画',
-  usage: 'astra comic search <关键词> [--page 1] [--limit 20]',
+  usage: 'astra comic search <关键词> [--scope site|work|author|tag|actor] [--page 1] [--limit 20]',
   notes: [
+    '默认 --scope site：站内全文，对标题和正文',
+    '--scope tag 按站内标签；author 作者；work 作品；actor 登场角色',
     '搜到车号会直接 redirect 到那一本',
     '拿不准时把 items 列给用户，让用户选 id 再 `comic get <id>`',
   ],
   options: {
+    scope: { type: 'string', description: '搜索范围：site（默认）/ work / author / tag / actor', valueName: 'scope' },
     page: { type: 'string', description: '页码，从 1 开始', valueName: 'n' },
     limit: { type: 'string', description: '最多返回几条，默认 20', valueName: 'n' },
   },
@@ -103,12 +106,16 @@ const search: Command = {
   async run({ positionals, values, signal }) {
     const query = positionals.join(' ').trim()
     if (!query) throw invalidInput('缺少关键词')
+    const scopeRaw = typeof values.scope === 'string' && values.scope.trim() ? values.scope.trim() : 'site'
+    searchMainTag(scopeRaw)
+    const scope = scopeRaw as SearchScope
     const page = Math.max(1, Number(values.page ?? '1') || 1)
     const limit = Math.max(1, Math.min(80, Number(values.limit ?? '20') || 20))
-    const result = await comicClient().search(query, page, signal)
+    const result = await comicClient().search(query, page, scope, signal)
     return {
       data: {
         query: result.query,
+        scope: result.scope,
         total: result.total,
         page: result.page,
         redirectId: result.redirectId,
@@ -157,7 +164,7 @@ const doctor: Command = {
     try {
       await comicClient().ensure()
       // 用 setting 已经打通过；再探一次搜索空词会失败，改探一个已知可能存在的接口形状
-      const probe = await comicClient().search('1', 1, signal)
+      const probe = await comicClient().search('1', 1, 'site', signal)
       checks.push({
         name: 'api',
         ok: true,

@@ -4,6 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseComicTarget } from '../src/comic/target.ts'
+import { searchMainTag } from '../src/comic/client.ts'
 import { decodeRespData, md5hex, tokenAndParam } from '../src/comic/crypto.ts'
 import { filenameStemOf, scrambleSliceCount, slicePlan } from '../src/comic/scramble.ts'
 import { commandGroup, groupCommands } from '../src/main.ts'
@@ -11,6 +12,15 @@ import { commandGroup, groupCommands } from '../src/main.ts'
 test('comic 是命令组', () => {
   assert.equal(commandGroup('comic'), true)
   assert.ok(groupCommands('comic').some((c) => c === 'comic get'))
+})
+
+test('searchMainTag：范围对应上游 main_tag', () => {
+  assert.equal(searchMainTag('site'), '0')
+  assert.equal(searchMainTag('work'), '1')
+  assert.equal(searchMainTag('author'), '2')
+  assert.equal(searchMainTag('tag'), '3')
+  assert.equal(searchMainTag('actor'), '4')
+  assert.throws(() => searchMainTag('title'), /scope/)
 })
 
 test('parseComicTarget：数字 / JM / 链接', () => {
