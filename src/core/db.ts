@@ -163,7 +163,24 @@ export function db(): DatabaseSync {
   // timeout 在打开时就生效；写在 pragma 里的 busy_timeout 晚于 journal_mode 切换，
   // 另一个进程（后台 worker）持锁时 `pragma journal_mode = wal` 本身就会直接报 database is locked
   const database = new DatabaseSync(homePath('astra.db'), { timeout: 10_000 })
-  database.exec('pragma journal_mode = wal; pragma foreign_keys = on;')
+  // `pragma journal_mode = wal` 是**独占**操作：两个进程同时在一个新库上打开时，
+  // 后到的那个会拿到 `database is locked`（实测 3 次里挂 1 次）。
+  // 重试几次即可 —— 第一个进程切完 WAL 之后，后面这句就是空操作。
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      database.exec('pragma journal_mode = wal; pragma foreign_keys = on;')
+      break
+    } catch (err) {
+      if (attempt >= 20) {
+        // 实在切不过去也别让整个 CLI 起不来：foreign_keys 单独设，WAL 保持原样
+        database.exec('pragma foreign_keys = on')
+        break
+      }
+      // 同步小睡 50ms（Atomics.wait 不会阻塞事件循环之外的东西）
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50)
+      void err
+    }
+  }
   const version = (database.prepare('pragma user_version').get() as { user_version: number }).user_version
   if (version < MIGRATIONS.length) {
     // 整个迁移序列放进**一个** immediate 事务里，并且在拿到写锁之后**重读**版本号。

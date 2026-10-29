@@ -400,6 +400,128 @@ export async function scan(
   return result
 }
 
+export interface VerifyResult {
+  checked: number
+  matched: number
+  mismatched: { relPath: string; absPath: string; expected: string; actual: string }[]
+  filled: number
+  skippedLarge: number
+  durationMs: number
+}
+
+/** 整文件 sha256（流式，避免把几 GB 的视频读进内存）。 */
+export async function fileSha256(file: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256')
+    const stream = createReadStream(file)
+    stream.on('data', (chunk) => hash.update(chunk))
+    stream.on('error', reject)
+    stream.on('end', () => resolve(hash.digest('hex')))
+  })
+}
+
+/**
+ * 抽样校验：确认盘上的内容和库里记的一致（防止「同大小文件被替换」）。
+ *
+ * 只看 `present` 的文件；`files.sha256` 为空的（下载时没算）就补上，算 filled。
+ * 超过 `maxBytes` 的文件默认跳过 —— 视频动辄几 GB，抽样校验不该拖几十分钟。
+ */
+export async function verify(
+  db: Database,
+  options: { sample?: number; roots?: string[]; maxBytes?: number } = {},
+): Promise<VerifyResult> {
+  const started = Date.now()
+  const maxBytes = options.maxBytes ?? 512 * 1024 * 1024
+  const allRoots = await listRoots(db)
+  const targets = options.roots && options.roots.length > 0
+    ? allRoots.filter((r) => options.roots!.includes(r.label))
+    : allRoots
+
+  const result: VerifyResult = { checked: 0, matched: 0, mismatched: [], filled: 0, skippedLarge: 0, durationMs: 0 }
+
+  for (const root of targets) {
+    const rows = await db.conn.query<{ id: string; rel_path: string; size: number | null; sha256: string | null }>(
+      "select id, rel_path, size, sha256 from files where root_id = ? and state = 'present'",
+      [root.id],
+    )
+    const sample = options.sample && options.sample > 0 ? rows.slice(0, options.sample) : rows
+    for (const row of sample) {
+      const abs = path.join(root.abs_path, row.rel_path)
+      if (!existsSync(abs)) continue
+      const size = statSync(abs).size
+      if (size > maxBytes) {
+        result.skippedLarge += 1
+        continue
+      }
+      const actual = await fileSha256(abs)
+      result.checked += 1
+      if (!row.sha256) {
+        await db.conn.exec('update files set sha256 = ? where id = ?', [actual, row.id])
+        result.filled += 1
+        continue
+      }
+      if (actual === row.sha256) {
+        result.matched += 1
+      } else {
+        result.mismatched.push({ relPath: row.rel_path, absPath: abs, expected: row.sha256, actual })
+      }
+    }
+  }
+
+  result.durationMs = Date.now() - started
+  await event(db, 'verify', null, null, {
+    checked: result.checked, matched: result.matched,
+    mismatched: result.mismatched.length, filled: result.filled,
+  })
+  return result
+}
+
+export interface DupeGroup {
+  key: string
+  count: number
+  totalBytes: number
+  files: { assetId: string; relPath: string; rootLabel: string; size: number | null }[]
+}
+
+/**
+ * 找重复内容（同一份内容在多个位置）。
+ *
+ * **只报告，不删** —— 用户规矩：删前先看清单。
+ * 优先按整文件 sha256 分组；没有 sha256 的退回快速指纹（可能把同大小的不同文件并进来，
+ * 所以结果里带 key 类型，让调用方知道可信度）。
+ */
+export async function findDupes(db: Database, limit = 50): Promise<DupeGroup[]> {
+  const groups = await db.conn.query<{ k: string; n: number | string; s: number | string; kind: string }>(
+    `select coalesce(sha256, hash) as k, count(*) as n, coalesce(sum(size), 0) as s,
+            case when sha256 is not null then 'sha256' else 'fingerprint' end as kind
+     from files
+     where state = 'present' and coalesce(sha256, hash) is not null
+     group by coalesce(sha256, hash)
+     having count(*) > 1
+     order by count(*) desc
+     limit ?`,
+    [limit],
+  )
+
+  const out: DupeGroup[] = []
+  for (const g of groups) {
+    const files = await db.conn.query<{ asset_id: string; rel_path: string; root_label: string; size: number | null }>(
+      `select f.asset_id, f.rel_path, r.label as root_label, f.size
+       from files f join roots r on r.id = f.root_id
+       where f.state = 'present' and coalesce(f.sha256, f.hash) = ?
+       order by r.label, f.rel_path`,
+      [g.k],
+    )
+    out.push({
+      key: g.k,
+      count: Number(g.n),
+      totalBytes: Number(g.s),
+      files: files.map((f) => ({ assetId: f.asset_id, relPath: f.rel_path, rootLabel: f.root_label, size: f.size })),
+    })
+  }
+  return out
+}
+
 export interface AssetRow {
   id: string
   platform: string

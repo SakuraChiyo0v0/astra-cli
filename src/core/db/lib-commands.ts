@@ -11,7 +11,7 @@ import { getConfig, musicRoot } from '../config.ts'
 import { openDatabase, redact } from './index.ts'
 import { MIGRATIONS, appliedMigrations } from './migrations.ts'
 import {
-  addRoot, assetEvents, findAssets, listRoots, removeRoot, scan, stats, whereAsset,
+  addRoot, assetEvents, findAssets, findDupes, listRoots, removeRoot, scan, stats, verify, whereAsset,
 } from './library.ts'
 
 const REQUIRED = MIGRATIONS.map((m) => m.id)
@@ -190,6 +190,65 @@ export const libCommands: Command[] = [
       const db = await open()
       try {
         return { data: { id, events: await assetEvents(db, id, Number.isFinite(limit) ? limit : 30) } }
+      } finally {
+        await db.conn.close()
+      }
+    },
+  },
+  {
+    name: 'lib verify',
+    summary: '抽样校验：确认盘上内容和库里记录一致',
+    usage: 'astra lib verify [--sample <条数>] [--root <标签>] [--max-mb <上限>]',
+    options: {
+      sample: { type: 'string', valueName: '条数', description: '每个 root 只查前 N 条，默认全查' },
+      root: { type: 'string', valueName: '标签', description: '只查某个 root' },
+      'max-mb': { type: 'string', valueName: 'MB', description: '超过这个大小的文件跳过，默认 512' },
+    },
+    notes: [
+      '算整文件 sha256，比 scan 的「size + 前 1MB」更严；能发现同大小文件被替换',
+      '库里没有 sha256 的文件会被补上（结果里的 filled）',
+    ],
+    async run({ values }) {
+      const db = await open()
+      try {
+        const sample = typeof values.sample === 'string' ? Number(values.sample) : undefined
+        const maxMb = typeof values['max-mb'] === 'string' ? Number(values['max-mb']) : undefined
+        const roots = typeof values.root === 'string' ? [values.root] : undefined
+        const result = await verify(db, {
+          ...(Number.isFinite(sample) ? { sample } : {}),
+          ...(Number.isFinite(maxMb) ? { maxBytes: maxMb! * 1024 * 1024 } : {}),
+          ...(roots ? { roots } : {}),
+        })
+        return { data: { ...result, url: redact(db.url) } }
+      } finally {
+        await db.conn.close()
+      }
+    },
+  },
+  {
+    name: 'lib dupes',
+    summary: '找重复内容（同一份内容在多个位置）—— 只报告，不删',
+    usage: 'astra lib dupes [--limit <组数>]',
+    options: {
+      limit: { type: 'string', valueName: '组数', description: '最多返回几组，默认 50' },
+    },
+    notes: [
+      '优先按整文件 sha256 分组；没有 sha256 的用快速指纹（可信度低一档）',
+      '不会删任何文件，删不删由人决定',
+    ],
+    async run({ values }) {
+      const limit = typeof values.limit === 'string' ? Number(values.limit) : 50
+      const db = await open()
+      try {
+        const groups = await findDupes(db, Number.isFinite(limit) ? limit : 50)
+        return {
+          data: {
+            groups: groups.length,
+            wastedBytes: groups.reduce((sum, g) => sum + (g.count - 1) * (g.files[0]?.size ?? 0), 0),
+            items: groups,
+            url: redact(db.url),
+          },
+        }
       } finally {
         await db.conn.close()
       }

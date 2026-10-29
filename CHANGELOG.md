@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.23.0 — 2026-10-29
+
+**`lib verify` 抽样校验 + `lib dupes` 重复报告 + 并发打开库的竞态修复**
+
+- `astra lib verify [--sample N] [--root 标签] [--max-mb 512]`
+  - 算整文件 sha256，能发现 scan 发现不了的「同大小文件被替换」
+  - 库里没有 sha256 的顺带补上（结果里的 `filled`）
+  - 超过 `--max-mb` 的文件默认跳过，避免抽样校验被几 GB 的视频拖住
+- `astra lib dupes [--limit N]`
+  - 按整文件 sha256 分组（没有的退回快速指纹，结果里带 key 类型说明可信度）
+  - **只报告不删**，`wastedBytes` 给出可回收空间
+- 修 `pragma journal_mode = wal` 的并发竞态：两个进程同时打开**新库**时后到的会拿到
+  `database is locked`（实测 3 次挂 1 次）。现在重试 20 × 50ms，仍失败就只设 `foreign_keys`，
+  不让 CLI 整体起不来。`core/db.ts` 和 `core/db/sqlite.ts` 都改了
+
+测试 455 全过（新增 4 个 verify/dupes 用例）。
+
 ## 0.22.0 — 2026-10-29
 
 **bili / pixiv 落盘也写进资产库 + `lib root auto`**

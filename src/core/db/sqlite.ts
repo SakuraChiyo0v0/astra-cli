@@ -43,7 +43,19 @@ export class SqliteConn implements Conn {
     this.path = file
     if (file !== ':memory:') mkdirSync(path.dirname(file), { recursive: true })
     this.db = new DatabaseSync(file, { timeout: 10_000 })
-    this.db.exec('pragma journal_mode = wal; pragma foreign_keys = on;')
+    // 和 core/db.ts 一样：并发打开新库时 `pragma journal_mode = wal` 会短暂 locked，重试即可
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        this.db.exec('pragma journal_mode = wal; pragma foreign_keys = on;')
+        break
+      } catch {
+        if (attempt >= 20) {
+          this.db.exec('pragma foreign_keys = on')
+          break
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50)
+      }
+    }
   }
 
   get filePath(): string {
