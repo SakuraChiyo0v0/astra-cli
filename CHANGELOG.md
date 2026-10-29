@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.21.0 — 2026-10-29
+
+**资产库落地：`tracks` 回填 + `astra lib` 命令 + 移动自动纠回**
+
+接 0.20.0 的底座，这一版让「文件挪了位置」不再是问题。
+
+- 迁移 `0002`：`tracks` 回填到 `assets` + `files`，位置拆成 `root_id + rel_path`
+  - 回填写在迁移的 `after` 钩子里而不是纯 SQL：新库没有 `tracks` 表，纯 SQL 会 `no such table`
+  - `tracks` 表**不动**，下载继续双写，老命令零改动
+- `astra lib root add|list|rm`：存储根管理；还有 file 引用时拒绝删除
+- `astra lib scan`：按「size + 前 1MB sha1」认领文件
+  - 路径变了 → 改 `rel_path` 并记 `moved` 事件
+  - 扫不到 → 标 `missing`（**不删记录**）
+  - 盘上有库里没有 → 记孤儿数量，不建 asset
+  - 性能：先按路径判定、再按 size 剪枝，只对「size 撞上但路径变了」的文件读内容
+    实测 846 个文件稳态 **0.2–3 秒**（首次需为老数据补指纹，约 90 秒）
+- `astra lib find|where|events|stats`：搜索、位置（含 missing 副本）、变更历史、概览
+- `music` 落盘后**影子写入**资产库（`void` 调用，资产库出错不影响下载）
+- 迁移引擎新增 `after` 钩子（同一事务内做数据搬迁）
+
+测试 449 全过（新增 6 个 lib 用例）。
+
 ## 0.20.0 — 2026-10-29
 
 **新增数据库适配层 + `astra db` 运维命令（PostgreSQL / SQLite）**

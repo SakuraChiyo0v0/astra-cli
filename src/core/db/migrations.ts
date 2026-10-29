@@ -18,6 +18,11 @@ export interface Migration {
   /** 这个迁移在干什么（给 `db status` 显示）。 */
   summary: string
   up: Record<DialectName, string[]>
+  /**
+   * SQL 执行完之后的数据搬迁钩子（同一个事务里跑）。
+   * 纯 SQL 做不了「表不存在就跳过」这类判断，只能靠它。
+   */
+  after?: (db: Database) => Promise<void>
 }
 
 /**
@@ -137,7 +142,65 @@ const M0001: Migration = {
   },
 }
 
-export const MIGRATIONS: Migration[] = [M0001]
+/**
+ * 0002：把 `tracks` 回填到 assets + files。
+ *
+ * `tracks` 表**不动**（下载路径继续双写），这样老命令零改动、随时能回退。
+ *
+ * 回填写在 `after` 钩子里而不是纯 SQL：新库根本没有 `tracks` 表，
+ * 纯 SQL 会直接 `no such table`；钩子里可以先判断表存在再决定做不做。
+ */
+const M0002: Migration = {
+  id: '0002_backfill_tracks',
+  summary: 'tracks 回填到 assets/files（tracks 保留，双写过渡）',
+  up: {
+    sqlite: [`alter table files add column sha256 text`],
+    postgres: [`alter table files add column sha256 text`],
+    mysql: [],
+  },
+  after: async (db) => {
+    const tables = await db.conn.query<{ name: string }>(
+      db.dialect.name === 'sqlite'
+        ? "select name from sqlite_master where type = 'table' and name = 'tracks'"
+        : "select tablename as name from pg_tables where tablename = 'tracks'",
+    )
+    if (tables.length === 0) return
+
+    const now = new Date().toISOString()
+    const rootPath = '/host-root/volume1/音乐'
+    const roots = await db.conn.query<{ id: string }>('select id from roots where label = ?', ['nas-music'])
+    const rootId = roots[0]?.id ?? 'root_nas'
+    if (roots.length === 0) {
+      await db.conn.exec(
+        'insert into roots (id, label, abs_path, note, created_at) values (?, ?, ?, ?, ?)',
+        [rootId, 'nas-music', rootPath, '/volume1/音乐（NAS 视角）', now],
+      )
+    }
+
+    const tracks = await db.conn.query<{
+      platform: string; native_id: string; title: string; artists: string | null; album: string | null
+      duration_ms: number | null; file_path: string; audio_sha256: string | null; created_at: string
+    }>('select platform, native_id, title, artists, album, duration_ms, file_path, audio_sha256, created_at from tracks')
+
+    for (const t of tracks) {
+      if (!t.file_path || !t.file_path.startsWith(rootPath + '/')) continue
+      const assetId = `${t.platform}:${t.native_id}`
+      const rel = t.file_path.slice(rootPath.length + 1)
+      await db.conn.exec(
+        `insert into assets (id, platform, native_id, kind, title, artists, album, duration_ms, meta, created_at)
+         values (?, ?, ?, 'music', ?, ?, ?, ?, null, ?)`,
+        [assetId, t.platform, t.native_id, t.title, t.artists, t.album, t.duration_ms, t.created_at],
+      ).catch(() => {})
+      await db.conn.exec(
+        `insert into files (id, asset_id, root_id, rel_path, size, mtime, hash, sha256, state, first_seen, last_seen)
+         values (?, ?, ?, ?, null, null, null, ?, 'present', ?, ?)`,
+        [`file_${t.platform}_${t.native_id}`, assetId, rootId, rel, t.audio_sha256, t.created_at, t.created_at],
+      ).catch(() => {})
+    }
+  },
+}
+
+export const MIGRATIONS: Migration[] = [M0001, M0002]
 
 function checksum(m: Migration): string {
   return createHash('sha256').update(JSON.stringify(m.up)).digest('hex').slice(0, 16)
@@ -228,6 +291,7 @@ export async function migrate(
         for (const stmt of sql) {
           await tx.exec(stmt.replace(/\n\s+/g, ' ').trim())
         }
+        if (m.after) await m.after({ ...db, conn: tx })
         await tx.exec(
           `insert into schema_migrations (id, dialect, checksum, applied_at) values (?, ?, ?, ?)`,
           [m.id, dialect, checksum(m), new Date().toISOString()],

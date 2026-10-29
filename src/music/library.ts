@@ -7,6 +7,7 @@
  */
 import { existsSync } from 'node:fs'
 import { db } from '../core/db.ts'
+import { mirrorTrack } from '../core/db/mirror.ts'
 import type { AudioFormat, Quality } from './audio.ts'
 import { normalize } from './match.ts'
 
@@ -190,6 +191,19 @@ export function saveTrack(entry: SaveEntry): void {
       entry.albumYear ?? null,
       entry.albumType ?? null,
     )
+
+  // 同步进资产库（assets + files）。不 await：资产库出问题不能影响下载结果。
+  void mirrorTrack({
+    platform: entry.platform,
+    id: entry.id,
+    title: entry.title,
+    artists: entry.artists,
+    album: entry.album,
+    durationMs: entry.durationMs,
+    path: entry.path,
+    bytes: entry.bytes,
+    audioSha256: entry.audioSha256,
+  })
 }
 
 /** 回填补读的规格与附属文件状态（老记录没有这些列的值）。 */
