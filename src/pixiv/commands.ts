@@ -8,6 +8,7 @@
  * 免得一次铺太开、把上游改动撞得稀碎。
  */
 import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { verifyImage } from '../core/imagecheck.ts'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { mirrorFile } from '../core/db/mirror.ts'
@@ -196,15 +197,30 @@ async function pullWorks(ids: number[], opts: PullOptions): Promise<PullSummary>
         continue
       }
       try {
+        // 先验完整性再落盘：截断的图一旦写进库，下游（日报发图）整组会被
+        // Telegram 拒掉，而且没人知道是哪张坏了。这里重试一次，仍坏就报失败。
+        const ext = page.ext
+        const fetchVerified = async (url: string): Promise<Buffer> => {
+          let lastReason = ''
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            const buf = await downloadImage(url)
+            const check = verifyImage(buf, ext)
+            if (check.ok) return buf
+            lastReason = check.reason ?? '未知原因'
+          }
+          throw new AstraError('TRUNCATED', `图片不完整（${lastReason}）`, { exitCode: 5, retryable: true })
+        }
+
         let buf: Buffer
         if (opts.quality === 'regular') {
           // 直接拿 1200px：原图动辄 4000×6000、十几 MB，日报/预览根本用不上
-          buf = await downloadImage(page.regular)
+          buf = await fetchVerified(page.regular)
         } else {
           try {
-            buf = await downloadImage(page.original)
+            buf = await fetchVerified(page.original)
           } catch {
-            buf = await downloadImage(page.regular)
+            // 原图拿不全就退 1200px —— 比在库里留一张坏图好
+            buf = await fetchVerified(page.regular)
           }
         }
         await writeFile(file, buf)

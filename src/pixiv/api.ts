@@ -510,5 +510,15 @@ export async function downloadImage(url: string): Promise<Buffer> {
   }
   const buf = Buffer.from(await res.arrayBuffer())
   if (buf.byteLength === 0) throw new AstraError('EMPTY_BODY', '图片下载回来是空的', { exitCode: 5 })
+  // 服务端给了 Content-Length 就必须对得上：连接中途断掉时 undici 有时会「正常」返回
+  // 一个短 buffer，不比对长度就会把半张图当成完整图片写进库（2026-10-29 截断事故）。
+  const declared = Number(res.headers.get('content-length') ?? '')
+  if (Number.isFinite(declared) && declared > 0 && declared !== buf.byteLength) {
+    throw new AstraError('TRUNCATED', `图片下载不完整：声明 ${declared} 字节、实际 ${buf.byteLength} 字节`, {
+      exitCode: 5,
+      retryable: true,
+      details: { url: url.replace('https://i.pximg.net', '') },
+    })
+  }
   return buf
 }

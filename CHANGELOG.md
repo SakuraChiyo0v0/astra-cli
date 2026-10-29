@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.30.0 — 2026-10-29
+
+**下载完整性校验：截断的图进不了库**
+
+起因：日报发图时 Telegram 报 `IMAGE_PROCESS_FAILED`，追下去是 `astra pixiv pull`
+存了一张**截断的 PNG**（header 完好、解码失败），整组 10 张被顶掉。
+
+- 新增 `src/core/imagecheck.ts`：按容器结构校验，O(1) 只读头尾
+  - PNG 必须以 `IEND` 块结尾（截断的 PNG 一定没有）
+  - JPEG 必须有 `FF D9`；GIF 必须有 `0x3B`
+  - WebP 的 RIFF 长度字段必须等于实际长度 - 8
+  - 未知格式按魔数嗅探，认不出就放行（不凭空拦人）
+- `downloadImage()` 增加 **Content-Length 比对**：声明 4.9MB 实收 2.3MB 直接判 TRUNCATED
+- `pixiv pull` 落盘前校验，坏图**重下一次**；仍坏则原图退 1200px；都不行就报 failed，
+  **绝不留半张图在库里**
+
+测试 490 全过（新增 9 个校验用例 + 一张真实截断夹具 `tests/fixtures/truncated.png`）。
+
 ## 0.29.0 — 2026-10-29
 
 **墓碑认回 + 读时自愈：文件怎么挪都能自己接上**
