@@ -250,12 +250,18 @@ async function userWorksOnce(userId: number, noCookie: boolean): Promise<number[
   return [...new Set(ids.map(Number).filter((n) => Number.isFinite(n)))].sort((a, b) => b - a)
 }
 
-export type RankMode = 'daily' | 'weekly' | 'monthly' | 'rookie' | 'original' | 'male' | 'female'
+export type RankMode =
+  | 'daily' | 'weekly' | 'monthly' | 'rookie' | 'original' | 'male' | 'female'
+  // R-18 榜：只有日榜/周榜存在（monthly_r18 等在 ranking.php 上是 404），且需要 cookie
+  | 'daily_r18' | 'weekly_r18'
 
 export async function ranking(mode: RankMode, pages = 1): Promise<number[]> {
   const out: number[] = []
+  // `mode=original`（オリジナル）只有 content=all 才有数据，content=illust 直接 404；
+  // 其余榜种反过来，content=all 也能拿到（实测一致），所以统一按榜种选。
+  const content = mode === 'original' ? 'all' : 'illust'
   for (let p = 1; p <= pages; p += 1) {
-    const url = `${BASE}/ranking.php?mode=${mode}&content=illust&format=json&p=${p}`
+    const url = `${BASE}/ranking.php?mode=${mode}&content=${content}&format=json&p=${p}`
     const data = await getJson<{ contents?: { illust_id?: number }[] }>(url)
     out.push(...(data.contents ?? []).map((c) => Number(c.illust_id)).filter((n) => Number.isFinite(n)))
   }

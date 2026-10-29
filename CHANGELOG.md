@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.18.11 — 2026-10-29
+
+**pixiv rank 支持 R-18 日榜/周榜；顺手修 `original` 榜**
+
+- 新增 `--mode daily_r18` / `--mode weekly_r18`。实测 pixiv 只有这两个 R-18 榜，
+  `monthly_r18` / `male_r18` / `female_r18` / `rookie_r18` 在 `ranking.php` 上全是 404。
+- R-18 榜**需要 cookie**：匿名请求直接 403。现在会给出可读提示，而不是原始 HTTP 错误。
+- 修 `--mode original`：`content=illust` 会 404，必须 `content=all`。之前这个榜一直是坏的。
+
 ## 0.18.10 — 2026-10-29
 
 **pixiv search / top 支持按 sl 等级筛选**

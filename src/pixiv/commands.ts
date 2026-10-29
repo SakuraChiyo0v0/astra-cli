@@ -70,7 +70,12 @@ import {
   type RankMode,
 } from './api.ts'
 
-const RANK_MODES: RankMode[] = ['daily', 'weekly', 'monthly', 'rookie', 'original', 'male', 'female']
+// 实测：monthly_r18 / male_r18 / female_r18 / rookie_r18 在 ranking.php 上都是 404，没有这些榜。
+// daily_r18 / weekly_r18 存在，但**需要 cookie**（匿名 403）。
+const RANK_MODES: RankMode[] = [
+  'daily', 'weekly', 'monthly', 'rookie', 'original', 'male', 'female',
+  'daily_r18', 'weekly_r18',
+]
 
 /** 作品分类的本地过滤表。pixiv ajax 的 `type` 参数被忽略，只能按 `illustType` 自己筛。 */
 const TYPE_FILTER: Record<string, number[] | null> = {
@@ -271,7 +276,7 @@ const rank: Command = {
   usage: 'astra pixiv rank [--mode daily] [--pages 1] [--limit 50]',
   notes: ['只返回 id 和作者，要看详情用 `pixiv info <id>`；要下载用 `pixiv pull <id>`。'],
   options: {
-    mode: { type: 'string', description: `榜种，默认 daily；可选 ${RANK_MODES.join(' / ')}`, valueName: 'm' },
+    mode: { type: 'string', description: `榜种，默认 daily；可选 ${RANK_MODES.join(' / ')}（_r18 需要 cookie）`, valueName: 'm' },
     pages: { type: 'string', description: '翻几页（每页 50），默认 1', valueName: 'n' },
     limit: { type: 'string', description: '最多返回多少条，默认 50', valueName: 'n' },
   },
@@ -281,7 +286,20 @@ const rank: Command = {
     if (!RANK_MODES.includes(mode)) throw invalidInput(`不认识的榜种：${mode}`, `可选 ${RANK_MODES.join(' / ')}`)
     const pages = num(values.pages, 1, 1, 10, '--pages')
     const limit = num(values.limit, 50, 1, 200, '--limit')
-    const ids = (await ranking(mode, pages)).slice(0, limit)
+    let ids: number[]
+    try {
+      ids = (await ranking(mode, pages)).slice(0, limit)
+    } catch (err) {
+      // R-18 榜匿名访问会被 pixiv 直接 403，报原始 HTTP 错误看不懂，补一句该怎么办
+      if (mode.endsWith('_r18') && /403/.test(String((err as Error)?.message ?? ''))) {
+        throw new AstraError('PIXIV_ERROR', `R-18 榜需要登录 cookie（${mode}）`, {
+          exitCode: 4,
+          hint: '先 `astra pixiv cookie set`，或者从浏览器导 cookies 放到 /opt/data/secrets/pixiv-cookie.txt',
+          details: { mode },
+        })
+      }
+      throw err
+    }
     return {
       data: { mode, count: ids.length, illustIds: ids },
       table: { headers: ['#', 'illustId'], rows: ids.map((id, i) => [i + 1, id]) },
