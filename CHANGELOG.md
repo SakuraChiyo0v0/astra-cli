@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.28.0 — 2026-10-29
+
+**扫描提速 9.5 倍 + 零拷贝移动识别（抄 restic / Filebeat 的作业）**
+
+- 迁移 `0004`：`files` 增加 `dev` / `ino` / `mtime_ms`
+- **size + mtime 都没变就跳过读内容**（restic / Nextcloud 的判据）：2045 个文件
+  从 **110 s 降到 11.5 s**
+- **inode 命中直接判移动**（Filebeat 的 `native` 身份）：同盘 rename 一个字节都不用读，
+  实测 841 ms 完成对账并认回；事件里带 `via: inode`
+- inode 只当线索不当身份（Filebeat 文档明说设备号在 LVM / 网络共享 / 容器里会变），
+  不命中继续走指纹
+- 已知边界：内容变了但 size 与 mtime 都没动 → 检测不到，只能靠 `lib verify` 抽样
+
+踩坑：PG 的 `bigint` 走 JSON 是**字符串**，`row.mtime_ms === entry.mtimeMs` 永远 false，
+表现是每遍都全量重算指纹（第二遍 220 s，比第一遍还慢）。统一转 Number 后降到 11.5 s。
+
+测试 477 全过（新增 4 个身份用例，其中一个专门记录「检测不到」的边界）。
+
 ## 0.27.0 — 2026-10-29
 
 **`lib find` 也搜路径，结果带位置**

@@ -217,7 +217,37 @@ const M0003: Migration = {
   },
 }
 
-export const MIGRATIONS: Migration[] = [M0001, M0002, M0003]
+/**
+ * 0004 给 files 加 dev/ino/mtime_ms。
+ *
+ * 为什么加这三列（抄 Filebeat + restic 的作业）：
+ * - `mtime_ms`：size 和 mtime 都没变就跳过读内容。线上 2045 个文件扫描 110 秒，
+ *   绝大部分时间花在「图片同尺寸 → 被迫算指纹」上，有 mtime 就能直接判未变。
+ * - `dev`/`ino`：同一文件系统内 rename 不改 inode，移动识别不用读一个字节。
+ *   **只当线索，不当身份** —— Filebeat 文档明确说设备号在 LVM / 网络共享 / 容器里会变，
+ *   所以 inode 命中才敢认，不命中就走指纹兜底。
+ */
+const M0004: Migration = {
+  id: '0004_file_identity_columns',
+  summary: 'files 增加 dev / ino / mtime_ms（扫描剪枝与零拷贝移动识别）',
+  up: {
+    sqlite: [
+      `alter table files add column dev text`,
+      `alter table files add column ino text`,
+      `alter table files add column mtime_ms integer`,
+      `create index if not exists files_ino_idx on files (root_id, dev, ino)`,
+    ],
+    postgres: [
+      `alter table files add column if not exists dev text`,
+      `alter table files add column if not exists ino text`,
+      `alter table files add column if not exists mtime_ms bigint`,
+      `create index if not exists files_ino_idx on files (root_id, dev, ino)`,
+    ],
+    mysql: [],
+  },
+}
+
+export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004]
 
 function checksum(m: Migration): string {
   return createHash('sha256').update(JSON.stringify(m.up)).digest('hex').slice(0, 16)

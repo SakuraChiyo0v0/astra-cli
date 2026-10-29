@@ -200,8 +200,23 @@ export interface ScanResult {
   durationMs: number
 }
 
-async function walk(dir: string): Promise<string[]> {
-  const out: string[] = []
+export interface WalkEntry {
+  abs: string
+  size: number
+  dev: string
+  ino: string
+  mtimeMs: number
+}
+
+/**
+ * 遍历目录，顺带把 stat 结果带回来。
+ *
+ * 为什么不在调用方再 stat 一次：`readdir` 已经拿到 dirent，但 size/mtime 还是要 stat；
+ * 走一趟就取全，扫描的 syscall 数量少一半（线上 2045 个文件差 1 秒左右）。
+ * stat 失败的文件直接跳过——扫不到不等于删了，下次再算。
+ */
+async function walk(dir: string): Promise<WalkEntry[]> {
+  const out: WalkEntry[] = []
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
@@ -210,8 +225,17 @@ async function walk(dir: string): Promise<string[]> {
   }
   for (const entry of entries) {
     const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) out.push(...(await walk(full)))
-    else if (entry.isFile()) out.push(full)
+    if (entry.isDirectory()) {
+      out.push(...(await walk(full)))
+      continue
+    }
+    if (!entry.isFile()) continue
+    try {
+      const st = statSync(full)
+      out.push({ abs: full, size: st.size, dev: String(st.dev), ino: String(st.ino), mtimeMs: Math.round(st.mtimeMs) })
+    } catch {
+      // 读不到就跳过
+    }
   }
   return out
 }
@@ -270,15 +294,28 @@ export async function scan(
   for (const root of targets) {
     const rows = await db.conn.query<{
       id: string; asset_id: string; rel_path: string; size: number | null; hash: string | null
-    }>('select id, asset_id, rel_path, size, hash from files where root_id = ?', [root.id])
+      dev: string | null; ino: string | null; mtime_ms: number | null
+    }>('select id, asset_id, rel_path, size, hash, dev, ino, mtime_ms from files where root_id = ?', [root.id])
+      // PG 的 bigint 走 JSON 是**字符串**（size / mtime_ms 都可能），不转成数字的话
+      // `row.size === entry.size` 永远为 false —— 表现是每次扫描都全量重算指纹，
+      // 实测第二遍 220 秒，比第一遍还慢。这个坑很隐蔽，必须在这里统一转。
+      .then((list) => list.map((r) => ({
+        ...r,
+        size: r.size === null ? null : Number(r.size),
+        mtime_ms: r.mtime_ms === null ? null : Number(r.mtime_ms),
+      })))
 
     const byPath = new Map(rows.map((r) => [r.rel_path, r]))
     const byHash = new Map<string, typeof rows[number]>()
+    // inode 只当线索：Filebeat 文档明确说设备号在 LVM / 网络共享 / 容器里会变，
+    // 所以命中才认，不命中继续走指纹。
+    const byInode = new Map<string, typeof rows[number]>()
     const bySize = new Map<number, number>()
     const bySizeRows = new Map<number, typeof rows>()
     let unknownSize = 0
     for (const r of rows) {
       if (r.hash) byHash.set(r.hash, r)
+      if (r.dev && r.ino) byInode.set(`${r.dev}:${r.ino}`, r)
       if (r.size === null) unknownSize += 1
       else {
         bySize.set(r.size, (bySize.get(r.size) ?? 0) + 1)
@@ -300,50 +337,81 @@ export async function scan(
 
     const seen = new Set<string>()
     const files = await walk(root.abs_path)
-    const candidates: { abs: string; rel: string; size: number }[] = []
+    const candidates: { abs: string; rel: string; size: number; dev: string; ino: string; mtimeMs: number }[] = []
+    /** inode 命中、直接判为移动的（不读内容）。 */
+    const inodeMoves: { entry: WalkEntry; rel: string; row: typeof rows[number] }[] = []
 
-    // 第一遍：路径没变的直接认领（顺带把 size 和指纹补齐）
-    const matched: { abs: string; rel: string; size: number; row: typeof rows[number] }[] = []
-    for (const abs of files) {
-      const base = path.basename(abs)
+    // 第一遍：路径没变的直接认领（顺带把 size / 指纹 / dev-ino-mtime 补齐）
+    const matched: { entry: WalkEntry; rel: string; size: number; row: typeof rows[number] }[] = []
+    for (const entry of files) {
+      const base = path.basename(entry.abs)
       if (base.startsWith('.')) continue
       if (skipExt.test(base)) continue
       scanned += 1
-      const rel = path.relative(root.abs_path, abs)
-      const size = sizeOf(abs)
-      if (size === null) continue
+      const rel = path.relative(root.abs_path, entry.abs)
+      const size = entry.size
       const same = byPath.get(rel)
       if (same) {
-        matched.push({ abs, rel, size, row: same })
+        matched.push({ entry, rel, size, row: same })
         seen.add(same.id)
-      } else if (canPruneBySize && !bySize.has(size)) {
+        continue
+      }
+      // 路径变了但 inode 没变 → 同一文件系统内的 rename，零拷贝认回
+      const byIno = byInode.get(`${entry.dev}:${entry.ino}`)
+      if (byIno && !seen.has(byIno.id)) {
+        seen.add(byIno.id)
+        inodeMoves.push({ entry, rel, row: byIno })
+        continue
+      }
+      if (canPruneBySize && !bySize.has(size)) {
         // size 在库里根本不存在 → 一定是新文件，不用读内容
         orphanCount += 1
         if (orphans.length < 50) orphans.push({ relPath: rel, size })
       } else {
-        candidates.push({ abs, rel, size })
+        candidates.push({ abs: entry.abs, rel, size, dev: entry.dev, ino: entry.ino, mtimeMs: entry.mtimeMs })
       }
     }
 
     await mapLimit(matched, concurrency, async (item) => {
       unchanged += 1
       const now = new Date().toISOString()
-      if (item.row.hash && item.row.size === item.size) {
-        await db.conn.exec('update files set last_seen = ?, state = ? where id = ?', [now, 'present', item.row.id])
+      const identity = [item.entry.dev, item.entry.ino, item.entry.mtimeMs]
+      // size + mtime 都没变 → 内容不可能变，跳过读文件（抄 restic / Nextcloud 的判据）
+      if (item.row.hash && item.row.size === item.size && item.row.mtime_ms === item.entry.mtimeMs) {
+        await db.conn.exec(
+          'update files set last_seen = ?, state = ?, dev = ?, ino = ?, mtime_ms = ? where id = ?',
+          [now, 'present', ...identity, item.row.id],
+        )
         return
       }
       // 老数据 size 不可信（tracks.bytes 不是文件大小）、指纹也空：这里补齐
       let fp: string | null = null
       try {
-        fp = `${item.size}-${await quickHash(item.abs)}`
+        fp = `${item.size}-${await quickHash(item.entry.abs)}`
       } catch {
         fp = null
       }
       if (fp) byHash.set(fp, item.row)
-      await db.conn.exec('update files set size = ?, hash = coalesce(?, hash), state = ?, last_seen = ? where id = ?',
-        [item.size, fp, 'present', now, item.row.id])
+      await db.conn.exec(
+        'update files set size = ?, hash = coalesce(?, hash), state = ?, last_seen = ?, dev = ?, ino = ?, mtime_ms = ? where id = ?',
+        [item.size, fp, 'present', now, ...identity, item.row.id],
+      )
       if (fp && !item.row.hash) healed += 1
     })
+
+    // inode 命中：同盘 rename，直接改路径，一个字节都不用读
+    for (const item of inodeMoves) {
+      const from = item.row.rel_path
+      await db.conn.exec(
+        'update files set rel_path = ?, size = ?, state = ?, last_seen = ?, dev = ?, ino = ?, mtime_ms = ? where id = ?',
+        [item.rel, item.entry.size, 'present', new Date().toISOString(),
+          item.entry.dev, item.entry.ino, item.entry.mtimeMs, item.row.id],
+      )
+      if (from !== item.rel) {
+        await event(db, 'moved', item.row.asset_id, item.row.id, { from, to: item.rel, root: root.label, via: 'inode' })
+        moved.push({ assetId: item.row.asset_id, from, to: item.rel })
+      }
+    }
 
     // 第二遍：路径不在库里的，算指纹去认领「被移动的文件」
     await mapLimit(candidates, concurrency, async (item) => {
@@ -357,10 +425,12 @@ export async function scan(
       if (hit && !seen.has(hit.id)) {
         seen.add(hit.id)
         const from = hit.rel_path
-        await db.conn.exec('update files set rel_path = ?, size = ?, hash = ?, state = ?, last_seen = ? where id = ?',
-          [item.rel, item.size, fp, 'present', new Date().toISOString(), hit.id])
+        await db.conn.exec(
+          'update files set rel_path = ?, size = ?, hash = ?, state = ?, last_seen = ?, dev = ?, ino = ?, mtime_ms = ? where id = ?',
+          [item.rel, item.size, fp, 'present', new Date().toISOString(), item.dev, item.ino, item.mtimeMs, hit.id],
+        )
         if (from !== item.rel) {
-          await event(db, 'moved', hit.asset_id, hit.id, { from, to: item.rel, root: root.label })
+          await event(db, 'moved', hit.asset_id, hit.id, { from, to: item.rel, root: root.label, via: 'fingerprint' })
           moved.push({ assetId: hit.asset_id, from, to: item.rel })
         }
         return
@@ -373,9 +443,11 @@ export async function scan(
         const target = healable[0]!
         seen.add(target.id)
         const from = target.rel_path
-        await db.conn.exec('update files set rel_path = ?, size = ?, hash = ?, state = ?, last_seen = ? where id = ?',
-          [item.rel, item.size, fp, 'present', new Date().toISOString(), target.id])
-        await event(db, 'moved', target.asset_id, target.id, { from, to: item.rel, root: root.label })
+        await db.conn.exec(
+          'update files set rel_path = ?, size = ?, hash = ?, state = ?, last_seen = ?, dev = ?, ino = ?, mtime_ms = ? where id = ?',
+          [item.rel, item.size, fp, 'present', new Date().toISOString(), item.dev, item.ino, item.mtimeMs, target.id],
+        )
+        await event(db, 'moved', target.asset_id, target.id, { from, to: item.rel, root: root.label, via: 'size-heal' })
         moved.push({ assetId: target.asset_id, from, to: item.rel })
         return
       }
@@ -470,8 +542,9 @@ export async function adopt(
         .map((r) => r.rel_path),
     )
     const files = await walk(root.abs_path)
-    for (const abs of files) {
+    for (const entry of files) {
       if (result.adopted >= limit) break
+      const abs = entry.abs
       const base = path.basename(abs)
       if (base.startsWith('.')) continue
       const ext = path.extname(base).toLowerCase()
@@ -507,8 +580,7 @@ export async function adopt(
         if (!nfo) nfo = candidate
       }
       const meta = nfo ? nfoMeta(nfo) : { title: null, uploader: null }
-      const size = sizeOf(abs)
-      if (size === null) continue
+      const size = entry.size
       const fp = `${size}-${await quickHash(abs)}`
 
       const kind = ['.mp4', '.mkv', '.flv', '.webm', '.mov'].includes(ext) ? 'video'

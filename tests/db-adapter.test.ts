@@ -61,16 +61,16 @@ test('迁移建表、可重复执行、状态可查', async () => {
   const { db } = tmpDb()
   try {
     const first = await migrate(db)
-    assert.deepEqual(first.applied, ['0001_assets_files', '0002_backfill_tracks', '0003_clear_untrusted_sha256'])
+    assert.deepEqual(first.applied, ['0001_assets_files', '0002_backfill_tracks', '0003_clear_untrusted_sha256', '0004_file_identity_columns'])
     assert.equal(first.current, first.total)
 
     // 再跑一次：不重复应用
     const second = await migrate(db)
     assert.deepEqual(second.applied, [])
-    assert.equal(second.skipped.length, 3)
+    assert.equal(second.skipped.length, 4)
 
     const applied = await appliedMigrations(db)
-    assert.equal(applied.length, 3)
+    assert.equal(applied.length, 4)
     assert.match(applied[0]!.checksum, /^[0-9a-f]{16}$/)
   } finally {
     await db.conn.close()
