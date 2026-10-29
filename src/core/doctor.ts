@@ -15,6 +15,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { getConfig, mediaRoot, musicRoot } from './config.ts'
+import { comicRoot } from '../comic/paths.ts'
 import { targetPathFor } from '../bili/download.ts'
 import { renderTemplate } from './template.ts'
 import { astraHome } from './paths.ts'
@@ -200,9 +201,19 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
     ...(biliSession ? {} : { hint: '登录后才能拿到 1080P 以上画质（`astra bili login start`）' }),
   })
 
+  // —— 漫画域 ——
+  const comic = comicRoot()
+  try {
+    ensureExists(comic)
+    const write = checkWritable(comic)
+    add({ name: 'comic_dir', kind: 'domain', ok: write.ok, detail: write.detail, ...(write.ok ? {} : { hint: '检查 comic.dir / ASTRA_COMIC_DIR 权限' }) })
+  } catch (err) {
+    add({ name: 'comic_dir', kind: 'domain', ok: false, detail: `建不出目录：${(err as Error).message.slice(0, 100)}` })
+  }
+
   // —— 磁盘用量 ——
   // 目录会持续增长，没人会主动上 NAS 看还剩多少。这里顺带报一下，低于警戒线才标红。
-  for (const [name, dir] of [['music_disk', music], ['video_disk', video]] as const) {
+  for (const [name, dir] of [['music_disk', music], ['video_disk', video], ['comic_disk', comic]] as const) {
     try {
       const usage = dirUsage(dir, { minFreeGb: 10 })
       add({

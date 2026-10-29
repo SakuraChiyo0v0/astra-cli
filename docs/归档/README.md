@@ -5,6 +5,7 @@
 
 | 日期 | 文档 | 一句话 |
 |-|-|-|
+| 2026-10-29 | [comic 域纯 TS 落地](2026-10-29%20comic%20域纯%20TS%20落地.md) | 新增 `comic get/info/search/doctor`：纯 TS 打移动端 API，不依赖 jmcomic-web。AES 密钥是 md5 hex 的 ASCII（不是 raw digest）；解混淆用 ffmpeg 竖条重排（单文件产物塞不进 sharp）；album 接口里 scramble_id 恒为 0，真值要另打 chapter_view_template |
 | 2026-10-23 | [同曲多专辑归属与 doctor 示例](2026-10-23%20同曲多专辑归属与%20doctor%20示例.md) | P4#5：并行下 5 张专辑时，全局去重让**先下完的那张**占住重复曲目 —— HIStory(1995 精选)抢走 Billie Jean，Thriller(1982) 判 skipped，用户看到的是"专辑不完整"而不是"重复被去掉"。判据改成与顺序无关的四级优先级；**关键是"分不出时保持现状"必须对称返回 false**，返回 true 就退化成"传进来的第一个赢"，又回到顺序决定。另修 4f：doctor 示例的 `{title}` 取到了分 P 名，让人误以为音频模板有 `{part}` |
 | 2026-10-23 | [入口层体验 P3](2026-10-23%20入口层体验%20P3.md) | 五条都不动业务逻辑，全是"人的入口"。4a 最有价值：`astra bili --help` 报 UNKNOWN_COMMAND，清单说是"唯一真正卡住使用者的地方"——没人猜得到要用 `astra help bili`。另：配置别名读写互通、doctor 展开模板（改完配置不用真下一个文件才知道落点）、`--table`（table 不进 data，不加开关时输出不变）。表格对齐踩两次：分隔线用 `─` 会变成两倍宽；测试自己写歪三次 |
 | 2026-10-23 | [bili audio 批量转库](2026-10-23%20bili%20audio%20批量转库.md) | 新增 `bili audio`：一条命令把 UP/合集转成音乐库（之前是外部循环调 get + 临时改 env + 事后对账 + 写补下脚本）。增量靠「下前先探」而非扫目录。另修两条实测：`--to bili` 套了视频模板（**模板与根目录是两件事**，我混在一个 if 里了）、`--sidecar` 对音频无效（那是替用户做决定）。`bili.concurrency` 帮不上批量——瓶颈是进程启动，2g 顺带解决 |

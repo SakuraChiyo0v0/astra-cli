@@ -26,6 +26,7 @@ import { steamCommands } from './steam/commands.ts'
 import { vrCommands } from './vr/commands.ts'
 import { modelCommands } from './model/commands.ts'
 import { pixivCommands } from './pixiv/commands.ts'
+import { comicCommands } from './comic/commands.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
 import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
@@ -362,7 +363,7 @@ const commands: Command[] = [
 
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest,
   ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands, ...modelCommands,
-  ...pixivCommands,
+  ...pixivCommands, ...comicCommands,
 ]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */

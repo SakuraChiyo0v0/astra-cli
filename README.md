@@ -16,9 +16,10 @@
 | **媒体处理** | 抽音轨、裁剪、转码、截图、拼接、水印（对本地文件） | 7 |
 | **Steam** | 愿望单（带价格/折扣）、公开库存、玩家资料 | 8 |
 | **VRChat** | 好友、通知、世界、实例、群组、头像、收藏、经济 | 32 |
+| **漫画** | 搜本 / 看信息 / 按车号下载（解混淆） | 4 |
 | 基础设施 | 统一输出、配置、飞书通知、自检、后台任务、备份、审计 | 10 |
 
-规模：118 条命令（不含内部 worker），约 15900 行 TS，40 个测试文件 268 项测试。
+规模：约 122 条命令（不含内部 worker）。
 
 **代理**：`proxy.url` / `include` / `exclude` 按域名决定哪些请求走代理，
 Steam 这类被墙的域名走代理，B 站和网易云保持直连（它们对代理 IP 更敏感）。
@@ -72,6 +73,19 @@ astra media thumbnail <视频> --at 30       # 截一帧当封面
 输出路径**绝不会等于输入**——这是硬约束，`--overwrite` 也绕不过。默认不覆盖已存在的文件。
 
 DASH 的音视频是**分开的两个流**，下完用 ffmpeg 合并 —— 所以 B 站能力需要 ffmpeg（音乐那边不需要）。
+
+### 漫画
+
+```sh
+astra comic search 关键词
+astra comic info 123456
+astra comic get 123456                 # 整本
+astra comic get 123456 --chapter 3     # 只下一话
+astra comic doctor
+```
+
+纯 TS 实现移动端 API，不依赖本机其它下载容器。解混淆用 ffmpeg（与 B 站共用）。
+落盘看 `comic.dir` / `ASTRA_COMIC_DIR`。
 
 ### Steam
 
@@ -142,6 +156,7 @@ src/lx/      洛雪音源宿主（vm 沙箱）与音源管理
 src/music/   网易云接口、版本判断、酷我同曲匹配、取链、下载、标签、曲库、订阅、逐字歌词
 src/bili/    B 站接口、wbi 签名、DASH 下载与合并、收藏夹/合集/UP 投稿、扫码登录
 src/steam/   Steam 愿望单、库存、玩家资料、凭据
+src/comic/   漫画移动端 API、解混淆、下载
 tests/       node:test；夹具是真实抓取的响应和 ffmpeg 生成的真实音视频
 docs/        归档（每件事的"踩过的坑"）、PLAN（进度与待办）
 ```

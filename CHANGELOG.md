@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.12 — 2026-10-29
+
+**新增 `comic` 域：纯 TS 漫画下载（不依赖本机其它容器）**
+
+- 命令：`comic get` / `info` / `search` / `doctor`
+- 移动端 API：token、AES-256-ECB 解密、域名刷新、cookies、章节与图片 CDN
+- 图片竖条解混淆用 ffmpeg（与 B 站共用），不引入 sharp 等原生依赖。裁切前先转 `rgb24` 并无损写出，避免 YUV 抽样在接缝留亮线
+- 配置：`comic.dir` / `comic.template` / `comic.concurrency`；环境变量 `ASTRA_COMIC_DIR`
+- Hermes skill：`skills/comic/SKILL.md`
+
 ## 0.18.11 — 2026-10-29
 
 **pixiv rank 支持 R-18 日榜/周榜；顺手修 `original` 榜**
@@ -289,6 +299,7 @@
   （`ASTRA_PROXY_INCLUDE` / `ASTRA_PROXY_EXCLUDE`）。原先只能读配置，
   机器上配了 include（例如只让 steam 走代理）时，代理相关用例会永远绿不了 ——
   `tests/proxy-transport.test.ts` 现在显式清空这两个变量，用例不再依赖本机配置
+
 ## 0.12.24 — 2026-10-22
 
 **文件不可变：默认永不移动已落盘的文件**
