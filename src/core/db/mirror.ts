@@ -72,7 +72,9 @@ export async function mirrorFile(entry: MirrorFile): Promise<boolean> {
           meta: entry.meta,
         },
         { rootId: spot.rootId, relPath: spot.rel, size },
-        { sha256: entry.sha256 ?? null },
+        // 注意：entry.sha256 是**下载源流**的哈希，不是落盘文件（写标签/嵌封面之后会变），
+        // 所以这里不写进 files.sha256，交给 `lib verify` 实测
+        { sha256: null },
       )
       return true
     } finally {

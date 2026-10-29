@@ -200,7 +200,24 @@ const M0002: Migration = {
   },
 }
 
-export const MIGRATIONS: Migration[] = [M0001, M0002]
+/**
+ * 0003：清掉 `files.sha256` 里不可信的值。
+ *
+ * 0002 回填时抄了 `tracks.audio_sha256`，但那是**下载源流**的哈希 ——
+ * 落盘时会写标签、嵌封面，文件内容早就变了。实测线上 21/21 条全部对不上。
+ * 与其留着让人误信，不如清空，由 `lib verify` 实测后补真值。
+ */
+const M0003: Migration = {
+  id: '0003_clear_untrusted_sha256',
+  summary: '清空 files.sha256（回填时抄的源流哈希不可信）',
+  up: {
+    sqlite: [`update files set sha256 = null`],
+    postgres: [`update files set sha256 = null`],
+    mysql: [],
+  },
+}
+
+export const MIGRATIONS: Migration[] = [M0001, M0002, M0003]
 
 function checksum(m: Migration): string {
   return createHash('sha256').update(JSON.stringify(m.up)).digest('hex').slice(0, 16)
