@@ -21,6 +21,35 @@ import { ensureDir, homePath } from '../core/paths.ts'
  * 两种来源取并集：命令行的 `--r18`，以及配置 `pixiv.r18=true`（默认 false）。
  * 配置化的原因：库是自己的，用户说过「R-18 问题不大」之后，不该每天靠命令行开关兜。
  */
+/**
+ * `--sl` / `--min-sl` / `--max-sl` 的本地过滤器。
+ *
+ * pixiv 的搜索接口**不接受 sl 参数**（实测 `&sl=4` 被忽略，返回的 sl 集合不变），
+ * 但搜索结果每条都自带 `sl`，所以按等级筛只是本地过滤，不增加任何请求。
+ * 取值：2=一般 / 4=轻度 / 6=敏感（0 罕见，通常是取不到详情）。
+ */
+export function slFilter(values: Record<string, unknown>): ((sl: number) => boolean) | null {
+  const exact = typeof values.sl === 'string' && values.sl.trim()
+    ? values.sl.split(',').map((v) => Number(v.trim()))
+    : null
+  const min = values['min-sl'] !== undefined ? num(values['min-sl'], 0, 0, 10, '--min-sl') : null
+  const max = values['max-sl'] !== undefined ? num(values['max-sl'], 0, 0, 10, '--max-sl') : null
+  if (exact && exact.some((v) => Number.isNaN(v))) throw invalidInput('--sl 只能是数字，如 --sl 2 或 --sl 2,4')
+  if (!exact && min === null && max === null) return null
+  return (sl: number) => {
+    if (exact && !exact.includes(sl)) return false
+    if (min !== null && sl < min) return false
+    if (max !== null && sl > max) return false
+    return true
+  }
+}
+
+const SL_OPTIONS = {
+  sl: { type: 'string', description: '只要这些等级（逗号分隔）：2 一般 / 4 轻度 / 6 敏感，如 --sl 2 或 --sl 2,4', valueName: 'n' },
+  'min-sl': { type: 'string', description: 'sl 下限（含），如 --min-sl 4 只看轻度以上', valueName: 'n' },
+  'max-sl': { type: 'string', description: 'sl 上限（含），如 --max-sl 2 排除敏感内容', valueName: 'n' },
+} as const
+
 function r18Allowed(flag: unknown): boolean {
   return flag === true || (getConfig('pixiv.r18') || '').trim() === 'true'
 }
@@ -458,6 +487,7 @@ const search: Command = {
     page: { type: 'string', description: '页码，默认 1', valueName: 'n' },
     limit: { type: 'string', description: '最多返回多少条，默认 20', valueName: 'n' },
     type: { type: 'string', description: '分类：all / illust / manga / ugoira（本地过滤），默认 all', valueName: 't' },
+    ...SL_OPTIONS,
   },
   minArgs: 1,
   async run({ positionals, values }) {
@@ -467,13 +497,16 @@ const search: Command = {
     const type = typeof values.type === 'string' ? values.type.trim() : 'all'
     if (!(type in TYPE_FILTER)) throw invalidInput('--type 只能是 all / illust / manga / ugoira')
     const want = TYPE_FILTER[type]
+    const slOk = slFilter(values)
+    const keep = (h: { illustType: number; sl: number }) =>
+      (!want || want.includes(h.illustType)) && (!slOk || slOk(h.sl))
 
     const res = await resolveSearch(keyword, page)
     // `--type` 是本地过滤，单页可能一条都不剩（凯撒的 manga 就一页 0 条），
     // 所以按需再往后多翻几页，凑够 limit 或翻不动为止。
     const hits = [...res.hits]
     const seen = new Set(hits.map((h) => h.id))
-    if (want && hits.filter((h) => want.includes(h.illustType)).length < limit) {
+    if ((want || slOk) && hits.filter(keep).length < limit) {
       for (let p = page + 1; p <= page + 4; p += 1) {
         let more
         try {
@@ -487,10 +520,10 @@ const search: Command = {
           seen.add(h.id)
           hits.push(h)
         }
-        if (hits.filter((h) => want.includes(h.illustType)).length >= limit) break
+        if (hits.filter(keep).length >= limit) break
       }
     }
-    const picked = (want ? hits.filter((h) => want.includes(h.illustType)) : hits).slice(0, limit)
+    const picked = hits.filter(keep).slice(0, limit)
     return {
       data: {
         keyword,
@@ -505,8 +538,8 @@ const search: Command = {
         illustIds: picked.map((h) => h.id),
       },
       table: {
-        headers: ['#', 'illustId', '类型'],
-        rows: picked.map((h, i) => [i + 1, h.id, TYPE_LABEL[h.illustType] ?? String(h.illustType)]),
+        headers: ['#', 'illustId', '类型', 'sl'],
+        rows: picked.map((h, i) => [i + 1, h.id, TYPE_LABEL[h.illustType] ?? String(h.illustType), h.sl]),
       },
     }
   },
@@ -528,6 +561,7 @@ const top: Command = {
     limit: { type: 'string', description: '返回条数，默认 20', valueName: 'n' },
     type: { type: 'string', description: '分类：all / illust / manga / ugoira（本地过滤），默认 all', valueName: 't' },
     r18: { type: 'boolean', description: '包含 R-18 作品（默认过滤掉）' },
+    ...SL_OPTIONS,
   },
   minArgs: 1,
   async run({ positionals, values }) {
@@ -576,8 +610,10 @@ const top: Command = {
         }
       }
     }
+    const slOk = slFilter(values)
     const typed = want ? hits.filter((h) => want.includes(h.illustType)) : hits
-    const pool = r18Allowed(values.r18) ? typed : typed.filter((h) => h.xRestrict === 0)
+    const levelOk = slOk ? typed.filter((h) => slOk(h.sl)) : typed
+    const pool = r18Allowed(values.r18) ? levelOk : levelOk.filter((h) => h.xRestrict === 0)
 
     // 分批并发取收藏数，避免一次打 180 个请求被限流
     const stats = new Map<number, number>()
@@ -616,13 +652,15 @@ const top: Command = {
           userName: r.userName,
           userId: r.userId,
           pages: r.pageCount,
+          sl: r.sl,
+          xRestrict: r.xRestrict,
           bookmarks: r.bookmarks,
           url: `https://www.pixiv.net/artworks/${r.id}`,
         })),
       },
       table: {
-        headers: ['illustId', '收藏', '页', '作品名', '作者'],
-        rows: ranked.map((r) => [r.id, r.bookmarks, r.pageCount, r.title.slice(0, 34), r.userName.slice(0, 14)]),
+        headers: ['illustId', '收藏', '页', 'sl', '作品名', '作者'],
+        rows: ranked.map((r) => [r.id, r.bookmarks, r.pageCount, r.sl, r.title.slice(0, 30), r.userName.slice(0, 12)]),
       },
     }
   },

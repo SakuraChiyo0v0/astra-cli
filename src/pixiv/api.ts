@@ -290,6 +290,8 @@ export interface SearchHit {
   userId: number
   pageCount: number
   xRestrict: number
+  /** 安全等级：2=一般 / 4=轻度 / 6=敏感。搜索结果自带，不用额外请求。 */
+  sl: number
   /** 0=插画 1=漫画 2=动图。pixiv 的 `type` 参数在 ajax 搜索里被忽略（实测
    *  `type=illust` 和 `type=manga` 返回完全相同的数据），所以分类只能拿这个字段本地过滤。 */
   illustType: number
@@ -314,6 +316,7 @@ interface RawSearch {
       userId?: string
       pageCount?: number
       xRestrict?: number
+      sl?: number
       illustType?: number
     }[]
     total?: number
@@ -340,6 +343,7 @@ export async function searchPage(keyword: string, page: number, sMode: SearchMod
       userId: Number(d.userId ?? 0),
       pageCount: d.pageCount ?? 1,
       xRestrict: d.xRestrict ?? 0,
+      sl: d.sl ?? 0,
       illustType: d.illustType ?? 0,
     }))
     .filter((d) => Number.isFinite(d.id))
