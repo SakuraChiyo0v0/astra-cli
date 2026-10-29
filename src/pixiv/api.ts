@@ -178,6 +178,8 @@ export interface IllustDetail {
   userName: string
   pageCount: number
   xRestrict: number
+  /** 安全等级：2 = 一般，4 = 轻度，6 = 有性表现。匿名访客拿不到 >=4 的图。 */
+  sl: number
   illustType: number
   width: number
   height: number
@@ -192,6 +194,7 @@ interface RawIllust {
   userName?: string
   pageCount?: number
   xRestrict?: number
+  sl?: number
   illustType?: number
   width?: number
   height?: number
@@ -215,6 +218,7 @@ export async function illustDetail(illustId: number): Promise<IllustDetail> {
     userName: body.userName ?? '',
     pageCount: body.pageCount ?? 1,
     xRestrict: body.xRestrict ?? 0,
+    sl: body.sl ?? 0,
     illustType: body.illustType ?? 0,
     width: body.width ?? 0,
     height: body.height ?? 0,

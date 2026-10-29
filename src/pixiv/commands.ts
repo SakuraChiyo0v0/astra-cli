@@ -205,7 +205,7 @@ function saveSubs(list: SubEntry[]): void {
 
 const info: Command = {
   name: 'pixiv info',
-  summary: '看单个作品详情（作者、页数、尺寸、标签、是否 R-18）',
+  summary: '看单个作品详情（作者、页数、尺寸、标签、分级 sl、是否 R-18）',
   usage: 'astra pixiv info <illustId>',
   notes: [
     '只读，不下载。R-18 作品会照实返回 xRestrict=1，但 `pull` 默认跳过。',
@@ -225,6 +225,8 @@ const info: Command = {
         pages: d.pageCount,
         size: `${d.width}x${d.height}`,
         xRestrict: d.xRestrict,
+        // sl 决定「能不能发到普通群」：>=4 就是敏感（4 轻度 / 6 有性表现）
+        sl: d.sl,
         r18: d.xRestrict > 0,
         bookmarks: (await illustStats(id)).bookmarkCount,
         tags: d.tags,
@@ -632,7 +634,7 @@ const pull: Command = {
   usage: 'astra pixiv pull <illustId> [--out 目录] [--pages N] [--r18] [--dry]',
   notes: [
     '落盘 `<目录>/<userId>/<illustId>_p<N>.<ext>`，已存在的文件跳过（只认 id + 页号）。',
-    'R-18 作品默认跳过，要下得显式加 `--r18`。',
+    'R-18 作品默认跳过；`--r18` 或配置 `pixiv.r18=true` 放行。',
     '目录优先 `--out`，其次 `pixiv.dir`；两者都没配会直接报错，不会瞎写到一个默认路径。',
   ],
   options: {
@@ -649,7 +651,7 @@ const pull: Command = {
     const dir = resolveDir(values.out)
     const pages = values.pages ? num(values.pages, 0, 1, 100, '--pages') : undefined
     const detail = await illustDetail(id)
-    if (detail.xRestrict > 0 && values.r18 !== true) {
+    if (detail.xRestrict > 0 && !r18Allowed(values.r18)) {
       throw new AstraError('R18_BLOCKED', '这是 R-18 作品，默认不下载', {
         exitCode: 4,
         hint: '确实要下就加 `--r18`',
