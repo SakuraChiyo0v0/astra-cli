@@ -11,7 +11,7 @@ import { getConfig, musicRoot } from '../config.ts'
 import { openDatabase, redact } from './index.ts'
 import { MIGRATIONS, appliedMigrations } from './migrations.ts'
 import {
-  addRoot, assetEvents, findAssets, findDupes, listRoots, removeRoot, scan, stats, verify, whereAsset,
+  addRoot, adopt, assetEvents, findAssets, findDupes, listRoots, removeRoot, scan, stats, verify, whereAsset,
 } from './library.ts'
 
 const REQUIRED = MIGRATIONS.map((m) => m.id)
@@ -121,6 +121,39 @@ export const libCommands: Command[] = [
         const roots = typeof values.root === 'string' ? [values.root] : undefined
         const result = await scan(db, { roots })
         return { data: { ...result, url: redact(db.url) } }
+      } finally {
+        await db.conn.close()
+      }
+    },
+  },
+  {
+    name: 'lib adopt',
+    summary: '认领孤儿文件：给盘上有、库里没有的媒体建 asset',
+    usage: 'astra lib adopt [--root <标签>] [--kind video,audio,image] [--limit N] [--dry-run]',
+    options: {
+      root: { type: 'string', valueName: '标签', description: '只处理某个 root，默认全部' },
+      kind: { type: 'string', valueName: '类型', description: 'video / audio / image，逗号分隔' },
+      limit: { type: 'string', valueName: '条数', description: '最多认领几个，默认全部' },
+      'dry-run': { type: 'boolean', description: '只统计不写库' },
+    },
+    notes: [
+      '身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；没有平台 id → local:<内容指纹>',
+      '用内容指纹当 id 而不是路径：文件挪了不会变成两条',
+      '只建记录，不动任何文件',
+    ],
+    async run({ values }) {
+      const db = await open()
+      try {
+        const roots = typeof values.root === 'string' ? [values.root] : undefined
+        const kinds = typeof values.kind === 'string' ? values.kind.split(',').map((s) => s.trim()).filter(Boolean) : undefined
+        const limit = typeof values.limit === 'string' ? Number(values.limit) : undefined
+        const result = await adopt(db, {
+          ...(roots ? { roots } : {}),
+          ...(kinds ? { kinds } : {}),
+          ...(Number.isFinite(limit) ? { limit } : {}),
+          dryRun: values['dry-run'] === true,
+        })
+        return { data: { ...result, items: result.items.slice(0, 20), url: redact(db.url) } }
       } finally {
         await db.conn.close()
       }

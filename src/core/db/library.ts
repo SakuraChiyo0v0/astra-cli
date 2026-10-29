@@ -8,7 +8,7 @@
  * - **不删记录**：扫不到就标 `missing`，人看清单再决定
  */
 import { createHash } from 'node:crypto'
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { Database } from './index.ts'
@@ -404,6 +404,129 @@ export async function scan(
     roots: result.roots, scanned, unchanged, healed,
     moved: moved.length, missing: missing.length, orphans: orphanCount,
   })
+  return result
+}
+
+export interface AdoptResult {
+  dryRun: boolean
+  adopted: number
+  withBvid: number
+  local: number
+  skipped: number
+  items: { relPath: string; assetId: string; kind: string }[]
+}
+
+/** 从同名 .nfo 里抠 BV 号（B 站下载器写的 sidecar）。 */
+function bvidFromNfo(nfoPath: string): string | null {
+  try {
+    const raw = readFileSync(nfoPath, 'utf8')
+    const match = raw.match(/BV[0-9A-Za-z]{10}/)
+    return match ? match[0] : null
+  } catch {
+    return null
+  }
+}
+
+/** 从 nfo 里读标题和 UP 名，读不到就用文件名。 */
+function nfoMeta(nfoPath: string): { title: string | null; uploader: string | null } {
+  try {
+    const raw = readFileSync(nfoPath, 'utf8')
+    const title = raw.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.trim() ?? null
+    const uploader = raw.match(/<name>([\s\S]*?)<\/name>/)?.[1]?.trim() ?? null
+    return { title, uploader }
+  } catch {
+    return { title: null, uploader: null }
+  }
+}
+
+/**
+ * 认领孤儿文件：给「盘上有、库里没有」的文件建 asset + file。
+ *
+ * 身份怎么定（重要）：
+ * - 有同名 `.nfo` 且里面带 BV 号 → `bili:<BV>_p<分P>`，这是最可靠的
+ * - 没有平台 id → `local:<指纹>`。**用内容指纹当 id**，文件挪了也不会变成两条
+ *   （代价：重新压制的同一部片子会被当成新资产，这比用路径当 id 好）
+ */
+export async function adopt(
+  db: Database,
+  options: { roots?: string[]; kinds?: string[]; dryRun?: boolean; limit?: number } = {},
+): Promise<AdoptResult> {
+  const allRoots = await listRoots(db)
+  const targets = options.roots && options.roots.length > 0
+    ? allRoots.filter((r) => options.roots!.includes(r.label))
+    : allRoots
+  const result: AdoptResult = {
+    dryRun: options.dryRun === true, adopted: 0, withBvid: 0, local: 0, skipped: 0, items: [],
+  }
+  const limit = options.limit ?? Number.POSITIVE_INFINITY
+
+  for (const root of targets) {
+    const known = new Set(
+      (await db.conn.query<{ rel_path: string }>('select rel_path from files where root_id = ?', [root.id]))
+        .map((r) => r.rel_path),
+    )
+    const files = await walk(root.abs_path)
+    for (const abs of files) {
+      if (result.adopted >= limit) break
+      const base = path.basename(abs)
+      if (base.startsWith('.')) continue
+      const ext = path.extname(base).toLowerCase()
+      // 只认领媒体文件；sidecar（nfo/jpg/ass/lrc）跳过
+      if (!['.mp4', '.mkv', '.flv', '.webm', '.mov', '.mp3', '.flac', '.m4a', '.jpg', '.jpeg', '.png', '.webp'].includes(ext)) continue
+      if (options.kinds && options.kinds.length > 0) {
+        const isVideo = ['.mp4', '.mkv', '.flv', '.webm', '.mov'].includes(ext)
+        const isAudio = ['.mp3', '.flac', '.m4a'].includes(ext)
+        const isImage = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext)
+        if (!(options.kinds.includes('video') && isVideo)
+          && !(options.kinds.includes('audio') && isAudio)
+          && !(options.kinds.includes('image') && isImage)) continue
+      }
+      const rel = path.relative(root.abs_path, abs)
+      if (known.has(rel)) {
+        result.skipped += 1
+        continue
+      }
+
+      const nfo = abs.replace(/\.[^.]+$/, '.nfo')
+      const bvid = bvidFromNfo(nfo)
+      const meta = bvid ? nfoMeta(nfo) : { title: null, uploader: null }
+      const size = sizeOf(abs)
+      if (size === null) continue
+      const fp = `${size}-${await quickHash(abs)}`
+
+      const kind = ['.mp4', '.mkv', '.flv', '.webm', '.mov'].includes(ext) ? 'video'
+        : ['.mp3', '.flac', '.m4a'].includes(ext) ? 'audio' : 'image'
+
+      const assetIdValue = bvid ? `bili:${bvid}_p1` : `local:${fp}`
+      const title = meta.title || path.basename(base, ext)
+      if (result.dryRun) {
+        result.adopted += 1
+        if (bvid) result.withBvid += 1
+        else result.local += 1
+        result.items.push({ relPath: rel, assetId: assetIdValue, kind })
+        continue
+      }
+
+      await db.conn.tx(async (tx) => {
+        const inner: Database = { ...db, conn: tx }
+        await upsertAsset(inner, {
+          platform: bvid ? 'bili' : 'local',
+          nativeId: bvid ? `${bvid}_p1` : fp,
+          kind,
+          title,
+          artists: meta.uploader ?? null,
+          meta: { root: root.label, source: bvid ? 'nfo' : 'fingerprint' },
+        })
+        await upsertFile(inner, { assetId: assetIdValue, rootId: root.id, relPath: rel, size, hash: fp })
+        await event(inner, 'adopted', assetIdValue, null, { rel_path: rel, via: bvid ? 'nfo-bvid' : 'fingerprint' })
+      })
+      known.add(rel)
+      result.adopted += 1
+      if (bvid) result.withBvid += 1
+      else result.local += 1
+      result.items.push({ relPath: rel, assetId: assetIdValue, kind })
+    }
+  }
   return result
 }
 
