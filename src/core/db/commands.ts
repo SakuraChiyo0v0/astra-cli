@@ -207,6 +207,73 @@ export const dbCommands: Command[] = [
     },
   },
   {
+    name: 'db query',
+    summary: '执行自定义 SQL（默认只读，写操作要显式 --write）',
+    usage: 'astra db query "<sql>" [--limit <行数>] [--param 值 ...] [--write]',
+    options: {
+      limit: { type: 'string', valueName: '行数', description: '最多返回多少行，默认 100，上限 1000' },
+      param: { type: 'string', valueName: '值', multiple: true, description: '位置参数，可重复：--param a --param b 对应 ? 占位符' },
+      write: { type: 'boolean', description: '允许 insert/update/delete 等写语句（默认拒绝）' },
+    },
+    notes: [
+      '默认只允许 select / with / explain / pragma，其他语句一律拒绝，防止手滑改库',
+      'select 没写 limit 时会自动补上 --limit，返回 truncated=true 说明还有更多行',
+      '占位符统一写 ?，PG 的 $1 由适配层自动转换',
+      '改库前先 astra db backup --logical 做一份备份',
+    ],
+    minArgs: 1,
+    async run({ positionals, values }) {
+      const sql = positionals.join(' ').trim().replace(/;\s*$/, '')
+      const limit = Math.min(Math.max(Number(values.limit ?? 100) || 100, 1), 1000)
+      const allowWrite = values.write === true
+      const params: unknown[] = []
+      if (typeof values.param === 'string') params.push(values.param)
+      else if (Array.isArray(values.param)) params.push(...(values.param as string[]))
+
+      const head = sql.replace(/^\s*(--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)+/g, '').split(/\s+/)[0]!.toLowerCase()
+      const readonly = ['select', 'with', 'explain', 'pragma', 'show'].includes(head)
+      if (!readonly && !allowWrite) {
+        throw invalidInput(
+          '这条语句会改数据或结构，确认后加 --write 再跑',
+          `检测到语句类型：${head || '未知'}。只读查询用 select / with`,
+        )
+      }
+
+      const db = await openDatabase()
+      try {
+        const started = Date.now()
+        if (!readonly) {
+          const changes = await db.conn.exec(sql, params)
+          return { data: { statement: head, changes, durationMs: Date.now() - started, url: redact(db.url) } }
+        }
+        // 只读：没写 limit 就补一个，避免一条 select 把整表喷到终端
+        const limited = /\blimit\s+\d+/i.test(sql) ? sql : `${sql} limit ${limit}`
+        const rows = await db.conn.query<Record<string, unknown>>(limited, params)
+        const columns = rows.length > 0 ? Object.keys(rows[0]!) : []
+        return {
+          data: {
+            columns,
+            rowCount: rows.length,
+            truncated: rows.length >= limit,
+            durationMs: Date.now() - started,
+            rows,
+            url: redact(db.url),
+          },
+          table: {
+            headers: columns,
+            rows: rows.map((r) => columns.map((c) => {
+              const v = r[c]
+              if (v === null || v === undefined) return 'null'
+              return typeof v === 'object' ? JSON.stringify(v) : String(v)
+            })),
+          },
+        }
+      } finally {
+        await db.conn.close()
+      }
+    },
+  },
+  {
     name: 'db doctor',
     summary: '体检：连通性、各表行数、孤儿记录、重复内容',
     usage: 'astra db doctor',

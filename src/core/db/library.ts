@@ -107,6 +107,17 @@ export function assetId(platform: string, nativeId: string): string {
 export async function upsertAsset(db: Database, input: AssetInput): Promise<string> {
   const id = assetId(input.platform, input.nativeId)
   const now = new Date().toISOString()
+  // 先查再写，**不要靠捕获主键冲突**：PG 里一条语句报错会把整个事务置为 aborted，
+  // 后面的语句全失败（实测 adopt 同内容图片时报 duplicate key 然后整批回滚）。
+  const existing = await db.conn.query<{ id: string }>('select id from assets where id = ?', [id])
+  if (existing.length > 0) {
+    await db.conn.exec(
+      'update assets set title = ?, artists = ?, album = ?, duration_ms = ?, meta = ? where id = ?',
+      [input.title, input.artists ?? null, input.album ?? null, input.durationMs ?? null,
+        input.meta === undefined ? null : JSON.stringify(input.meta), id],
+    )
+    return id
+  }
   await db.conn.exec(
     `insert into assets (id, platform, native_id, kind, title, artists, album, duration_ms, meta, created_at)
      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -122,15 +133,7 @@ export async function upsertAsset(db: Database, input: AssetInput): Promise<stri
       input.meta === undefined ? null : JSON.stringify(input.meta),
       now,
     ],
-  ).catch(async (err: unknown) => {
-    // 已存在就更新标题等可变字段（主键冲突是正常路径，不是错误）
-    if (!String((err as Error).message).includes('UNIQUE')) throw err
-    await db.conn.exec(
-      'update assets set title = ?, artists = ?, album = ?, duration_ms = ?, meta = ? where id = ?',
-      [input.title, input.artists ?? null, input.album ?? null, input.durationMs ?? null,
-        input.meta === undefined ? null : JSON.stringify(input.meta), id],
-    )
-  })
+  )
   return id
 }
 
@@ -290,9 +293,10 @@ export async function scan(
     // 图片在音乐库里是附属（cover.jpg），在 pixiv 库里就是资产本身。
     // 按「这个 root 里有没有图片类资产」决定要不要跳过图片，不能一刀切。
     const imageRoot = rows.some((r) => /\.(jpe?g|png|webp|gif|bmp)$/i.test(r.rel_path))
+    // .nfo/.ass/.srt 这类是 sidecar，永远不是资产
     const skipExt = imageRoot
-      ? /\.(tmp|part|log|json|txt|md|nfo|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i
-      : /\.(tmp|part|log|json|txt|md|jpg|jpeg|png|webp|gif|bmp|nfo|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i
+      ? /\.(tmp|part|log|json|txt|md|nfo|ass|ssa|vtt|srt|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i
+      : /\.(tmp|part|log|json|txt|md|jpg|jpeg|png|webp|gif|bmp|nfo|ass|ssa|vtt|srt|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i
 
     const seen = new Set<string>()
     const files = await walk(root.abs_path)
@@ -487,9 +491,22 @@ export async function adopt(
         continue
       }
 
-      const nfo = abs.replace(/\.[^.]+$/, '.nfo')
-      const bvid = bvidFromNfo(nfo)
-      const meta = bvid ? nfoMeta(nfo) : { title: null, uploader: null }
+      // B 站下载器的 sidecar 有两套命名：`x.nfo` 和 `x.Metadata.nfo`，都要认
+      const stem = abs.replace(/\.[^.]+$/, '')
+      const nfoCandidates = [`${stem}.nfo`, `${stem}.Metadata.nfo`]
+      let nfo: string | null = null
+      let bvid: string | null = null
+      for (const candidate of nfoCandidates) {
+        if (!existsSync(candidate)) continue
+        const found = bvidFromNfo(candidate)
+        if (found) {
+          nfo = candidate
+          bvid = found
+          break
+        }
+        if (!nfo) nfo = candidate
+      }
+      const meta = nfo ? nfoMeta(nfo) : { title: null, uploader: null }
       const size = sizeOf(abs)
       if (size === null) continue
       const fp = `${size}-${await quickHash(abs)}`

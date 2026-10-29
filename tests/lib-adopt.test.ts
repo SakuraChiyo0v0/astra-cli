@@ -50,6 +50,26 @@ test('带 nfo 的视频用 BV 号做 id，标题/UP 从 nfo 取', async () => {
   }
 })
 
+test('x.Metadata.nfo 这种命名也能读到 BV 号', async () => {
+  const { db, root, close } = setup()
+  try {
+    await migrate(db)
+    await addRoot(db, 'bili', root)
+    const mp4 = path.join(root, 'UP', '作品', '06.mp4')
+    writeFileSync(mp4, 'video-bytes-6')
+    writeFileSync(
+      mp4.replace(/\.mp4$/, '.Metadata.nfo'),
+      '<movie><title>元数据命名</title><actor><name>UP六</name></actor><uniqueid>BV1MUu1zSEW2</uniqueid></movie>',
+    )
+
+    const r = await adopt(db, {})
+    assert.equal(r.withBvid, 1)
+    assert.equal(r.items[0]!.assetId, 'bili:BV1MUu1zSEW2_p1')
+  } finally {
+    await close()
+  }
+})
+
 test('没有 nfo 的视频用内容指纹做 id（不是路径）', async () => {
   const { db, root, close } = setup()
   try {
@@ -97,6 +117,34 @@ test('sidecar（nfo/jpg/ass）不会被当成资产认领', async () => {
     // 认领之后 scan 不应把 nfo/ass 当孤儿
     const s = await scan(db)
     assert.equal(s.unchanged, 1)
+  } finally {
+    await close()
+  }
+})
+
+test('两个 root 里有同一份内容：共用同一个 asset，不报主键冲突', async () => {
+  const { db, root, dir, close } = setup()
+  try {
+    await migrate(db)
+    const other = path.join(dir, 'pixiv-r18')
+    mkdirSync(other, { recursive: true })
+    await addRoot(db, 'pixiv', root)
+    await addRoot(db, 'pixiv-r18', other)
+
+    // 同一份内容放两处（同 size + 同前 1MB → 同指纹）
+    writeFileSync(path.join(root, 'a.jpg'), 'same-image-bytes')
+    writeFileSync(path.join(other, 'b.jpg'), 'same-image-bytes')
+
+    const first = await adopt(db, { roots: ['pixiv'], kinds: ['image'] })
+    assert.equal(first.adopted, 1)
+    const second = await adopt(db, { roots: ['pixiv-r18'], kinds: ['image'] })
+    assert.equal(second.adopted, 1)
+    assert.equal(second.items[0]!.assetId, first.items[0]!.assetId)
+
+    // 一个 asset、两个 file
+    const s = await stats(db)
+    assert.equal(s.assets, 1)
+    assert.equal(s.files, 2)
   } finally {
     await close()
   }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.26.0 — 2026-10-29
+
+**`db query`：自定义 SQL，默认只读**
+
+- `astra db query "<sql>" [--limit N] [--param 值 ...] [--write]`
+- **默认只允许 select / with / explain / pragma / show**，update/delete/drop 一律拒绝并提示加 `--write`
+  （手滑跑一句 delete 比跑不出结果严重得多）
+- select 没写 limit 时自动补 `--limit`（默认 100，上限 1000），打满时返回 `truncated: true`
+- `--param a --param b` 按顺序绑定 `?`，PG 的 `$1` 由适配层转换
+- 返回 `columns / rowCount / rows / durationMs`，加 `--table` 有人读的表格视图
+
+测试 468 全过（新增 5 个 query 用例：只读判定、写拦截、自动 limit、位置参数、注释开头）。
+
 ## 0.25.0 — 2026-10-29
 
 **`lib adopt`：把盘上已有的媒体认领进资产库（视频库 297 GB 不再是孤儿）**
