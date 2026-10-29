@@ -161,7 +161,7 @@ export const libCommands: Command[] = [
   },
   {
     name: 'lib find',
-    summary: '按标题/歌手/专辑/平台 id 搜资产',
+    summary: '按标题/歌手/专辑/平台 id/路径 搜资产',
     usage: 'astra lib find <关键词> [--limit <条数>]',
     options: {
       limit: { type: 'string', valueName: '条数', description: '默认 20' },
@@ -176,8 +176,8 @@ export const libCommands: Command[] = [
         return {
           data: { keyword, total: rows.length, items: rows },
           table: {
-            headers: ['id', '标题', '歌手', '平台'],
-            rows: rows.map((r) => [r.id, r.title, r.artists ?? '', r.platform]),
+            headers: ['id', '标题', '位置', '平台'],
+            rows: rows.map((r) => [r.id, r.title, r.rel_path ?? '', r.platform]),
           },
         }
       } finally {

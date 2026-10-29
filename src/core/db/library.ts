@@ -677,15 +677,24 @@ export interface AssetRow {
   title: string
   artists: string | null
   album: string | null
+  /** 第一条（优先 present）文件的位置，仅用于展示与二次检索。 */
+  rel_path?: string | null
 }
 
 export async function findAssets(db: Database, keyword: string, limit = 20): Promise<AssetRow[]> {
   const like = `%${keyword}%`
+  // 也搜 rel_path：认领来的文件标题常常只是 `01`、`138993133_p0` 这种文件名，
+  // 光搜 assets 会一个都搜不到。路径是「它在哪」，标题是「它是什么」，两个都要能搜，
+  // 但**不要把路径塞进 title** —— 那就成了同一事实存两份，早晚不一致。
   return db.conn.query<AssetRow>(
-    `select id, platform, native_id, kind, title, artists, album from assets
-     where title like ? or artists like ? or album like ? or native_id like ?
-     order by title limit ?`,
-    [like, like, like, like, limit],
+    `select a.id, a.platform, a.native_id, a.kind, a.title, a.artists, a.album,
+            (select f.rel_path from files f where f.asset_id = a.id
+              order by case f.state when 'present' then 0 else 1 end, f.rel_path limit 1) as rel_path
+     from assets a
+     where a.title like ? or a.artists like ? or a.album like ? or a.native_id like ?
+        or exists (select 1 from files f where f.asset_id = a.id and f.rel_path like ?)
+     order by a.title limit ?`,
+    [like, like, like, like, like, limit],
   )
 }
 
