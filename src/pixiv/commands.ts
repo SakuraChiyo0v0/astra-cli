@@ -113,8 +113,29 @@ function resolveDir(out: unknown): string {
   })
 }
 
+/**
+ * 敏感作品的落盘根目录。
+ *
+ * 判定口径与「能不能发到普通群」完全一致（`xRestrict>0` 或 `sl>=4`），
+ * 这样「存在哪」和「发到哪」不会出现两套标准。
+ * `--out` 显式指定时优先，不再分流——用户已经指明了目的地。
+ */
+export function sensitiveDirFor(
+  detail: { xRestrict: number; sl?: number },
+  fallback: string,
+  explicit = false,
+): string {
+  if (explicit) return fallback
+  const sensitiveDir = getConfig('pixiv.sensitive-dir').trim()
+  if (!sensitiveDir) return fallback
+  const sensitive = detail.xRestrict > 0 || (detail.sl ?? 0) >= 4
+  return sensitive ? sensitiveDir : fallback
+}
+
 interface PullOptions {
   dir: string
+  /** `--out` 显式给了目录 → 不再按分级分流 */
+  outExplicit?: boolean
   r18: boolean
   dry: boolean
   limit?: number
@@ -159,7 +180,8 @@ async function pullWorks(ids: number[], opts: PullOptions): Promise<PullSummary>
     const allPages = pageUrls(detail)
     const pages = opts.pages ? allPages.slice(0, opts.pages) : allPages
     out.pages += pages.length
-    const target = join(opts.dir, detail.userId)
+    const root = sensitiveDirFor(detail, opts.dir, opts.outExplicit === true)
+    const target = join(root, detail.userId)
     if (!opts.dry) await mkdir(target, { recursive: true })
 
     for (const page of pages) {
@@ -313,7 +335,8 @@ const user: Command = {
   usage: 'astra pixiv user <userId> [--limit 20] [--pull] [--out 目录] [--quality regular] [--r18] [--dry]',
   notes: [
     '不带 --pull 只列 id（新的在前）；带 --pull 会把这一批全下下来，落盘规则与 `pixiv pull` 一致。',
-    '目录优先 `--out`，其次 `pixiv.dir`；R-18 默认跳过。',
+    '目录优先 `--out`，其次 `pixiv.dir`；R-18 默认跳过（`--r18` 或 `pixiv.r18=true` 放行）。',
+    '配了 `pixiv.sensitive-dir` 时敏感作品（`xRestrict>0` 或 `sl>=4`）落该目录，`--out` 显式指定则不分流。',
     '`--quality regular` 取 1200px（原图一张 4000×6000 实测要 138s，1200px 只要 20s）；批量预览建议开。',
   ],
   options: {
@@ -339,7 +362,9 @@ const user: Command = {
       }
     }
     const dir = resolveDir(values.out)
+    const outExplicit = typeof values.out === 'string' && values.out.trim() !== ''
     const summary = await pullWorks(ids, {
+      outExplicit,
       dir,
       r18: r18Allowed(values.r18),
       dry: values.dry === true,
@@ -440,6 +465,7 @@ const subRun: Command = {
   maxArgs: 0,
   async run({ values }) {
     const dir = resolveDir(values.out)
+    const outExplicit = typeof values.out === 'string' && values.out.trim() !== ''
     const perUser = num(values['per-user'], 10, 1, 100, '--per-user')
     const list = loadSubs()
     if (!list.length) return { data: { subscribed: 0, newWorks: 0, downloaded: 0, note: '还没有订阅，用 `pixiv sub add <userId>`' } }
@@ -466,7 +492,7 @@ const subRun: Command = {
         continue
       }
       newWorks += fresh.length
-      const summary = await pullWorks(fresh, { dir, r18: r18Allowed(values.r18), dry: values.dry === true })
+      const summary = await pullWorks(fresh, { dir, outExplicit, r18: r18Allowed(values.r18), dry: values.dry === true })
       downloaded += summary.downloaded
       skipped += summary.skipped
       failed += summary.failed
@@ -692,6 +718,7 @@ const pull: Command = {
     '落盘 `<目录>/<userId>/<illustId>_p<N>.<ext>`，已存在的文件跳过（只认 id + 页号）。',
     'R-18 作品默认跳过；`--r18` 或配置 `pixiv.r18=true` 放行。',
     '目录优先 `--out`，其次 `pixiv.dir`；两者都没配会直接报错，不会瞎写到一个默认路径。',
+    '配了 `pixiv.sensitive-dir` 时按分级分流：`xRestrict>0` 或 `sl>=4` 的作品落该目录，其余落 `pixiv.dir`；`--out` 显式指定则不分流。',
   ],
   options: {
     out: { type: 'string', description: '落盘目录（覆盖 pixiv.dir）', valueName: 'dir' },
@@ -705,6 +732,7 @@ const pull: Command = {
   async run({ positionals, values }) {
     const id = requireId(positionals[0], 'illustId')
     const dir = resolveDir(values.out)
+    const outExplicit = typeof values.out === 'string' && values.out.trim() !== ''
     const pages = values.pages ? num(values.pages, 0, 1, 100, '--pages') : undefined
     const detail = await illustDetail(id)
     if (detail.xRestrict > 0 && !r18Allowed(values.r18)) {
@@ -716,6 +744,7 @@ const pull: Command = {
     }
     const quality = values.quality === 'regular' ? 'regular' as const : 'original' as const
     const summary = await pullWorks([id], {
+      outExplicit,
       dir,
       r18: r18Allowed(values.r18),
       dry: values.dry === true,

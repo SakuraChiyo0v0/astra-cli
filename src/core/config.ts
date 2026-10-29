@@ -47,6 +47,8 @@ export const CONFIG_KEYS: ConfigKey[] = [
   { key: 'pixiv.transport', description: 'Pixiv 请求通道：auto（有 cookie 用 curl，否则 fetch）/ fetch / curl', default: 'auto',
     validate: (v) => (['auto', 'fetch', 'curl'].includes(v) ? null : '只能是 auto / fetch / curl') },
   // R-18 放行开关。命令行 --r18 仍然可用，两者取并集；默认 false 保持保守。
+  // 敏感作品（xRestrict>0 或 sl>=4）的落盘根目录。留空 = 不分流，全落 pixiv.dir。
+  { key: 'pixiv.sensitive-dir', description: '敏感作品的落盘根目录（如 /host-root/volume1/@home/KAngel/.../pixiv）；留空则与 pixiv.dir 相同', default: '' },
   { key: 'pixiv.r18', description: '是否允许下载 R-18 作品（true / false）；命令行 --r18 可临时覆盖', default: 'false',
     validate: (v) => (['true', 'false'].includes(v) ? null : '只能是 true / false') },
   // `bili.template` 是 v0.12.x 的老名字。加了 `bili.audio-template` 之后它就不再是

@@ -10,6 +10,17 @@
 - 配置：`comic.dir` / `comic.template` / `comic.concurrency`；环境变量 `ASTRA_COMIC_DIR`
 - Hermes skill：`skills/comic/SKILL.md`
 
+## 0.19.1 — 2026-10-29
+
+**pixiv：敏感作品按分级分流到独立目录（+ help 说明）**
+
+- 新增 `pixiv.sensitive-dir`：配上之后，`xRestrict>0` 或 `sl>=4` 的作品落到该根目录，
+  其余仍落 `pixiv.dir`。判定口径与「能不能发到普通群」完全一致，避免两套标准。
+- `--out` 显式指定时优先，不再分流（用户已经指明了目的地）。
+- 生效范围：`pull` / `user --pull` / `sub run` 三条下载路径。
+- `astra help pixiv pull` 补上分流说明——0.19.0 之前功能藏起来了。
+- 新增 `tests/pixiv-sensitive-dir.test.ts`（429 全过）。
+
 ## 0.18.11 — 2026-10-29
 
 **pixiv rank 支持 R-18 日榜/周榜；顺手修 `original` 榜**
