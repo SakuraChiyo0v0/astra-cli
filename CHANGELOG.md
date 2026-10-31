@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.30.0 — 2026-11-01
+
+**`bili ranking` 分区排行榜 + `bili fav` 收藏夹写入**
+
+- `bili ranking [--rid 全站|动画|游戏|…|数字] [--limit 20] [--rookie]`
+  走 `/x/web-interface/ranking/v2`，免登录免签名；一次固定约 100 条，`--limit` 本地截断。
+  分区名维护成一张表（全站/动画/番剧/国创/音乐/舞蹈/游戏/知识/科技/运动/汽车/生活/美食/
+  动物/鬼畜/时尚/影视/娱乐/电影/电视剧/纪录片/虚拟UP），传数字直接透传。
+- `bili fav list` 列自己的收藏夹（id / 名称 / 视频数）
+- `bili fav add|remove <BV> --folder <id>` 收藏夹写入：`POST /x/v3/fav/resource/deal`
+  - 写操作硬要求：登录 + cookie 里的 `bili_jct` 当 csrf；缺了分别报 `BILI_NOT_LOGGED_IN` / `BILI_NO_CSRF`
+  - 只动指定收藏夹，不批量，避免触发风控
+- 纯函数单测 5 条（分区名解析、条目拍平、csrf 提取）
+
 ## 0.29.1 — 2026-11-01
 
 **`quark` 域：下夸克分享**

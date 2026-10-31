@@ -12,6 +12,8 @@ import { renderQrText, writeQrPng } from '../core/qr.ts'
 import { biliSessionDigest, clearBiliSession, cookieHeader, fetchBiliAccount, loadBiliSession, pollBiliQr, saveBiliSession, startBiliQr } from './auth.ts'
 import { playInfo, subtitleList, videoInfo, type VideoInfo } from './api.ts'
 import { fetchComments } from './comments.ts'
+import { fetchRanking, parseRid, RID_MAP } from './ranking.ts'
+import { dealFavorite, listFavFolders } from './favorites.ts'
 import { sidecarKinds } from './sidecar.ts'
 import { runAudioSync } from './audio-sync.ts'
 import { downloadPage } from './download.ts'
@@ -294,6 +296,109 @@ const comments: Command = {
         })),
       },
     }
+  },
+}
+
+const ranking: Command = {
+  name: 'bili ranking',
+  summary: '分区排行榜（全站 / 各分区）',
+  usage: 'astra bili ranking [--rid 全站|动画|游戏|知识|…|数字] [--limit 20] [--rookie]',
+  notes: [
+    '--rid 收分区名或数字；不给默认全站。常用名：全站 动画 番剧 国创 音乐 舞蹈 游戏 知识 科技 运动 汽车 生活 美食 动物 鬼畜 时尚 影视 娱乐 电影 电视剧 纪录片',
+    '--rookie 看「新人」榜（B 站自己的 rookie 类型）',
+    '接口一次固定给约 100 条，--limit 只是本地截断，默认 20',
+    '免登录、免签名；排序用 B 站自己的综合分（score）',
+  ],
+  options: {
+    rid: { type: 'string', description: '分区名或分区 id，默认全站', valueName: '分区' },
+    limit: { type: 'string', description: '最多几条，默认 20', valueName: 'n' },
+    rookie: { type: 'boolean', description: '看新人榜' },
+  },
+  minArgs: 0,
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const raw = typeof values.rid === 'string' && values.rid.trim() ? values.rid.trim() : '全站'
+    const rid = parseRid(raw)
+    if (rid === null) {
+      throw invalidInput(`认不出分区「${raw}」，可以用：${Object.keys(RID_MAP).join(' / ')}，或直接给数字`)
+    }
+    const rawLimit = values.limit === undefined ? 20 : Number(values.limit)
+    if (!Number.isFinite(rawLimit) || rawLimit <= 0) throw invalidInput('--limit 要是正整数')
+    const page = await fetchRanking(rid, { limit: Math.trunc(rawLimit), rookie: values.rookie === true }, signal)
+    return {
+      data: {
+        rid,
+        type: values.rookie === true ? 'rookie' : 'all',
+        total: page.total,
+        count: page.items.length,
+        items: page.items.map((item, i) => ({
+          rank: i + 1,
+          bvid: item.bvid,
+          title: item.title,
+          owner: item.owner,
+          view: item.view,
+          like: item.like,
+          danmaku: item.danmaku,
+          duration: item.duration,
+          score: item.score,
+        })),
+      },
+    }
+  },
+}
+
+const favList: Command = {
+  name: 'bili fav list',
+  summary: '列出自己的收藏夹',
+  usage: 'astra bili fav list',
+  notes: ['需要登录（收藏夹属于账号）', '返回 id / 名称 / 内含视频数；加/移用这个 id'],
+  minArgs: 0,
+  maxArgs: 0,
+  async run({ signal }) {
+    const folders = await listFavFolders(signal)
+    return { data: { count: folders.length, folders } }
+  },
+}
+
+const favAdd: Command = {
+  name: 'bili fav add',
+  summary: '把视频加进收藏夹',
+  usage: 'astra bili fav add <BV号|链接> --folder <收藏夹id>',
+  notes: [
+    '写操作：需要登录，且会话里要有 bili_jct（csrf）',
+    '收藏夹 id 用 `astra bili fav list` 查',
+    'B 站对写操作有频率限制，批量请自己控速',
+  ],
+  options: { folder: { type: 'string', description: '收藏夹 id（数字）', valueName: 'id' } },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const folder = Number(values.folder)
+    if (!Number.isFinite(folder) || folder <= 0) throw invalidInput('要指定 --folder <收藏夹id>（用 bili fav list 查）')
+    const target = await parseBiliTarget(positionals[0]!, signal)
+    if (target.kind !== 'video') throw invalidInput('需要一个视频的 BV 号或链接')
+    const info = await videoInfo(target.bvid, signal)
+    const result = await dealFavorite(info.aid, { folder, action: 'add' }, signal)
+    return { data: { ...result, bvid: info.bvid, title: info.title } }
+  },
+}
+
+const favRemove: Command = {
+  name: 'bili fav remove',
+  summary: '把视频从收藏夹移出',
+  usage: 'astra bili fav remove <BV号|链接> --folder <收藏夹id>',
+  notes: ['写操作，要求同 bili fav add', '只移出指定收藏夹，不影响别的收藏夹'],
+  options: { folder: { type: 'string', description: '收藏夹 id（数字）', valueName: 'id' } },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const folder = Number(values.folder)
+    if (!Number.isFinite(folder) || folder <= 0) throw invalidInput('要指定 --folder <收藏夹id>')
+    const target = await parseBiliTarget(positionals[0]!, signal)
+    if (target.kind !== 'video') throw invalidInput('需要一个视频的 BV 号或链接')
+    const info = await videoInfo(target.bvid, signal)
+    const result = await dealFavorite(info.aid, { folder, action: 'remove' }, signal)
+    return { data: { ...result, bvid: info.bvid, title: info.title } }
   },
 }
 
@@ -1467,7 +1572,8 @@ const albumCmd: Command = {
 }
 
 export const biliCommands: Command[] = [
-  get, info, comments, subtitle, danmaku, popular, weekly, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk, audioCmd,
+  get, info, comments, subtitle, danmaku, popular, weekly, ranking, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk, audioCmd,
+  favList, favAdd, favRemove,
   dynCmd, albumCmd,
   jobCmd, jobList, jobCancel, jobResume, workerCmd,
   loginStart, loginPoll, account, logout, doctor,

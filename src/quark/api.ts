@@ -321,9 +321,21 @@ export async function downloadToFile(
     ...(options.signal ? { signal: options.signal } : {}),
   })
   if (!response.ok || !response.body) {
-    throw new AstraError('QUARK_DOWNLOAD', `下载失败 HTTP ${response.status}`, {
+    // CDN 也可能回 23018（体积限制），把 body 里的 code 原样透出来，别只说 HTTP 状态
+    let detail = ''
+    try {
+      const text = await response.text()
+      const parsed = JSON.parse(text) as { code?: number; message?: string }
+      if (parsed.code) detail = `（code=${parsed.code}${parsed.message ? `：${parsed.message}` : ''}）`
+    } catch {
+      /* 不是 JSON 就算了 */
+    }
+    throw new AstraError('QUARK_DOWNLOAD', `下载失败 HTTP ${response.status}${detail}`, {
       exitCode: 5,
       retryable: response.status >= 500,
+      ...(detail.includes('23018')
+        ? { hint: '单文件体积超过网页端限制：确认客户端 UA 已生效（本 CLI 内置），仍失败说明账号被风控' }
+        : {}),
     })
   }
   const total = Number(response.headers.get('content-length') ?? 0)
