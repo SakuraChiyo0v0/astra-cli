@@ -24,6 +24,10 @@ astra quark doctor
 - CDN 下载校验 cookie，缺了回 412
 - 删除副本的参数是 `filelist` 而不是 `fids`，且不能与 `current_dir_fid` 同时出现
 
+- 并发下载（`--concurrency 1..3` / `quark.concurrency`）：**默认 1**。实测单账号带宽封顶约 15MB/s，
+  多流不叠加（2 并发下 460MB 反而 74s vs 串行 42s）；且夸克并发转存时后一个任务的 fid 偶尔永远不落地
+  （取直链恒 21001）。所以并发只作为可选，失败的再串行兜底重试一次，保证不漏文件
+
 ## 0.29.0 — 2026-11-01
 
 **`bili comments`：看视频评论**

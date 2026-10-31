@@ -86,67 +86,115 @@ interface DownloadOutcome {
   skipped: boolean
 }
 
+interface PullOptions {
+  force: boolean
+  concurrency: number
+  signal?: AbortSignal
+  onFile?: (item: ShareItem, index: number) => void
+  onDone?: (item: ShareItem, ok: boolean, bytes: number, error?: string) => void
+}
+
+/** 转存必须串行：并发调 `share/sharepage/save` 时，后一个任务拿到的 fid 在网盘里并不存在
+ *  （取直链恒 21001 file not found，重试 20 秒也等不到）。下载才是慢的那一段，串行转存不影响速度。 */
+let saveChain: Promise<unknown> = Promise.resolve()
+
+function withSaveLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = saveChain.then(fn, fn)
+  saveChain = run.catch(() => undefined)
+  return run
+}
+
+/**
+ * 并发下载：每个 worker 独立走「转存单个 → 轮询 → 取直链 → 下载 → 删副本」。
+ *
+ * 为什么按文件而不是按批：一批 10 个文件的转存任务要等全部完成才能取直链，
+ * 大文件会把小文件一起拖住；单文件粒度下 N 个 worker 真正并行，尾延迟小很多。
+ */
 async function pullFiles(
   share: QuarkShare,
   files: ShareItem[],
   outDir: string,
-  options: { force: boolean; signal?: AbortSignal; onFile?: (item: ShareItem, index: number) => void },
+  options: PullOptions,
 ): Promise<{ downloaded: DownloadOutcome[]; failed: Array<{ path: string; error: string }> }> {
   const downloaded: DownloadOutcome[] = []
   const failed: Array<{ path: string; error: string }> = []
-  const BATCH = 10
+  const queue: Array<{ item: ShareItem; target: string; index: number }> = []
 
-  for (let i = 0; i < files.length; i += BATCH) {
-    const chunk = files.slice(i, i + BATCH)
-    const pending: Array<{ item: ShareItem; target: string }> = []
-    for (const item of chunk) {
-      const target = join(outDir, item.path)
-      if (!options.force && existsSync(target) && statSync(target).size === item.size) {
-        downloaded.push({ path: target, bytes: item.size, skipped: true })
-        continue
-      }
-      pending.push({ item, target })
+  files.forEach((item, index) => {
+    const target = join(outDir, item.path)
+    if (!options.force && existsSync(target) && statSync(target).size === item.size) {
+      downloaded.push({ path: target, bytes: item.size, skipped: true })
+      options.onDone?.(item, true, item.size)
+      return
     }
-    if (!pending.length) continue
+    queue.push({ item, target, index })
+  })
 
-    let newFids: string[] = []
-    try {
-      const taskId = await saveShare(share, pending.map((p) => p.item), options.signal)
-      newFids = await waitSaveTask(taskId, options.signal)
-    } catch (error) {
-      for (const p of pending) failed.push({ path: p.item.path, error: (error as Error).message })
-      continue
-    }
-    if (newFids.length !== pending.length) {
-      for (const p of pending) failed.push({ path: p.item.path, error: '转存返回的 fid 数量不匹配' })
-      continue
-    }
-
-    let urls: Map<string, string>
-    try {
-      urls = await downloadUrls(newFids, options.signal)
-    } catch (error) {
-      for (const p of pending) failed.push({ path: p.item.path, error: (error as Error).message })
-      continue
-    }
-
-    for (let idx = 0; idx < pending.length; idx += 1) {
-      const { item, target } = pending[idx]!
-      const url = urls.get(newFids[idx]!)
-      if (!url) {
-        failed.push({ path: item.path, error: '没拿到直链' })
-        continue
-      }
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const job = queue.shift()
+      if (!job) return
+      if (options.signal?.aborted) return
+      const { item, target, index } = job
+      options.onFile?.(item, index)
+      let newFid: string | undefined
       try {
-        options.onFile?.(item, i + idx)
+        // 转存串行（见 withSaveLock 注释）；拿到直链后下载可以并行
+        const urls = await withSaveLock(async () => {
+          const taskId = await saveShare(share, [item], options.signal)
+          const fids = await waitSaveTask(taskId, options.signal)
+          newFid = fids[0]
+          if (!newFid) throw new Error('转存没有返回 fid')
+          return downloadUrls([newFid], options.signal)
+        })
+        const url = urls.get(newFid!)
+        if (!url) throw new Error('没拿到直链')
         const result = await downloadToFile(url, target, { signal: options.signal })
         downloaded.push({ path: result.path, bytes: result.bytes, skipped: false })
+        options.onDone?.(item, true, result.bytes)
       } catch (error) {
-        failed.push({ path: item.path, error: (error as Error).message })
+        const message = (error as Error).message
+        failed.push({ path: item.path, error: message })
+        options.onDone?.(item, false, 0, message)
+      } finally {
+        // 无论成败都要删副本，否则失败的文件会一直占着用户网盘
+        if (newFid) await deleteFiles([newFid], options.signal)
       }
     }
-    // 立刻删掉网盘里的副本，不占用户空间
-    await deleteFiles(newFids, options.signal)
+  }
+
+  const workers = Array.from({ length: Math.max(1, Math.min(options.concurrency, queue.length)) }, () => worker())
+  await Promise.all(workers)
+
+  // 兜底：并发转存在夸克侧并不稳定（实测两个任务并行时，后一个的 fid 有时永远不落地，
+  // 取直链恒 21001）。失败的再串行重试一次，代价只是一点点时间，换来「不漏文件」。
+  if (failed.length) {
+    const retry = failed.splice(0, failed.length)
+    for (const miss of retry) {
+      const item = files.find((f) => f.path === miss.path)
+      if (!item || options.signal?.aborted) {
+        failed.push(miss)
+        continue
+      }
+      const target = join(outDir, item.path)
+      let fid: string | undefined
+      try {
+        const taskId = await saveShare(share, [item], options.signal)
+        const fids = await waitSaveTask(taskId, options.signal)
+        fid = fids[0]
+        if (!fid) throw new Error('转存没有返回 fid')
+        const urls = await downloadUrls([fid], options.signal)
+        const url = urls.get(fid)
+        if (!url) throw new Error('没拿到直链')
+        const result = await downloadToFile(url, target, { signal: options.signal })
+        downloaded.push({ path: result.path, bytes: result.bytes, skipped: false })
+        options.onDone?.(item, true, result.bytes)
+      } catch (error) {
+        failed.push({ path: miss.path, error: (error as Error).message })
+      } finally {
+        if (fid) await deleteFiles([fid], options.signal)
+      }
+    }
   }
   return { downloaded, failed }
 }
@@ -167,7 +215,7 @@ const get: Command = {
     force: { type: 'boolean', description: '已有同尺寸文件也重下' },
     dry: { type: 'boolean', description: '只列要下什么，不真下' },
     extract: { type: 'string', description: '提取码', valueName: 'code' },
-    concurrency: { type: 'string', description: '预留：并发数（当前串行）', valueName: 'n' },
+    concurrency: { type: 'string', description: '并发下载数 1..3，默认看 quark.concurrency', valueName: 'n' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -205,11 +253,25 @@ const get: Command = {
     if (!outDir) throw invalidInput('没有落盘目录', '加 `--out <绝对路径>`，或先 `astra config set quark.dir <目录>`')
     checkWritable(outDir)
 
+    // 默认 1：实测并发不提速（单账号带宽封顶 15MB/s/流，多流不叠加），
+    // 且夸克并发转存偶尔让后一个任务的 fid 永远不落地，反而要跑兜底重试。
+    const configured = Number(getConfig('quark.concurrency') ?? '1')
+    const concurrency = Math.max(
+      1,
+      Math.min(3, Number(values.concurrency ?? configured) || configured || 1),
+    )
+    let finished = 0
     const { downloaded, failed } = await pullFiles(share, picked, outDir, {
       force: values.force === true,
+      concurrency,
       signal,
-      onFile: (item, index) => {
-        process.stderr.write(`[${index + 1}/${picked.length}] ${item.path} (${humanSize(item.size)})\n`)
+      onFile: (item) => {
+        process.stderr.write(`↓ ${item.path} (${humanSize(item.size)})\n`)
+      },
+      onDone: (item, ok, bytes, error) => {
+        finished += 1
+        const tag = ok ? `✓ ${humanSize(bytes)}` : `✗ ${error ?? ''}`
+        process.stderr.write(`[${finished}/${picked.length}] ${tag}  ${item.path}\n`)
       },
     })
 
@@ -217,6 +279,7 @@ const get: Command = {
       data: {
         status: 'downloaded',
         out: outDir,
+        concurrency,
         downloaded: downloaded.filter((d) => !d.skipped).length,
         skipped: downloaded.filter((d) => d.skipped).length,
         failed: failed.length,

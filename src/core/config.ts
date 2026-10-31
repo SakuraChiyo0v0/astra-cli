@@ -42,7 +42,7 @@ export const CONFIG_KEYS: ConfigKey[] = [
   // 夸克网盘：落盘根目录 + 并发。留空 = 每次必须 --out。
   { key: 'quark.dir', description: '夸克分享的落盘根目录（绝对路径）；留空则 `quark get` 必须给 --out', default: '',
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
-  { key: 'quark.concurrency', description: '夸克下载并发数 1..3（当前实现串行，预留）', default: '1',
+  { key: 'quark.concurrency', description: '夸克下载并发数 1..3；默认 1（实测 >1 因单账号带宽封顶不提速，且转存偶尔失败）', default: '1',
     validate: (v) => (/^[1-3]$/.test(v) ? null : '只能是 1 / 2 / 3') },
   { key: 'pixiv.dir', description: 'Pixiv 图片根目录（绝对路径）；留空则 `pixiv pull` 必须给 --out', default: '',
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },

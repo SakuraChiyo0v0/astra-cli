@@ -243,13 +243,14 @@ export async function waitSaveTask(taskId: string, signal?: AbortSignal, timeout
 
 /** 取直链，必须用 CLIENT_UA。转存刚完成时 fid 可能还没就绪（21001），要重试。 */
 export async function downloadUrls(fids: string[], signal?: AbortSignal): Promise<Map<string, string>> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  // 并发转存时 fid 就绪更慢（实测两个任务并行时另一个要等 10s+），重试窗口给足
+  for (let attempt = 0; attempt < 12; attempt += 1) {
     try {
       return await downloadUrlsOnce(fids, signal)
     } catch (error) {
       const code = (error as { details?: { code?: number } }).details?.code
-      if (code !== 21001 || attempt === 3) throw error
-      await new Promise((r) => setTimeout(r, 1200))
+      if (code !== 21001 || attempt === 11) throw error
+      await new Promise((r) => setTimeout(r, 2000 + Math.random() * 800))
     }
   }
   throw new AstraError('QUARK_DOWNLOAD', '取直链重试耗尽', { exitCode: 5 })
