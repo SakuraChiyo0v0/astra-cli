@@ -61,6 +61,6 @@ test('cookie 存取：写进去能读出来，文件必须是 600', () => {
 test('命令清单：ls / get / cookie / doctor 都在', () => {
   assert.deepEqual(
     quarkCommands.map((c) => c.name),
-    ['quark ls', 'quark get', 'quark cookie', 'quark doctor'],
+    ['quark ls', 'quark get', 'quark du', 'quark find', 'quark dup', 'quark cookie', 'quark doctor'],
   )
 })

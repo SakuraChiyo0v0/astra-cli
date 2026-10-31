@@ -13,6 +13,7 @@ import type { Command } from '../core/command.ts'
 import { getConfig } from '../core/config.ts'
 import { checkWritable } from '../core/doctor.ts'
 import { loadQuarkCookie, normalizeCookieInput, saveQuarkCookie, clearQuarkCookie } from './auth.ts'
+import { ensureIndex, extOf, humanSize as humanSize2 } from './index.ts'
 import {
   deleteFiles,
   downloadToFile,
@@ -290,6 +291,218 @@ const get: Command = {
   },
 }
 
+
+const du: Command = {
+  name: 'quark du',
+  summary: '空间体检：按顶层目录 / 扩展名 / 大小区间看谁最占地方',
+  usage: 'astra quark du [--refresh] [--top 12] [--by dir|ext|size]',
+  notes: [
+    '只读，不动任何文件',
+    '第一次跑要遍历整盘建索引（~1500 文件约 30-60 秒），之后 24 小时内复用',
+    'data.totals / data.byTop / data.byExt / data.bySize',
+  ],
+  options: {
+    refresh: { type: 'boolean', description: '强制重建索引' },
+    top: { type: 'string', description: '每类显示前 N 条，默认 12', valueName: 'n' },
+    by: { type: 'string', description: '只看某一维：dir / ext / size', valueName: 'dim' },
+  },
+  async run({ values, signal }) {
+    if (!loadQuarkCookie()) {
+      throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    }
+    const index = await ensureIndex({
+      refresh: values.refresh === true,
+      ...(signal ? { signal } : {}),
+      onProgress: (scanned, folders) => {
+        if (folders % 10 === 0) process.stderr.write(`扫描中… ${folders} 个目录 / ${scanned} 项\n`)
+      },
+    })
+    const files = index.entries.filter((e) => !e.dir)
+    const dirs = index.entries.filter((e) => e.dir)
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
+    const top = Math.max(1, Math.min(50, Number(values.top ?? '12') || 12))
+
+    const group = (keyOf: (e: typeof files[number]) => string) => {
+      const map = new Map<string, { count: number; bytes: number }>()
+      for (const file of files) {
+        const key = keyOf(file)
+        const row = map.get(key) ?? { count: 0, bytes: 0 }
+        row.count += 1
+        row.bytes += file.size
+        map.set(key, row)
+      }
+      return [...map.entries()]
+        .sort((a, b) => b[1].bytes - a[1].bytes)
+        .slice(0, top)
+        .map(([key, row]) => ({ key, count: row.count, bytes: row.bytes, text: humanSize2(row.bytes) }))
+    }
+
+    const bucket = (size: number): string => {
+      if (size === 0) return '0 B（空文件）'
+      if (size < 1024 * 1024) return '< 1 MB'
+      if (size < 100 * 1024 * 1024) return '1–100 MB'
+      if (size < 1024 * 1024 * 1024) return '100 MB – 1 GB'
+      if (size < 10 * 1024 * 1024 * 1024) return '1–10 GB'
+      return '> 10 GB'
+    }
+
+    const byTop = group((e) => e.top || '(根目录散文件)')
+    const byExt = group((e) => extOf(e.name))
+    const bySize = group((e) => bucket(e.size))
+    const dim = typeof values.by === 'string' ? values.by : ''
+    const pick = (name: string, rows: typeof byTop) => (dim && dim !== name ? [] : rows)
+
+    return {
+      data: {
+        builtAt: index.builtAt,
+        totals: {
+          files: files.length,
+          dirs: dirs.length,
+          bytes: totalBytes,
+          text: humanSize2(totalBytes),
+        },
+        byTop: pick('dir', byTop),
+        byExt: pick('ext', byExt),
+        bySize: pick('size', bySize),
+      },
+    }
+  },
+}
+
+
+const find: Command = {
+  name: 'quark find',
+  summary: '在网盘索引里搜文件（名称 / 扩展名 / 大小 / 时间）',
+  usage: 'astra quark find <关键词> [--ext zip,mp4] [--min 1GB] [--limit 30] [--refresh]',
+  notes: [
+    '读本地索引（24 小时内有效），秒回；--refresh 强制重建',
+    'data.matches[] 含 path / sizeText / updatedAt',
+  ],
+  options: {
+    ext: { type: 'string', description: '扩展名过滤，逗号分隔', valueName: 'zip,mp4' },
+    min: { type: 'string', description: '最小体积，如 100MB / 1GB', valueName: 'size' },
+    max: { type: 'string', description: '最大体积', valueName: 'size' },
+    limit: { type: 'string', description: '最多返回条数，默认 30', valueName: 'n' },
+    refresh: { type: 'boolean', description: '强制重建索引' },
+    dirs: { type: 'boolean', description: '只列目录' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    const index = await ensureIndex({ refresh: values.refresh === true, ...(signal ? { signal } : {}) })
+    const keyword = positionals[0]!.toLowerCase()
+    const exts = typeof values.ext === 'string'
+      ? values.ext.split(',').map((x) => x.trim().toLowerCase().replace(/^\./, '')).filter(Boolean)
+      : []
+    const parseSize = (raw: unknown): number => {
+      if (typeof raw !== 'string' || !raw.trim()) return 0
+      const m = raw.trim().match(/^([\d.]+)\s*([kmgt]?b?)$/i)
+      if (!m) return 0
+      const value = Number(m[1])
+      const unit = (m[2] ?? '').toLowerCase()
+      const mult: Record<string, number> = {
+        '': 1, b: 1, k: 1024, kb: 1024, m: 1024 ** 2, mb: 1024 ** 2,
+        g: 1024 ** 3, gb: 1024 ** 3, t: 1024 ** 4, tb: 1024 ** 4,
+      }
+      return Math.round(value * (mult[unit] ?? 1))
+    }
+    const minBytes = parseSize(values.min)
+    const maxBytes = parseSize(values.max)
+    const limit = Math.max(1, Math.min(500, Number(values.limit ?? '30') || 30))
+
+    const matches = index.entries
+      .filter((e) => (values.dirs === true ? e.dir : true))
+      .filter((e) => e.path.toLowerCase().includes(keyword))
+      .filter((e) => (exts.length ? !e.dir && exts.includes(extOf(e.name)) : true))
+      .filter((e) => (minBytes ? e.size >= minBytes : true))
+      .filter((e) => (maxBytes ? e.size <= maxBytes : true))
+      .sort((a, b) => b.size - a.size)
+
+    return {
+      data: {
+        keyword,
+        total: matches.length,
+        bytes: matches.reduce((sum, m) => sum + m.size, 0),
+        text: humanSize2(matches.reduce((sum, m) => sum + m.size, 0)),
+        matches: matches.slice(0, limit).map((m) => ({
+          path: m.path,
+          fid: m.fid,
+          size: m.size,
+          sizeText: humanSize2(m.size),
+          updatedAt: m.updatedAt ? new Date(m.updatedAt).toISOString() : null,
+        })),
+      },
+    }
+  },
+}
+
+const dup: Command = {
+  name: 'quark dup',
+  summary: '找重复文件（同体积 + 同名），算出能省多少空间',
+  usage: 'astra quark dup [--min 100MB] [--limit 20] [--refresh]',
+  notes: [
+    '夸克列表接口的 md5 恒为 null，所以只能按「体积 + 归一化文件名」判定，属于**保守近似**：',
+    '同体积同名的才算重复，宁漏不误杀',
+    'data.groups[] 每项含 keep（建议保留）与 duplicates[]',
+  ],
+  options: {
+    min: { type: 'string', description: '只统计大于该体积的文件，默认 10MB', valueName: 'size' },
+    limit: { type: 'string', description: '最多返回多少组，默认 20', valueName: 'n' },
+    refresh: { type: 'boolean', description: '强制重建索引' },
+  },
+  async run({ values, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    const index = await ensureIndex({ refresh: values.refresh === true, ...(signal ? { signal } : {}) })
+    const rawMin = typeof values.min === 'string' ? values.min : '10MB'
+    const m = rawMin.match(/^([\d.]+)\s*([kmgt]?b?)$/i)
+    const mult: Record<string, number> = { '': 1, b: 1, k: 1024, kb: 1024, m: 1024 ** 2, mb: 1024 ** 2, g: 1024 ** 3, gb: 1024 ** 3, t: 1024 ** 4, tb: 1024 ** 4 }
+    const minBytes = m ? Math.round(Number(m[1]) * (mult[(m[2] ?? '').toLowerCase()] ?? 1)) : 10 * 1024 ** 2
+    const limit = Math.max(1, Math.min(100, Number(values.limit ?? '20') || 20))
+
+    const norm = (name: string) => name
+      .replace(/\(\d+\)/g, '')
+      .replace(/[\s_\-]+/g, '')
+      .replace(/副本|copy|Copy/g, '')
+      .toLowerCase()
+
+    const groups = new Map<string, typeof index.entries>()
+    for (const e of index.entries) {
+      if (e.dir || e.size < minBytes) continue
+      const key = `${e.size}::${norm(e.name)}`
+      const list = groups.get(key) ?? []
+      list.push(e)
+      groups.set(key, list)
+    }
+
+    const dupGroups = [...groups.values()]
+      .filter((g) => g.length > 1)
+      .sort((a, b) => b.length * b[0]!.size - a.length * a[0]!.size)
+      .slice(0, limit)
+      .map((g) => ({
+        size: g[0]!.size,
+        sizeText: humanSize2(g[0]!.size),
+        count: g.length,
+        wastedBytes: g[0]!.size * (g.length - 1),
+        wastedText: humanSize2(g[0]!.size * (g.length - 1)),
+        keep: g[0]!.path,
+        duplicates: g.slice(1).map((x) => ({ path: x.path, fid: x.fid })),
+      }))
+
+    return {
+      data: {
+        scanned: index.entries.filter((e) => !e.dir).length,
+        minSize: humanSize2(minBytes),
+        groupCount: dupGroups.length,
+        wastedBytes: dupGroups.reduce((sum, g) => sum + g.wastedBytes, 0),
+        wastedText: humanSize2(dupGroups.reduce((sum, g) => sum + g.wastedBytes, 0)),
+        note: '按体积+归一化文件名判定，保守近似；确认后可用 `quark apply` 删除（进回收站）',
+        groups: dupGroups,
+      },
+    }
+  },
+}
+
 const cookie: Command = {
   name: 'quark cookie',
   summary: '管理夸克登录态：set / show / clear',
@@ -361,4 +574,4 @@ const doctor: Command = {
   },
 }
 
-export const quarkCommands: Command[] = [ls, get, cookie, doctor]
+export const quarkCommands: Command[] = [ls, get, du, find, dup, cookie, doctor]
