@@ -241,8 +241,21 @@ export async function waitSaveTask(taskId: string, signal?: AbortSignal, timeout
   throw new AstraError('QUARK_SAVE_TIMEOUT', '转存任务超时（120s）', { exitCode: 5, retryable: true })
 }
 
-/** 取直链，必须用 CLIENT_UA。 */
+/** 取直链，必须用 CLIENT_UA。转存刚完成时 fid 可能还没就绪（21001），要重试。 */
 export async function downloadUrls(fids: string[], signal?: AbortSignal): Promise<Map<string, string>> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await downloadUrlsOnce(fids, signal)
+    } catch (error) {
+      const code = (error as { details?: { code?: number } }).details?.code
+      if (code !== 21001 || attempt === 3) throw error
+      await new Promise((r) => setTimeout(r, 1200))
+    }
+  }
+  throw new AstraError('QUARK_DOWNLOAD', '取直链重试耗尽', { exitCode: 5 })
+}
+
+async function downloadUrlsOnce(fids: string[], signal?: AbortSignal): Promise<Map<string, string>> {
   const response = await httpRequest(`${BASE}/file/download?pr=ucpro&fr=pc&sys=win32`, {
     method: 'POST',
     headers: headers({ 'content-type': 'application/json' }, CLIENT_UA),
@@ -251,11 +264,14 @@ export async function downloadUrls(fids: string[], signal?: AbortSignal): Promis
     retries: 1,
     ...(signal ? { signal } : {}),
   })
-  if (!response.ok) {
-    throw new AstraError('QUARK_HTTP', `夸克取直链返回 HTTP ${response.status}`, { exitCode: 5 })
+  // 404 也可能是「fid 还没就绪」（code 21001），所以先解析 body 再判
+  let body: ApiBody<Array<{ fid?: string; download_url?: string }>>
+  try {
+    body = (await response.json()) as ApiBody<Array<{ fid?: string; download_url?: string }>>
+  } catch {
+    throw new AstraError('QUARK_HTTP', `夸克取直链返回非 JSON（HTTP ${response.status}）`, { exitCode: 5 })
   }
-  const body = (await response.json()) as ApiBody<Array<{ fid?: string; download_url?: string }>>
-  if (body.code !== 0) fail('取直链', body)
+  if ((body.code ?? 0) !== 0) fail('取直链', body)
   const map = new Map<string, string>()
   for (const item of body.data ?? []) {
     if (item.fid && item.download_url) map.set(item.fid, item.download_url)
@@ -291,8 +307,14 @@ export async function downloadToFile(
 ): Promise<DownloadResult> {
   mkdirSync(dirname(dest), { recursive: true })
   const part = `${dest}.part`
+  const cookie = loadQuarkCookie()
   const response = await httpRequest(url, {
-    headers: { 'user-agent': CLIENT_UA, referer: REFERER },
+    headers: {
+      'user-agent': CLIENT_UA,
+      referer: REFERER,
+      // CDN 会校验 cookie，缺了直接 412
+      ...(cookie ? { cookie } : {}),
+    },
     timeoutMs: 120_000,
     retries: 1,
     ...(options.signal ? { signal: options.signal } : {}),

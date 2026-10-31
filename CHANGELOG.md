@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.29.1 — 2026-11-01
+
+**`quark` 域：下夸克分享**
+
+分享链接直接列目录、挑着下，不用再手写 python 脚本。
+
+```
+astra quark ls "https://pan.quark.cn/s/xxxx" --tree
+astra quark get <链接> --out /host-root/volume1/AI模型 --only vae,loras
+astra quark cookie set "<cookie>"
+astra quark doctor
+```
+
+实现要点（都踩过，写下来免得下次重犯）：
+
+- 夸克**没有分享直链接口**（`share/sharepage/download` 是 404），要拿能跑的直链只能
+  「转存到自己网盘 → `file/download`」，所以中间那步转存是必须的；下完立刻删副本，不占用户空间
+- `stoken` 与 `share_fid_token` 同一次会话绑定，取 token → 列目录 → 转存必须用同一串，
+  中途重新取 token 会报 `41020 token 校验异常`
+- 大文件（>100MB）取直链必须伪装官方 PC 客户端 UA，浏览器 UA 直接 `23018 download file size limit`
+- 转存刚完成时 fid 可能还没就绪（`21001 file not found`），取直链要重试而不是当失败
+- CDN 下载校验 cookie，缺了回 412
+- 删除副本的参数是 `filelist` 而不是 `fids`，且不能与 `current_dir_fid` 同时出现
+
 ## 0.29.0 — 2026-11-01
 
 **`bili comments`：看视频评论**
