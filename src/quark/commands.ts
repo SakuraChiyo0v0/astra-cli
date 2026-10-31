@@ -15,6 +15,19 @@ import { checkWritable } from '../core/doctor.ts'
 import { loadQuarkCookie, normalizeCookieInput, saveQuarkCookie, clearQuarkCookie } from './auth.ts'
 import { ensureIndex, extOf, humanSize as humanSize2, resolvePath } from './index.ts'
 import { buildPlan, ruleDedupe, type KeepStrategy, type Plan } from './organize.ts'
+import {
+  buildTree,
+  childrenAll,
+  classifyDir,
+  countUnder,
+  ensureDir,
+  extSummary,
+  findEmptyDirs,
+  removeNodes,
+  renderTree,
+  resolveNode,
+  tidyDirs,
+} from './fs.ts'
 import { makeFolder, moveFiles } from './api.ts'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { homePath } from '../core/paths.ts'
@@ -739,6 +752,178 @@ const apply: Command = {
   },
 }
 
+
+const tree: Command = {
+  name: 'quark tree',
+  summary: '看网盘目录树（实时读盘，带体积和文件数）',
+  usage: 'astra quark tree [目录] [--depth 2] [--full] [--by ext]',
+  notes: [
+    '实时读盘，不用索引，所以刚移动/删除过的目录也是准的',
+    '不传目录就是根目录',
+    '默认只展开、不递归统计（快）；--full 递归统计体积，大目录会慢很多',
+    '--by ext 额外给一棵子树的扩展名分布',
+  ],
+  maxArgs: 1,
+  options: {
+    depth: { type: 'string', description: '展开层数，默认 2', valueName: 'n' },
+    by: { type: 'string', description: '额外维度：ext', valueName: 'ext' },
+    full: { type: 'boolean', description: '递归统计每个目录的体积（慢）' },
+  },
+  async run({ positionals, values, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    const path = positionals[0] ?? ''
+    let fid = '0'
+    if (path) {
+      const node = await resolveNode(path, signal)
+      if (!node || !node.dir) throw invalidInput(`目录不存在：${path}`, '用 `astra quark tree` 先看根目录')
+      fid = node.fid
+    }
+    const depth = Math.max(1, Math.min(6, Number(values.depth ?? '2') || 2))
+    const nodes = await buildTree(fid, {
+      path,
+      depth,
+      full: values.full === true,
+      ...(signal ? { signal } : {}),
+    })
+    const lines = renderTree(nodes)
+    return {
+      data: {
+        path: path || '/',
+        depth,
+        lines,
+        text: lines.join('\n'),
+        ...(values.by === 'ext' ? { byExt: extSummary(nodes) } : {}),
+      },
+    }
+  },
+}
+
+const mkdir: Command = {
+  name: 'quark mkdir',
+  summary: '建目录（父级不存在会自动建）',
+  usage: 'astra quark mkdir <路径>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    const path = positionals[0]!.replace(/^\/+|\/+$/g, '')
+    if (!path) throw invalidInput('路径不能为空')
+    const fid = await ensureDir(path, signal)
+    return { data: { path, fid, created: true } }
+  },
+}
+
+const mv: Command = {
+  name: 'quark mv',
+  summary: '移动文件或目录到目标目录',
+  usage: 'astra quark mv <源...> <目标目录>',
+  notes: ['目标目录不存在会自动创建', '源可以是路径，也可以是多个'],
+  minArgs: 2,
+  async run({ positionals, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    const targetPath = positionals[positionals.length - 1]!
+    const sources = positionals.slice(0, -1)
+    const fids: string[] = []
+    for (const source of sources) {
+      const node = await resolveNode(source, signal)
+      if (!node || node.fid === '0') throw invalidInput(`找不到：${source}`, '用 `astra quark tree` 确认路径')
+      fids.push(node.fid)
+    }
+    const targetFid = await ensureDir(targetPath, signal)
+    if (fids.includes(targetFid)) throw invalidInput('目标目录不能是源自身')
+    await moveFiles(fids, targetFid, signal)
+    return { data: { moved: sources, to: targetPath, count: fids.length } }
+  },
+}
+
+const rm: Command = {
+  name: 'quark rm',
+  summary: '删除文件或目录（进回收站，可恢复）',
+  usage: 'astra quark rm <路径...> [--yes]',
+  notes: ['删除进夸克回收站，不是永久删', '非交互环境必须带 --yes'],
+  minArgs: 1,
+  options: {
+    yes: { type: 'boolean', description: '确认删除' },
+    dry: { type: 'boolean', description: '只列出将删除什么' },
+  },
+  async run({ positionals, values, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    const fids: string[] = []
+    const names: string[] = []
+    for (const path of positionals) {
+      const node = await resolveNode(path, signal)
+      if (!node || node.fid === '0') throw invalidInput(`找不到：${path}`, '用 `astra quark tree` 确认路径')
+      fids.push(node.fid)
+      names.push(path)
+    }
+    if (values.dry === true) return { data: { dry: true, willRemove: names } }
+    if (values.yes !== true) throw invalidInput('删除需要确认', '加 --yes 执行（进回收站，可恢复）')
+    await removeNodes(fids, signal)
+    return { data: { removed: names, count: fids.length, note: '已进回收站，可在夸克里恢复' } }
+  },
+}
+
+const clean: Command = {
+  name: 'quark clean',
+  summary: '找出（并可选删除）递归没有文件的空目录',
+  usage: 'astra quark clean <目录> [--apply]',
+  notes: ['只判断「递归后文件数为 0」，不是「子项为空」', '删除进回收站'],
+  minArgs: 1,
+  maxArgs: 1,
+  options: { apply: { type: 'boolean', description: '真删除（默认只列出来）' } },
+  async run({ positionals, values, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    const path = positionals[0]!.replace(/\/+$/g, '')
+    const node = await resolveNode(path, signal)
+    if (!node || !node.dir) throw invalidInput(`目录不存在：${path}`)
+    const empty = await findEmptyDirs(node.fid, { ...(signal ? { signal } : {}) })
+    if (values.apply === true && empty.length) {
+      await removeNodes(empty.map((x) => x.fid), signal)
+    }
+    return {
+      data: {
+        path,
+        emptyCount: empty.length,
+        empty: empty.map((x) => x.name),
+        applied: values.apply === true,
+      },
+    }
+  },
+}
+
+const tidy: Command = {
+  name: 'quark tidy',
+  summary: '把目录下的子目录按类型归档（AI模型/影视/游戏/软件/素材/文档）',
+  usage: 'astra quark tidy <目录> [--apply]',
+  notes: [
+    '关键词白名单：只动认得出来的子目录，认不出的保持原位',
+    '--apply 才真移动；默认只打印归位计划',
+    '分类目录自身不会被再次归类（避免「移动到自身」）',
+  ],
+  minArgs: 1,
+  maxArgs: 1,
+  options: { apply: { type: 'boolean', description: '真移动（默认只预览）' } },
+  async run({ positionals, values, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    const path = positionals[0]!.replace(/\/+$/g, '')
+    const node = await resolveNode(path, signal)
+    if (!node || !node.dir) throw invalidInput(`目录不存在：${path}`)
+    const result = await tidyDirs(node.fid, {
+      dry: values.apply !== true,
+      ...(signal ? { signal } : {}),
+    })
+    return {
+      data: {
+        path,
+        applied: values.apply === true,
+        moved: result.moved.map((m) => ({ category: m.category, count: m.names.length, names: m.names })),
+        unknown: result.unknown,
+        failed: result.failed,
+      },
+    }
+  },
+}
+
 const cookie: Command = {
   name: 'quark cookie',
   summary: '管理夸克登录态：set / show / clear',
@@ -810,4 +995,4 @@ const doctor: Command = {
   },
 }
 
-export const quarkCommands: Command[] = [ls, get, du, find, dup, plan, apply, cookie, doctor]
+export const quarkCommands: Command[] = [ls, get, tree, mkdir, mv, rm, du, find, dup, clean, tidy, plan, apply, cookie, doctor]

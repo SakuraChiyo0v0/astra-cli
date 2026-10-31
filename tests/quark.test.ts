@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseShareUrl } from '../src/quark/api.ts'
 import { normalizeCookieInput, saveQuarkCookie, loadQuarkCookie, clearQuarkCookie } from '../src/quark/auth.ts'
+import { classifyDir } from '../src/quark/fs.ts'
 import { quarkCommands } from '../src/quark/commands.ts'
 
 test('分享链接解析：带 # 的网页链接', () => {
@@ -61,6 +62,24 @@ test('cookie 存取：写进去能读出来，文件必须是 600', () => {
 test('命令清单：ls / get / cookie / doctor 都在', () => {
   assert.deepEqual(
     quarkCommands.map((c) => c.name),
-    ['quark ls', 'quark get', 'quark du', 'quark find', 'quark dup', 'quark plan', 'quark apply', 'quark cookie', 'quark doctor'],
+    [
+      'quark ls', 'quark get', 'quark tree', 'quark mkdir', 'quark mv', 'quark rm',
+      'quark du', 'quark find', 'quark dup', 'quark clean', 'quark tidy',
+      'quark plan', 'quark apply', 'quark cookie', 'quark doctor',
+    ],
   )
+})
+
+
+test('目录归类：关键词命中 + 分类目录自身不再归类', () => {
+  assert.equal(classifyDir('Qwen3-TTS'), 'AI模型')
+  assert.equal(classifyDir('新海诚全系列'), '影视')
+  assert.equal(classifyDir('Paradox Interactive'), '游戏')
+  assert.equal(classifyDir('Adobe全家桶'), '软件')
+  assert.equal(classifyDir('高品质材质贴图库'), '素材')
+  assert.equal(classifyDir('绝版古籍电子书合集'), '文档')
+  // 分类目录自身必须返回 null，否则会「移动到自身」
+  assert.equal(classifyDir('软件'), null)
+  assert.equal(classifyDir('AI模型'), null)
+  assert.equal(classifyDir('rt'), null)
 })

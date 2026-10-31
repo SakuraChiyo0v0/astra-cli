@@ -325,12 +325,12 @@ export async function moveFiles(fids: string[], toPdirFid: string, signal?: Abor
 }
 
 /** 列某个目录的直接子项（一次性，不递归）。 */
-export async function listDriveOnce(fid: string, signal?: AbortSignal): Promise<Array<{ fid?: string; file_name?: string; dir?: number; size?: number }>> {
+export async function listDriveOnce(fid: string, signal?: AbortSignal, page = 1): Promise<Array<{ fid?: string; file_name?: string; dir?: number; size?: number }>> {
   const params = new URLSearchParams({
     pr: 'ucpro',
     fr: 'pc',
     pdir_fid: fid,
-    _page: '1',
+    _page: String(page),
     _size: '100',
     _fetch_total: '1',
     _sort: 'file_type:asc,updated_at:desc',
