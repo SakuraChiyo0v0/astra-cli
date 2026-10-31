@@ -392,12 +392,18 @@ export async function scan(
       unchanged += 1
       const now = new Date().toISOString()
       const identity = [item.entry.dev, item.entry.ino, item.entry.mtimeMs]
+      // 原来标了 missing、现在原路回来 —— 也要报，否则「丢了又回来」完全静默
+      const wasMissing = item.row.state === 'missing'
       // size + mtime 都没变 → 内容不可能变，跳过读文件（抄 restic / Nextcloud 的判据）
       if (item.row.hash && item.row.size === item.size && item.row.mtime_ms === item.entry.mtimeMs) {
         await db.conn.exec(
           'update files set last_seen = ?, state = ?, dev = ?, ino = ?, mtime_ms = ? where id = ?',
           [now, 'present', ...identity, item.row.id],
         )
+        if (wasMissing) {
+          await event(db, 'revived', item.row.asset_id, item.row.id, { rel_path: item.rel, root: root.label, via: 'path' })
+          moved.push({ assetId: item.row.asset_id, from: item.rel, to: item.rel })
+        }
         return
       }
       // 老数据 size 不可信（tracks.bytes 不是文件大小）、指纹也空：这里补齐
@@ -413,6 +419,10 @@ export async function scan(
         [item.size, fp, 'present', now, ...identity, item.row.id],
       )
       if (fp && !item.row.hash) healed += 1
+      if (wasMissing) {
+        await event(db, 'revived', item.row.asset_id, item.row.id, { rel_path: item.rel, root: root.label, via: 'path' })
+        moved.push({ assetId: item.row.asset_id, from: item.rel, to: item.rel })
+      }
     })
 
     // inode 命中：同盘 rename，直接改路径，一个字节都不用读
@@ -494,8 +504,13 @@ export async function scan(
     })
 
     // 没认领到的标 missing（不删记录）
+    //
+    // **只报「刚刚丢失」的**：已经 missing 的记录每次扫描都再报一遍，
+    // 会让 10 分钟一次的巡检变成复读机（实测 28 个文件刷了一整晚屏）。
+    // 它们仍然会被重新检查——文件一旦回来就走上面的 revived 分支。
     for (const r of rows) {
       if (seen.has(r.id)) continue
+      if (r.state === 'missing') continue
       await db.conn.exec("update files set state = 'missing' where id = ?", [r.id])
       missing.push({ fileId: r.id, relPath: r.rel_path })
       await event(db, 'missing', r.asset_id, r.id, { rel_path: r.rel_path, root: root.label })
