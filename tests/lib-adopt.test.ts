@@ -103,6 +103,21 @@ test('dry-run 只统计不写库', async () => {
   }
 })
 
+test('gif 也是资产（官方活动图里全是动图）', async () => {
+  const { db, root, close } = setup()
+  try {
+    await migrate(db)
+    await addRoot(db, 'bili', root)
+    writeFileSync(path.join(root, 'UP', '作品', 'anim.gif'), 'GIF89a-bytes')
+
+    const r = await adopt(db, { kinds: ['image'] })
+    assert.equal(r.adopted, 1)
+    assert.equal(r.items[0]!.kind, 'image')
+  } finally {
+    await close()
+  }
+})
+
 test('sidecar（nfo/jpg/ass）不会被当成资产认领', async () => {
   const { db, root, close } = setup()
   try {

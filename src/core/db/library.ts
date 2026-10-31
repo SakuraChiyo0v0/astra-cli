@@ -602,11 +602,12 @@ export async function adopt(
       if (base.startsWith('.')) continue
       const ext = path.extname(base).toLowerCase()
       // 只认领媒体文件；sidecar（nfo/jpg/ass/lrc）跳过
-      if (!['.mp4', '.mkv', '.flv', '.webm', '.mov', '.mp3', '.flac', '.m4a', '.jpg', '.jpeg', '.png', '.webp'].includes(ext)) continue
+      // .gif 也是资产：官方活动图里大量动图，漏掉会每次扫描都被当孤儿
+      if (!['.mp4', '.mkv', '.flv', '.webm', '.mov', '.mp3', '.flac', '.m4a', '.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) continue
       if (options.kinds && options.kinds.length > 0) {
         const isVideo = ['.mp4', '.mkv', '.flv', '.webm', '.mov'].includes(ext)
         const isAudio = ['.mp3', '.flac', '.m4a'].includes(ext)
-        const isImage = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext)
+        const isImage = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)
         if (!(options.kinds.includes('video') && isVideo)
           && !(options.kinds.includes('audio') && isAudio)
           && !(options.kinds.includes('image') && isImage)) continue
