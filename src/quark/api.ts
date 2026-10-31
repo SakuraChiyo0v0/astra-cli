@@ -280,6 +280,72 @@ async function downloadUrlsOnce(fids: string[], signal?: AbortSignal): Promise<M
   return map
 }
 
+
+/** 新建文件夹。返回新目录 fid；已存在同名目录时返回已有那个的 fid。 */
+export async function makeFolder(parentFid: string, name: string, signal?: AbortSignal): Promise<string> {
+  const existing = await listDriveOnce(parentFid, signal)
+  const hit = existing.find((x) => Number(x.dir ?? 0) === 1 && x.file_name === name)
+  if (hit?.fid) return hit.fid
+
+  const response = await httpRequest(`${BASE}/file?pr=ucpro&fr=pc`, {
+    method: 'POST',
+    headers: headers({ 'content-type': 'application/json' }, CLIENT_UA),
+    body: JSON.stringify({ pdir_fid: parentFid, file_name: name, dir_path: '', dir_init_lock: false }),
+    timeoutMs: 20_000,
+    retries: 2,
+    ...(signal ? { signal } : {}),
+  })
+  const body = (await response.json()) as ApiBody<{ fid?: string }>
+  if ((body.code ?? 0) !== 0) fail('建目录', body)
+  const fid = body.data?.fid
+  if (fid) return fid
+  // 有些响应不给 fid，回查一次
+  const after = await listDriveOnce(parentFid, signal)
+  const created = after.find((x) => Number(x.dir ?? 0) === 1 && x.file_name === name)
+  if (!created?.fid) throw new AstraError('QUARK_MKDIR', `建目录后找不到 ${name}`, { exitCode: 5 })
+  return created.fid
+}
+
+/** 移动文件/目录到指定父目录。参数是 filelist + to_pdir_fid。 */
+export async function moveFiles(fids: string[], toPdirFid: string, signal?: AbortSignal): Promise<void> {
+  for (let i = 0; i < fids.length; i += 100) {
+    const batch = fids.slice(i, i + 100)
+    const response = await httpRequest(`${BASE}/file/move?pr=ucpro&fr=pc`, {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }, CLIENT_UA),
+      body: JSON.stringify({ filelist: batch, to_pdir_fid: toPdirFid, exclude_fids: [] }),
+      timeoutMs: 30_000,
+      retries: 2,
+      ...(signal ? { signal } : {}),
+    })
+    const body = (await response.json()) as ApiBody<unknown>
+    if ((body.code ?? 0) !== 0) fail('移动', body)
+    await new Promise((r) => setTimeout(r, 300))
+  }
+}
+
+/** 列某个目录的直接子项（一次性，不递归）。 */
+export async function listDriveOnce(fid: string, signal?: AbortSignal): Promise<Array<{ fid?: string; file_name?: string; dir?: number; size?: number }>> {
+  const params = new URLSearchParams({
+    pr: 'ucpro',
+    fr: 'pc',
+    pdir_fid: fid,
+    _page: '1',
+    _size: '100',
+    _fetch_total: '1',
+    _sort: 'file_type:asc,updated_at:desc',
+  })
+  const response = await httpRequest(`${BASE}/file/sort?${params}`, {
+    headers: headers({}, CLIENT_UA),
+    timeoutMs: 20_000,
+    retries: 2,
+    ...(signal ? { signal } : {}),
+  })
+  const body = (await response.json()) as ApiBody<{ list?: Array<{ fid?: string; file_name?: string; dir?: number; size?: number }> }>
+  if ((body.code ?? 0) !== 0) fail('列目录', body)
+  return body.data?.list ?? []
+}
+
 /** 删掉网盘里的转存副本。注意参数是 filelist，不是 fids。 */
 export async function deleteFiles(fids: string[], signal?: AbortSignal): Promise<void> {
   const response = await httpRequest(`${BASE}/file/delete?pr=ucpro&fr=pc`, {

@@ -14,6 +14,10 @@ import { getConfig } from '../core/config.ts'
 import { checkWritable } from '../core/doctor.ts'
 import { loadQuarkCookie, normalizeCookieInput, saveQuarkCookie, clearQuarkCookie } from './auth.ts'
 import { ensureIndex, extOf, humanSize as humanSize2, resolvePath } from './index.ts'
+import { buildPlan, type Plan } from './organize.ts'
+import { makeFolder, moveFiles } from './api.ts'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { homePath } from '../core/paths.ts'
 import {
   deleteFiles,
   downloadToFile,
@@ -524,6 +528,172 @@ const dup: Command = {
   },
 }
 
+
+const plan: Command = {
+  name: 'quark plan',
+  summary: '生成网盘整理清单（只读，不改任何文件）',
+  usage: 'astra quark plan [--path 目录] [--depth 2] [--deep] [--out 文件] [--refresh]',
+  notes: [
+    '**只输出建议，不动文件**；确认后用 `astra quark apply <清单>` 执行',
+    '规则：散文件按类型归档 / 重复文件只提示（无 md5，不自动删）/ 空目录建议清理',
+    '清单默认写到 <ASTRA_HOME>/quark-plan.json',
+  ],
+  options: {
+    path: { type: 'string', description: '整理这个目录（默认全盘根）', valueName: '目录' },
+    depth: { type: 'string', description: '下钻层数，默认 2', valueName: 'n' },
+    deep: { type: 'boolean', description: '扫全树' },
+    out: { type: 'string', description: '清单输出路径', valueName: 'file' },
+    'dup-min': { type: 'string', description: '重复文件最小体积，默认 100MB', valueName: 'size' },
+    'no-empty': { type: 'boolean', description: '不包含空目录清理建议' },
+    refresh: { type: 'boolean', description: '强制重建索引' },
+  },
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    let scope = ''
+    let rootFid = '0'
+    const rawPath = (typeof values.path === 'string' && values.path.trim()) || positionals[0] || ''
+    if (rawPath) {
+      const resolved = await resolvePath(rawPath, signal)
+      if (!resolved) throw invalidInput(`目录不存在：${rawPath}`, '先 `astra quark ls` 看看根目录有哪些')
+      scope = resolved.path
+      rootFid = resolved.fid
+    }
+    const depth = values.deep === true ? 0 : Math.max(0, Math.min(20, Number(values.depth ?? '2') || 2))
+    const index = await ensureIndex({ scope, rootFid, depth, refresh: values.refresh === true, ...(signal ? { signal } : {}) })
+    const rawDupMin = typeof values['dup-min'] === 'string' ? values['dup-min'] : '100MB'
+    const m = rawDupMin.match(/^([\d.]+)\s*([kmgt]?b?)$/i)
+    const mult: Record<string, number> = { '': 1, b: 1, k: 1024, kb: 1024, m: 1024 ** 2, mb: 1024 ** 2, g: 1024 ** 3, gb: 1024 ** 3, t: 1024 ** 4, tb: 1024 ** 4 }
+    const dupMin = m ? Math.round(Number(m[1]) * (mult[(m[2] ?? '').toLowerCase()] ?? 1)) : 100 * 1024 ** 2
+
+    const built = buildPlan({
+      entries: index.entries,
+      scope,
+      dupMinBytes: dupMin,
+      includeEmpty: values['no-empty'] !== true,
+      indexComplete: depth === 0,
+    })
+    const outPath = typeof values.out === 'string' ? values.out : homePath('quark-plan.json')
+    writeFileSync(outPath, JSON.stringify(built, null, 2) + '\n', 'utf8')
+
+    return {
+      data: {
+        planPath: outPath,
+        scope: scope || '(根目录)',
+        indexed: index.entries.length,
+        summary: built.summary,
+        actionTotal: built.actions.length,
+        // 只回显前 40 条，完整清单在 planPath 里
+        actions: built.actions.slice(0, 40).map((a) => ({
+          id: a.id,
+          op: a.op,
+          label: a.label,
+          count: a.fids?.length ?? 0,
+          bytes: a.bytes ?? 0,
+        })),
+        review: built.review.slice(0, 10),
+      },
+    }
+  },
+}
+
+const apply: Command = {
+  name: 'quark apply',
+  summary: '执行整理清单（move 会真移动；删除只在加 --purge-empty 时进回收站）',
+  usage: 'astra quark apply [清单文件] [--dry] [--purge-empty] [--yes]',
+  notes: [
+    '默认只执行 mkdir + move；空目录删除需要显式 --purge-empty',
+    '--dry 只打印将执行什么',
+    '所有删除都进夸克回收站（不是永久删除），可恢复',
+    '操作间隔 300ms，避免触发风控',
+  ],
+  options: {
+    dry: { type: 'boolean', description: '只打印，不执行' },
+    'purge-empty': { type: 'boolean', description: '连空目录清理建议一起执行' },
+    yes: { type: 'boolean', description: '跳过确认（非交互环境必须带）' },
+  },
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    if (!loadQuarkCookie()) throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
+    const file = positionals[0] || homePath('quark-plan.json')
+    let parsed: Plan
+    try {
+      parsed = JSON.parse(readFileSync(file, 'utf8')) as Plan
+    } catch (error) {
+      throw invalidInput(`读不了清单 ${file}`, '先跑 `astra quark plan` 生成清单')
+    }
+
+    const dry = values.dry === true
+    const purgeEmpty = values['purge-empty'] === true
+    const results: Array<{ id: number; op: string; ok: boolean; detail: string }> = []
+
+    // 目录 fid 缓存：同一路径只 resolve/建一次
+    const dirCache = new Map<string, string>()
+    dirCache.set('', '0')
+
+    const resolveDir = async (path: string): Promise<string> => {
+      const cached = dirCache.get(path)
+      if (cached) return cached
+      const segments = path.split('/').filter(Boolean)
+      let fid = '0'
+      const walked: string[] = []
+      for (const segment of segments) {
+        const below = [...walked, segment].join('/')
+        const hit = dirCache.get(below)
+        if (hit) {
+          fid = hit
+          walked.push(segment)
+          continue
+        }
+        fid = await makeFolder(fid, segment, signal)
+        dirCache.set(below, fid)
+        walked.push(segment)
+      }
+      dirCache.set(path, fid)
+      return fid
+    }
+
+    for (const action of parsed.actions) {
+      if (signal?.aborted) break
+      if (action.op === 'remove' && (!purgeEmpty || action.advisory)) {
+        results.push({ id: action.id, op: action.op, ok: true, detail: '跳过（需人工确认或未加 --purge-empty）' })
+        continue
+      }
+      if (dry) {
+        results.push({ id: action.id, op: action.op, ok: true, detail: `[dry] ${action.label}` })
+        continue
+      }
+      try {
+        if (action.op === 'mkdir' && action.dir) {
+          await resolveDir(action.dir)
+          results.push({ id: action.id, op: action.op, ok: true, detail: `已建 ${action.dir}` })
+        } else if (action.op === 'move' && action.to && action.fids?.length) {
+          const target = await resolveDir(action.to)
+          await moveFiles(action.fids, target, signal)
+          results.push({ id: action.id, op: action.op, ok: true, detail: `移动 ${action.fids.length} 个 → ${action.to}` })
+        } else if (action.op === 'remove' && action.fids?.length) {
+          await deleteFiles(action.fids, signal)
+          results.push({ id: action.id, op: action.op, ok: true, detail: `已删除 ${action.fids.length} 项（进回收站）` })
+        }
+        await new Promise((r) => setTimeout(r, 300))
+      } catch (error) {
+        results.push({ id: action.id, op: action.op, ok: false, detail: (error as Error).message })
+      }
+    }
+
+    return {
+      data: {
+        plan: file,
+        dry,
+        total: parsed.actions.length,
+        ok: results.filter((r) => r.ok).length,
+        failed: results.filter((r) => !r.ok).length,
+        results,
+      },
+    }
+  },
+}
+
 const cookie: Command = {
   name: 'quark cookie',
   summary: '管理夸克登录态：set / show / clear',
@@ -595,4 +765,4 @@ const doctor: Command = {
   },
 }
 
-export const quarkCommands: Command[] = [ls, get, du, find, dup, cookie, doctor]
+export const quarkCommands: Command[] = [ls, get, du, find, dup, plan, apply, cookie, doctor]
