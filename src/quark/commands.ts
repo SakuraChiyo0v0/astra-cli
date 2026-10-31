@@ -53,7 +53,7 @@ const ls: Command = {
   ],
   options: {
     tree: { type: 'boolean', description: '递归列出完整树' },
-    depth: { type: 'string', description: '递归深度，默认 3', valueName: 'n' },
+    depth: { type: 'string', description: '递归深度：默认 3，--tree 时默认 8', valueName: 'n' },
     extract: { type: 'string', description: '提取码（链接里没带时用）', valueName: 'code' },
   },
   minArgs: 1,
@@ -62,10 +62,9 @@ const ls: Command = {
     const parsed = parseShareUrl(positionals[0]!)
     const passcode = typeof values.extract === 'string' ? values.extract : parsed.passcode
     const share = await openShare(parsed.pwdId, passcode, signal)
-    const files = await walkShare(share, {
-      signal,
-      maxDepth: values.tree ? Math.max(1, Number(values.depth ?? '3') || 3) : 0,
-    })
+    // 不做 --tree 时也递归到 3 层（分享根目录通常只是一个壳目录，只看一层什么都看不到）
+    const depth = Math.max(1, Number(values.depth ?? (values.tree ? '8' : '3')) || 3)
+    const files = await walkShare(share, { signal, maxDepth: depth })
     const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
     return {
       data: {
@@ -160,7 +159,7 @@ const get: Command = {
     'data.status：downloaded / nothing / dry_run',
     '落盘保留分享里的相对路径；目录看 quark.dir 或 --out',
     '下载需要 cookie（`astra quark cookie set`），且会员才有正常速度',
-    '转存副本下载完立即删除；进程被杀可能残留，用 `astra quark clean` 清理',
+    '转存副本下载完立即删除；进程被杀时可能残留在网盘根目录，手工删掉即可',
   ],
   options: {
     out: { type: 'string', description: '落盘目录（绝对路径）', valueName: 'dir' },
