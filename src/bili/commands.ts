@@ -13,7 +13,7 @@ import { biliSessionDigest, clearBiliSession, cookieHeader, fetchBiliAccount, lo
 import { playInfo, subtitleList, videoInfo, type VideoInfo } from './api.ts'
 import { fetchComments } from './comments.ts'
 import { fetchRanking, parseRid, RID_MAP } from './ranking.ts'
-import { dealFavorite, listFavFolders } from './favorites.ts'
+import { createFavFolder, dealFavorite, deleteFavFolder, listFavFolders } from './favorites.ts'
 import { sidecarKinds } from './sidecar.ts'
 import { runAudioSync } from './audio-sync.ts'
 import { downloadPage } from './download.ts'
@@ -398,6 +398,35 @@ const favRemove: Command = {
     const info = await videoInfo(target.bvid, signal)
     const result = await dealFavorite(info.aid, { folder, action: 'remove' }, signal)
     return { data: { ...result, bvid: info.bvid, title: info.title } }
+  },
+}
+
+const favMkdir: Command = {
+  name: 'bili fav mkdir',
+  summary: '新建收藏夹',
+  usage: 'astra bili fav mkdir <名称> [--private]',
+  notes: ['写操作，需要登录', '--private 建成私密收藏夹（默认公开）', '返回新收藏夹 id，可直接给 fav add 用'],
+  options: { private: { type: 'boolean', description: '建成私密收藏夹' } },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const folder = await createFavFolder(positionals[0]!, { privacy: values.private === true ? 1 : 0 }, signal)
+    return { data: folder }
+  },
+}
+
+const favRmdir: Command = {
+  name: 'bili fav rmdir',
+  summary: '删除收藏夹',
+  usage: 'astra bili fav rmdir <收藏夹id>',
+  notes: ['写操作，需要登录', '只删收藏夹本身；里面的视频不会被删，只是取消收藏关系', 'id 用 bili fav list 查'],
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, signal }) {
+    const folder = Number(positionals[0])
+    if (!Number.isFinite(folder) || folder <= 0) throw invalidInput('收藏夹 id 要是正整数')
+    const result = await deleteFavFolder(folder, signal)
+    return { data: result }
   },
 }
 
@@ -1572,7 +1601,7 @@ const albumCmd: Command = {
 
 export const biliCommands: Command[] = [
   get, info, comments, subtitle, danmaku, popular, weekly, ranking, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk, audioCmd,
-  favList, favAdd, favRemove,
+  favList, favAdd, favRemove, favMkdir, favRmdir,
   dynCmd, albumCmd,
   jobCmd, jobList, jobCancel, jobResume, workerCmd,
   loginStart, loginPoll, account, logout, doctor,

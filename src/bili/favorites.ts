@@ -102,22 +102,95 @@ export async function listFavFolders(signal?: AbortSignal): Promise<FavFolder[]>
   }))
 }
 
+/** 新建收藏夹。返回新 id；privacy=1 是私密。 */
+export async function createFavFolder(title: string, opts: { privacy?: 0 | 1 } = {}, signal?: AbortSignal): Promise<{ id: number; title: string }> {
+  const { csrf } = requireSession()
+  const name = (title ?? '').trim()
+  if (!name) throw new AstraError('BILI_BAD_TITLE', '收藏夹名字不能为空', { exitCode: 2 })
+  const form = new URLSearchParams({ title: name, privacy: String(opts.privacy ?? 0), csrf }).toString()
+  const data = await call<{ id?: number }>('https://api.bilibili.com/x/v3/fav/folder/add', '新建收藏夹', { method: 'POST', body: form }, signal)
+  if (!data.id) throw new AstraError('BILI_BAD_RESPONSE', '新建收藏夹没有返回 id', { exitCode: 5 })
+  return { id: data.id, title: name }
+}
+
+/** 删除收藏夹（里面的视频不会被删，只是取消收藏关系）。 */
+export async function deleteFavFolder(folder: number, signal?: AbortSignal): Promise<{ ok: true; folder: number }> {
+  const { csrf } = requireSession()
+  if (!Number.isFinite(folder) || folder <= 0) throw new AstraError('BILI_BAD_FOLDER', '收藏夹 id 不合法', { exitCode: 2 })
+  const form = new URLSearchParams({ media_ids: String(folder), csrf }).toString()
+  await call<unknown>('https://api.bilibili.com/x/v3/fav/folder/del', '删除收藏夹', { method: 'POST', body: form }, signal)
+  return { ok: true, folder }
+}
+
+/** 收藏夹里现在有多少个视频（读回用；比 resource/ids 可靠，私密夹也准）。 */
+export async function favoriteCount(folder: number, signal?: AbortSignal): Promise<number> {
+  const { session } = requireSession()
+  const options: Parameters<typeof httpRequest>[1] = {
+    headers: { 'user-agent': UA, referer: REFERER, cookie: cookieHeader(session) },
+    timeoutMs: 15_000,
+    retries: 1,
+  }
+  if (signal) options.signal = signal
+  const response = await httpRequest(`https://api.bilibili.com/x/v3/fav/resource/list?media_id=${folder}&ps=1&pn=1&platform=web`, options)
+  if (!response.ok) throw new AstraError('BILI_HTTP', `B 站收藏夹内容返回 HTTP ${response.status}`, { exitCode: 5 })
+  const body = (await response.json()) as { code: number; data?: { info?: { media_count?: number } } }
+  if (body.code !== 0) return -1
+  return body.data?.info?.media_count ?? -1
+}
+
+/** 这个视频当前在哪些收藏夹里。注意：私密收藏夹这里可能查不到，别单独拿它当判据。 */
+export async function favoriteFolderIds(aid: number, signal?: AbortSignal): Promise<number[]> {
+  const { session } = requireSession()
+  const options: Parameters<typeof httpRequest>[1] = {
+    headers: { 'user-agent': UA, referer: REFERER, cookie: cookieHeader(session) },
+    timeoutMs: 15_000,
+    retries: 1,
+  }
+  if (signal) options.signal = signal
+  const response = await httpRequest(`https://api.bilibili.com/x/v3/fav/resource/ids?aid=${encodeURIComponent(String(aid))}`, options)
+  if (!response.ok) throw new AstraError('BILI_HTTP', `B 站收藏夹归属查询返回 HTTP ${response.status}`, { exitCode: 5 })
+  const body = (await response.json()) as { code: number; data?: { id?: number }[] | null }
+  if (body.code !== 0) return []
+  return (body.data ?? []).map((row) => row.id ?? 0).filter((id) => id > 0)
+}
+
 /** 把视频加入 / 移出某个收藏夹。aid 是视频的 av 号。 */
 export async function dealFavorite(
   aid: number,
   opts: { folder: number; action: 'add' | 'remove' },
   signal?: AbortSignal,
-): Promise<{ ok: true; folder: number; action: 'add' | 'remove'; aid: number }> {
+): Promise<{ ok: true; folder: number; action: 'add' | 'remove'; aid: number; verified: true }> {
   const { csrf } = requireSession()
   if (!Number.isFinite(aid) || aid <= 0) throw new AstraError('BILI_BAD_AID', 'aid 不合法', { exitCode: 2 })
   if (!Number.isFinite(opts.folder) || opts.folder <= 0) throw new AstraError('BILI_BAD_FOLDER', '收藏夹 id 不合法', { exitCode: 2 })
+  // 参数容易写反：rid 是**视频 aid**，add_media_ids / del_media_ids 是**收藏夹 id**。
+  // 写反了接口照样返回 code 0（只是 success_num 一直是 0），必须读回收藏夹数量才算数。
   const form = new URLSearchParams({
-    rid: String(opts.folder),
+    rid: String(aid),
     type: '2',
-    add_media_ids: opts.action === 'add' ? String(aid) : '',
-    del_media_ids: opts.action === 'remove' ? String(aid) : '',
+    add_media_ids: opts.action === 'add' ? String(opts.folder) : '',
+    del_media_ids: opts.action === 'remove' ? String(opts.folder) : '',
     csrf,
   }).toString()
+  const before = await favoriteCount(opts.folder, signal)
   await call<unknown>('https://api.bilibili.com/x/v3/fav/resource/deal', '收藏夹写入', { method: 'POST', body: form }, signal)
-  return { ok: true, folder: opts.folder, action: opts.action, aid }
+  // 接口的 success_num 恒为 0，不能当判据。resource/ids 对私密夹也不准，keyword 搜索同样不可靠，
+  // 唯一稳的判据是「收藏夹里的视频数有没有按预期变化」——而且有最终一致性延迟，要轮询。
+  const want = opts.action === 'add'
+  let after = before
+  for (let i = 0; i < 8; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    after = await favoriteCount(opts.folder, signal)
+    if (before < 0 || after < 0) continue
+    if (want ? after > before : after < before) break
+  }
+  const applied = before >= 0 && after >= 0 && (want ? after > before : after < before)
+  if (!applied) {
+    throw new AstraError('BILI_FAV_NOT_APPLIED', `收藏夹写入没有生效（期望 ${want ? '加入' : '移出'}，视频数 ${before} → ${after} 没变化）`, {
+      exitCode: 5,
+      hint: '可能是 B 站风控静默丢弃了写操作，隔几分钟再试；或确认这个收藏夹是自己的',
+      details: { aid, folder: opts.folder, before, after },
+    })
+  }
+  return { ok: true, folder: opts.folder, action: opts.action, aid, verified: true }
 }
