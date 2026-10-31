@@ -311,6 +311,7 @@ const du: Command = {
   options: {
     refresh: { type: 'boolean', description: '强制重建索引' },
     deep: { type: 'boolean', description: '扫全树（默认只下钻 2 层）' },
+    concurrency: { type: 'string', description: '并发列目录数 1..6，默认 3；被限流时用 1', valueName: 'n' },
     path: { type: 'string', description: '只扫这个目录（相对网盘根）', valueName: '目录' },
     depth: { type: 'string', description: '自定义下钻层数', valueName: 'n' },
     top: { type: 'string', description: '每类显示前 N 条，默认 12', valueName: 'n' },
@@ -336,6 +337,7 @@ const du: Command = {
       scope,
       rootFid,
       depth,
+      concurrency: Math.max(1, Math.min(6, Number(values.concurrency ?? '3') || 3)),
       refresh: values.refresh === true,
       ...(signal ? { signal } : {}),
       onProgress: (scanned, folders) => {
@@ -483,7 +485,7 @@ const dup: Command = {
     const m = rawMin.match(/^([\d.]+)\s*([kmgt]?b?)$/i)
     const mult: Record<string, number> = { '': 1, b: 1, k: 1024, kb: 1024, m: 1024 ** 2, mb: 1024 ** 2, g: 1024 ** 3, gb: 1024 ** 3, t: 1024 ** 4, tb: 1024 ** 4 }
     const minBytes = m ? Math.round(Number(m[1]) * (mult[(m[2] ?? '').toLowerCase()] ?? 1)) : 10 * 1024 ** 2
-    const limit = Math.max(1, Math.min(100, Number(values.limit ?? '20') || 20))
+    const limit = Math.max(1, Math.min(500, Number(values.limit ?? '20') || 20))
 
     const norm = (name: string) => name
       .replace(/\(\d+\)/g, '')
@@ -500,8 +502,8 @@ const dup: Command = {
       groups.set(key, list)
     }
 
-    const dupGroups = [...groups.values()]
-      .filter((g) => g.length > 1)
+    const allDup = [...groups.values()].filter((g) => g.length > 1)
+    const dupGroups = allDup
       .sort((a, b) => b.length * b[0]!.size - a.length * a[0]!.size)
       .slice(0, limit)
       .map((g) => ({
@@ -518,9 +520,10 @@ const dup: Command = {
       data: {
         scanned: index.entries.filter((e) => !e.dir).length,
         minSize: humanSize2(minBytes),
-        groupCount: dupGroups.length,
-        wastedBytes: dupGroups.reduce((sum, g) => sum + g.wastedBytes, 0),
-        wastedText: humanSize2(dupGroups.reduce((sum, g) => sum + g.wastedBytes, 0)),
+        groupCount: allDup.length,
+        shown: dupGroups.length,
+        wastedBytes: allDup.reduce((sum, g) => sum + g[0]!.size * (g.length - 1), 0),
+        wastedText: humanSize2(allDup.reduce((sum, g) => sum + g[0]!.size * (g.length - 1), 0)),
         note: '按体积+归一化文件名判定，保守近似；确认后可用 `quark apply` 删除（进回收站）',
         groups: dupGroups,
       },

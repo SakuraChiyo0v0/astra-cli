@@ -38,6 +38,8 @@ export interface DriveIndex {
   done?: boolean
   /** 已扫过的目录 fid，用于断点续建 */
   visited?: string[]
+  /** 本次扫描跳过的目录（被删/无权限/风控），读命令忽略即可 */
+  skipped?: Array<{ path: string; fid: string; error: string }>
   /** 索引范围：'' = 全盘；否则是某个目录的路径 */
   scope?: string
   /** 最大深度：0 = 不限 */
@@ -116,10 +118,20 @@ async function listFolder(fid: string, signal?: AbortSignal): Promise<SortItem[]
       })
     }
     if (!response.ok) {
-      throw new AstraError('QUARK_HTTP', `列目录失败 HTTP ${response.status}（重试 6 次仍失败，多半是被限流）`, {
-        exitCode: 5,
-        hint: '歇一会儿再跑，索引有断点会接着来；或把 --depth 调小',
-      })
+      let preview = ''
+      try {
+        preview = (await response.text()).slice(0, 200)
+      } catch {
+        /* ignore */
+      }
+      throw new AstraError(
+        'QUARK_HTTP',
+        `列目录失败 HTTP ${response.status}（pdir_fid=${fid}）${preview ? `：${preview}` : ''}`,
+        {
+          exitCode: 5,
+          hint: '歇一会儿再跑，索引有断点会接着来；或把 --depth 调小',
+        },
+      )
     }
     const body = (await response.json()) as {
       code?: number
@@ -161,6 +173,7 @@ export async function buildIndex(options: {
 } = {}): Promise<DriveIndex> {
   const concurrency = Math.max(1, Math.min(6, options.concurrency ?? 3))
   const maxDepth = options.depth ?? 0
+  const skipped: Array<{ path: string; fid: string; error: string }> = []
   let entries: DriveEntry[] = []
   const visited = new Set<string>()
   const queue: Array<{ fid: string; path: string; top: string }> = []
@@ -197,7 +210,14 @@ export async function buildIndex(options: {
           const current = queue.shift()
           if (!current) return
           if (options.signal?.aborted) return
-          const items = await listFolder(current.fid, options.signal)
+          let items: SortItem[] = []
+          try {
+            items = await listFolder(current.fid, options.signal)
+          } catch (error) {
+            skipped.push({ path: current.path, fid: current.fid, error: (error as Error).message.slice(0, 140) })
+            seen.add(current.fid)
+            continue
+          }
           visitedCount += 1
           freshParents.add(current.path)
           const freshNames = new Set<string>()
@@ -248,6 +268,7 @@ export async function buildIndex(options: {
         entries: [...byPath.values()],
         done: true,
         visited: [...seen],
+        skipped,
         ...(options.scope ? { scope: options.scope } : {}),
         ...(maxDepth ? { depth: maxDepth } : {}),
       }
@@ -292,7 +313,15 @@ export async function buildIndex(options: {
       const current = queue.shift()
       if (!current) return
       if (options.signal?.aborted) return
-      const items = await listFolder(current.fid, options.signal)
+      let items: SortItem[] = []
+      try {
+        items = await listFolder(current.fid, options.signal)
+      } catch (error) {
+        // 单个目录失败（被删/无权限/风控）不能拖垮整轮，跳过并记账
+        skipped.push({ path: current.path, fid: current.fid, error: (error as Error).message.slice(0, 140) })
+        visited.add(current.fid)
+        continue
+      }
       folders += 1
       visited.add(current.fid)
       sinceCheckpoint += 1
@@ -335,6 +364,7 @@ export async function buildIndex(options: {
     entries,
     done: true,
     visited: [...visited],
+    skipped,
   }
 }
 
@@ -343,6 +373,7 @@ export async function ensureIndex(options: {
   scope?: string
   rootFid?: string
   depth?: number
+  concurrency?: number
   refresh?: boolean
   /** 强制全量重扫（默认在有完整旧索引时走增量） */
   maxAgeHours?: number
@@ -360,6 +391,7 @@ export async function ensureIndex(options: {
     if (sameScopeAs(stale) && stale?.done) {
       return buildIndex({
         incremental: true,
+        ...(options.concurrency ? { concurrency: options.concurrency } : {}),
         ...(options.scope ? { scope: options.scope } : {}),
         ...(options.rootFid ? { rootFid: options.rootFid } : {}),
         ...(options.depth ? { depth: options.depth } : {}),
@@ -370,6 +402,7 @@ export async function ensureIndex(options: {
   }
   return buildIndex({
     resume: !options.refresh,
+    ...(options.concurrency ? { concurrency: options.concurrency } : {}),
     ...(options.scope ? { scope: options.scope } : {}),
     ...(options.rootFid ? { rootFid: options.rootFid } : {}),
     ...(options.depth ? { depth: options.depth } : {}),
