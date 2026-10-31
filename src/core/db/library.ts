@@ -197,6 +197,9 @@ export interface ScanResult {
   orphanCount: number
   unchanged: number
   healed: number
+  /** `--adopt` 时自动入库的数量与前若干条明细 */
+  adopted: number
+  adoptedItems: { relPath: string; assetId: string }[]
   durationMs: number
 }
 
@@ -278,7 +281,7 @@ function sizeOf(file: string): number | null {
  */
 export async function scan(
   db: Database,
-  options: { roots?: string[]; concurrency?: number } = {},
+  options: { roots?: string[]; concurrency?: number; adopt?: boolean } = {},
 ): Promise<ScanResult> {
   const started = Date.now()
   const allRoots = await listRoots(db)
@@ -305,6 +308,8 @@ export async function scan(
   let unchanged = 0
   let healed = 0
   let orphanCount = 0
+  let adopted = 0
+  const adoptedItems: { relPath: string; assetId: string }[] = []
 
   for (const root of targets) {
     const rows = await db.conn.query<{
@@ -352,7 +357,7 @@ export async function scan(
     const isAv = (p: string): boolean => /\.(mp4|mkv|flv|webm|mov|mp3|flac|m4a|wav)$/i.test(p)
     const imageRoot = rows.length > 0
       ? rows.some((r) => isImage(r.rel_path))
-      : files.filter((f) => isImage(f.abs)).length > files.filter((f) => isAv(f.abs)).length
+      : files.filter((f) => isImage(f.abs)).length >= files.filter((f) => isAv(f.abs)).length
     // .nfo/.ass/.srt 这类是 sidecar，永远不是资产
     const skipExt = imageRoot
       ? /\.(tmp|part|log|json|txt|md|nfo|ass|ssa|vtt|srt|db|sqlite|lrc|cue|m3u|m3u8|sfv|url)$/i
@@ -385,6 +390,14 @@ export async function scan(
       }
       if (canPruneBySize && !bySize.has(size) && !tombSizes.has(size)) {
         // size 在库里根本不存在 → 一定是新文件，不用读内容
+        if (options.adopt === true) {
+          const one = await adoptEntry(db, root, entry, false)
+          if (one) {
+            adopted += 1
+            if (adoptedItems.length < 20) adoptedItems.push({ relPath: one.relPath, assetId: one.assetId })
+            continue
+          }
+        }
         orphanCount += 1
         if (orphans.length < 50) orphans.push({ relPath: rel, size })
       } else {
@@ -503,6 +516,15 @@ export async function scan(
         moved.push({ assetId: tomb.asset_id, from: tomb.rel_path, to: item.rel })
         return
       }
+      // --adopt：孤儿直接按 adopt 的规则入库，不再只是报出来
+      if (options.adopt === true) {
+        const one = await adoptEntry(db, root, { abs: item.abs, size: item.size, dev: item.dev, ino: item.ino, mtimeMs: item.mtimeMs }, false)
+        if (one) {
+          adopted += 1
+          if (adoptedItems.length < 20) adoptedItems.push({ relPath: one.relPath, assetId: one.assetId })
+          return
+        }
+      }
       orphanCount += 1
       if (orphans.length < 50) orphans.push({ relPath: item.rel, size: item.size })
     })
@@ -530,12 +552,14 @@ export async function scan(
     orphanCount,
     unchanged,
     healed,
+    adopted,
+    adoptedItems,
     durationMs: Date.now() - started,
   }
   // 一次扫描只留一条汇总事件，避免孤儿文件把 events 表刷爆
   await event(db, 'scan', null, null, {
     roots: result.roots, scanned, unchanged, healed,
-    moved: moved.length, missing: missing.length, orphans: orphanCount,
+    moved: moved.length, missing: missing.length, orphans: orphanCount, adopted,
   })
   return result
 }
@@ -570,6 +594,76 @@ function nfoMeta(nfoPath: string): { title: string | null; uploader: string | nu
   } catch {
     return { title: null, uploader: null }
   }
+}
+
+const MEDIA_EXT = new Set([
+  '.mp4', '.mkv', '.flv', '.webm', '.mov',
+  '.mp3', '.flac', '.m4a',
+  '.jpg', '.jpeg', '.png', '.webp', '.gif',
+])
+
+export interface AdoptOne {
+  relPath: string
+  assetId: string
+  kind: string
+  withBvid: boolean
+}
+
+/**
+ * 认领单个文件。`adopt` 与 `scan --adopt` 共用同一套规则，避免两处逻辑漂移。
+ * 返回 null 表示「不是媒体文件，不该入库」。
+ */
+async function adoptEntry(
+  db: Database,
+  root: { id: string; label: string; abs_path: string },
+  entry: WalkEntry,
+  dryRun: boolean,
+): Promise<AdoptOne | null> {
+  const abs = entry.abs
+  const base = path.basename(abs)
+  if (base.startsWith('.')) return null
+  const ext = path.extname(base).toLowerCase()
+  if (!MEDIA_EXT.has(ext)) return null
+
+  const rel = path.relative(root.abs_path, abs)
+  // B 站下载器的 sidecar 有两套命名：`x.nfo` 和 `x.Metadata.nfo`，都要认
+  const stem = abs.replace(/\.[^.]+$/, '')
+  let nfo: string | null = null
+  let bvid: string | null = null
+  for (const candidate of [`${stem}.nfo`, `${stem}.Metadata.nfo`]) {
+    if (!existsSync(candidate)) continue
+    const found = bvidFromNfo(candidate)
+    if (found) {
+      nfo = candidate
+      bvid = found
+      break
+    }
+    if (!nfo) nfo = candidate
+  }
+  const meta = nfo ? nfoMeta(nfo) : { title: null, uploader: null }
+  const size = entry.size
+  const fp = `${size}-${await quickHash(abs)}`
+  const kind = ['.mp4', '.mkv', '.flv', '.webm', '.mov'].includes(ext) ? 'video'
+    : ['.mp3', '.flac', '.m4a'].includes(ext) ? 'audio' : 'image'
+  const assetIdValue = bvid ? `bili:${bvid}_p1` : `local:${fp}`
+  const title = meta.title || path.basename(base, ext)
+  const out: AdoptOne = { relPath: rel, assetId: assetIdValue, kind, withBvid: Boolean(bvid) }
+  if (dryRun) return out
+
+  await db.conn.tx(async (tx) => {
+    const inner: Database = { ...db, conn: tx }
+    await upsertAsset(inner, {
+      platform: bvid ? 'bili' : 'local',
+      nativeId: bvid ? `${bvid}_p1` : fp,
+      kind,
+      title,
+      artists: meta.uploader ?? null,
+      meta: { root: root.label, source: bvid ? 'nfo' : 'fingerprint' },
+    })
+    await upsertFile(inner, { assetId: assetIdValue, rootId: root.id, relPath: rel, size, hash: fp })
+    await event(inner, 'adopted', assetIdValue, null, { rel_path: rel, via: bvid ? 'nfo-bvid' : 'fingerprint' })
+  })
+  return out
 }
 
 /**
@@ -622,56 +716,13 @@ export async function adopt(
         continue
       }
 
-      // B 站下载器的 sidecar 有两套命名：`x.nfo` 和 `x.Metadata.nfo`，都要认
-      const stem = abs.replace(/\.[^.]+$/, '')
-      const nfoCandidates = [`${stem}.nfo`, `${stem}.Metadata.nfo`]
-      let nfo: string | null = null
-      let bvid: string | null = null
-      for (const candidate of nfoCandidates) {
-        if (!existsSync(candidate)) continue
-        const found = bvidFromNfo(candidate)
-        if (found) {
-          nfo = candidate
-          bvid = found
-          break
-        }
-        if (!nfo) nfo = candidate
-      }
-      const meta = nfo ? nfoMeta(nfo) : { title: null, uploader: null }
-      const size = entry.size
-      const fp = `${size}-${await quickHash(abs)}`
-
-      const kind = ['.mp4', '.mkv', '.flv', '.webm', '.mov'].includes(ext) ? 'video'
-        : ['.mp3', '.flac', '.m4a'].includes(ext) ? 'audio' : 'image'
-
-      const assetIdValue = bvid ? `bili:${bvid}_p1` : `local:${fp}`
-      const title = meta.title || path.basename(base, ext)
-      if (result.dryRun) {
-        result.adopted += 1
-        if (bvid) result.withBvid += 1
-        else result.local += 1
-        result.items.push({ relPath: rel, assetId: assetIdValue, kind })
-        continue
-      }
-
-      await db.conn.tx(async (tx) => {
-        const inner: Database = { ...db, conn: tx }
-        await upsertAsset(inner, {
-          platform: bvid ? 'bili' : 'local',
-          nativeId: bvid ? `${bvid}_p1` : fp,
-          kind,
-          title,
-          artists: meta.uploader ?? null,
-          meta: { root: root.label, source: bvid ? 'nfo' : 'fingerprint' },
-        })
-        await upsertFile(inner, { assetId: assetIdValue, rootId: root.id, relPath: rel, size, hash: fp })
-        await event(inner, 'adopted', assetIdValue, null, { rel_path: rel, via: bvid ? 'nfo-bvid' : 'fingerprint' })
-      })
-      known.add(rel)
+      const one = await adoptEntry(db, root, entry, result.dryRun)
+      if (!one) continue
+      known.add(one.relPath)
       result.adopted += 1
-      if (bvid) result.withBvid += 1
+      if (one.withBvid) result.withBvid += 1
       else result.local += 1
-      result.items.push({ relPath: rel, assetId: assetIdValue, kind })
+      result.items.push({ relPath: one.relPath, assetId: one.assetId, kind: one.kind })
     }
   }
   return result

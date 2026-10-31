@@ -106,20 +106,22 @@ export const libCommands: Command[] = [
   },
   {
     name: 'lib scan',
-    summary: '对账：扫存储根，修正被移动的文件、标记丢失',
-    usage: 'astra lib scan [--root <标签>]',
+    summary: '对账：修正移动/丢失，可选把新文件自动入库',
+    usage: 'astra lib scan [--root <标签>] [--adopt]',
     options: {
       root: { type: 'string', valueName: '标签', description: '只扫某个 root，默认全部' },
+      adopt: { type: 'boolean', description: '发现孤儿时直接按 adopt 规则入库（默认只报告）' },
     },
     notes: [
-      '按「size + 前 1MB sha1」认领文件：路径变了就改 rel_path 并记 moved 事件',
-      '扫不到的标 missing（不删记录）；没见过的文件记 orphan 事件',
+      '身份三层：rel_path → dev:ino → 内容指纹；都命中不了才认领/报孤儿',
+      '扫不到的标 missing（不删记录），只报「刚刚丢失」，不会每轮复读',
+      '--adopt 适合放进 cron：外部工具写进来的新文件会被自动收编',
     ],
     async run({ values }) {
       const db = await open()
       try {
         const roots = typeof values.root === 'string' ? [values.root] : undefined
-        const result = await scan(db, { roots })
+        const result = await scan(db, { roots, adopt: values.adopt === true })
         return { data: { ...result, url: redact(db.url) } }
       } finally {
         await db.conn.close()
