@@ -39,6 +39,11 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   // Pixiv 图片库。留空 = 必须每次 `--out`，不瞎写默认路径。
   // 落盘规范：<dir>/<userId>/<illustId>_p<N>.<ext>，只存不可变标识。
+  // 夸克网盘：落盘根目录 + 并发。留空 = 每次必须 --out。
+  { key: 'quark.dir', description: '夸克分享的落盘根目录（绝对路径）；留空则 `quark get` 必须给 --out', default: '',
+    validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
+  { key: 'quark.concurrency', description: '夸克下载并发数 1..3（当前实现串行，预留）', default: '1',
+    validate: (v) => (/^[1-3]$/.test(v) ? null : '只能是 1 / 2 / 3') },
   { key: 'pixiv.dir', description: 'Pixiv 图片根目录（绝对路径）；留空则 `pixiv pull` 必须给 --out', default: '',
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   // 为什么要这个：Cloudflare 按 TLS/HTTP 指纹判定客户端。Node 的 undici **带 cookie** 请求

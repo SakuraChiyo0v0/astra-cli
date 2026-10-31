@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.29.0 — 2026-11-01
+
+**`bili comments`：看视频评论**
+
+以前想读评论只能手写 wbi 签名脚本。现在一条命令：
+
+```
+astra bili comments BV1gKnP67Er9 --limit 20
+astra bili comments <链接> --sort time --replies
+```
+
+- 走 `/x/v2/reply/wbi/main`（无签名的老接口已废弃），必需 wbi 签名
+- `--sort hot|time`：热门（默认）/ 时间倒序
+- `--limit`：默认 20，上限 100；单页最多 49 条，会自动翻页取够
+- `--replies`：展开二级回复（接口只给前 3 条）
+- 输出含 `total`（接口报的总数）与本页 `count`，能对账
+- 未登录也能看，条数不全；带 cookie 更完整
+- 拍平逻辑抽成 `mapReply()` 纯函数，配 4 条单测（字段缺失、空白折叠、rpid 类型混用）
+
 ## 0.28.4 — 2026-11-01
 
 **挂时长进程不再被一次网络瞬断弄死**

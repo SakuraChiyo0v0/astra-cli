@@ -119,7 +119,7 @@ export interface PlayInfo {
 
 let cachedKeys: WbiKeys | null = null
 
-async function wbiKeys(signal?: AbortSignal): Promise<WbiKeys> {
+export async function wbiKeys(signal?: AbortSignal): Promise<WbiKeys> {
   // 官方每天轮换，缓存 5 分钟足够
   if (cachedKeys && Date.now() - cachedKeys.fetchedAt < 5 * 60 * 1000) return cachedKeys
   const options: Parameters<typeof httpRequest>[1] = { headers: headers(), timeoutMs: 12_000, retries: 1 }

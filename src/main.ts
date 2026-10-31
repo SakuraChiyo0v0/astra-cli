@@ -29,6 +29,7 @@ import { vrCommands } from './vr/commands.ts'
 import { modelCommands } from './model/commands.ts'
 import { pixivCommands } from './pixiv/commands.ts'
 import { comicCommands } from './comic/commands.ts'
+import { quarkCommands } from './quark/commands.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
 import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
@@ -365,7 +366,7 @@ const commands: Command[] = [
 
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest,
   ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands, ...modelCommands,
-  ...dbCommands, ...libCommands,
+  ...dbCommands, ...libCommands, ...quarkCommands,
   ...pixivCommands, ...comicCommands,
 ]
 

@@ -11,6 +11,7 @@ import { homePath } from '../core/paths.ts'
 import { renderQrText, writeQrPng } from '../core/qr.ts'
 import { biliSessionDigest, clearBiliSession, cookieHeader, fetchBiliAccount, loadBiliSession, pollBiliQr, saveBiliSession, startBiliQr } from './auth.ts'
 import { playInfo, subtitleList, videoInfo, type VideoInfo } from './api.ts'
+import { fetchComments } from './comments.ts'
 import { sidecarKinds } from './sidecar.ts'
 import { runAudioSync } from './audio-sync.ts'
 import { downloadPage } from './download.ts'
@@ -246,6 +247,53 @@ const info: Command = {
       }
     }
     return { data }
+  },
+}
+
+const comments: Command = {
+  name: 'bili comments',
+  summary: '看视频评论（热门 / 最新）',
+  usage: 'astra bili comments <BV号|链接> [--limit 20] [--sort hot|time] [--replies]',
+  notes: [
+    '默认按热门排；--sort time 按时间倒序',
+    '--limit 上限 100（接口单页最多 49 条，会自动翻页）',
+    '一条一级评论的二级回复默认只给前 3 条，加 --replies 才展开',
+    '未登录也能看，但条数不全；登录后更完整',
+  ],
+  options: {
+    limit: { type: 'string', description: '最多几条，默认 20（上限 100）', valueName: 'n' },
+    sort: { type: 'string', description: 'hot（默认）/ time', valueName: 'mode' },
+    replies: { type: 'boolean', description: '展开二级回复（前 3 条）' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const target = await parseBiliTarget(positionals[0]!, signal)
+    if (target.kind !== 'video') throw invalidInput('需要一个视频的 BV 号或链接')
+    const sort = values.sort === 'time' ? 'time' : 'hot'
+    const rawLimit = values.limit === undefined ? 20 : Number(values.limit)
+    if (!Number.isFinite(rawLimit) || rawLimit <= 0) throw invalidInput('--limit 要是正整数')
+    const info = await videoInfo(target.bvid, signal)
+    const page = await fetchComments(info.aid, { sort, limit: Math.trunc(rawLimit), withReplies: values.replies === true }, signal)
+    return {
+      data: {
+        bvid: info.bvid,
+        aid: info.aid,
+        title: info.title,
+        sort: page.sort,
+        total: page.total,
+        count: page.items.length,
+        items: page.items.map((item) => ({
+          user: item.user,
+          uid: item.uid,
+          like: item.like,
+          at: new Date(item.ctime * 1000).toISOString(),
+          text: item.message,
+          replyCount: item.replyCount,
+          ...(item.replies.length ? { replies: item.replies } : {}),
+        })),
+      },
+    }
   },
 }
 
@@ -1419,7 +1467,7 @@ const albumCmd: Command = {
 }
 
 export const biliCommands: Command[] = [
-  get, info, subtitle, danmaku, popular, weekly, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk, audioCmd,
+  get, info, comments, subtitle, danmaku, popular, weekly, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk, audioCmd,
   dynCmd, albumCmd,
   jobCmd, jobList, jobCancel, jobResume, workerCmd,
   loginStart, loginPoll, account, logout, doctor,
