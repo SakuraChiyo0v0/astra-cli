@@ -7,7 +7,7 @@
  * 夸克的 `file/sort` 分页：`_page` 从 1 开始、`_size` 最大 100，响应带 `total`。
  * 列表里的 `md5` 字段**恒为 null**（实测），所以去重不能指望它。
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homePath } from '../core/paths.ts'
 import { httpRequest } from '../core/http.ts'
 import { AstraError } from '../core/errors.ts'
@@ -34,6 +34,14 @@ export interface DriveIndex {
   builtAt: string
   rootFid: string
   entries: DriveEntry[]
+  /** false = 建到一半的断点（读命令不会用它） */
+  done?: boolean
+  /** 已扫过的目录 fid，用于断点续建 */
+  visited?: string[]
+  /** 索引范围：'' = 全盘；否则是某个目录的路径 */
+  scope?: string
+  /** 最大深度：0 = 不限 */
+  depth?: number
 }
 
 function indexFile(): string {
@@ -45,6 +53,8 @@ export function loadIndex(maxAgeHours = 24): DriveIndex | null {
     if (!existsSync(indexFile())) return null
     const parsed = JSON.parse(readFileSync(indexFile(), 'utf8')) as DriveIndex
     if (!Array.isArray(parsed.entries)) return null
+    // 断点文件不能当完整索引用，否则 du/find 会拿到半份数据
+    if (parsed.done === false) return null
     if (maxAgeHours > 0) {
       const ageHours = (Date.now() - Date.parse(parsed.builtAt)) / 3_600_000
       if (!Number.isFinite(ageHours) || ageHours > maxAgeHours) return null
@@ -57,6 +67,12 @@ export function loadIndex(maxAgeHours = 24): DriveIndex | null {
 
 export function saveIndex(index: DriveIndex): void {
   writeFileSync(indexFile(), JSON.stringify(index) + '\n', { encoding: 'utf8', mode: 0o600 })
+  // 这台机器的挂载点会忽略 mode 参数，必须显式 chmod
+  try {
+    chmodSync(indexFile(), 0o600)
+  } catch {
+    /* 权限改不动就算了，索引不含凭证 */
+  }
 }
 
 interface SortItem {
@@ -116,14 +132,53 @@ async function listFolder(fid: string, signal?: AbortSignal): Promise<SortItem[]
  * 4 路并发能压到 1 分钟内；并发太高会被夸克限流，所以固定小池子。
  */
 export async function buildIndex(options: {
+  scope?: string
+  rootFid?: string
+  depth?: number
   signal?: AbortSignal
   onProgress?: (scanned: number, folders: number) => void
   concurrency?: number
+  /** 有断点就从断点接着扫 */
+  resume?: boolean
 } = {}): Promise<DriveIndex> {
-  const entries: DriveEntry[] = []
-  const queue: Array<{ fid: string; path: string; top: string }> = [{ fid: '0', path: '', top: '' }]
-  let folders = 0
   const concurrency = Math.max(1, Math.min(6, options.concurrency ?? 4))
+  const maxDepth = options.depth ?? 0
+  let entries: DriveEntry[] = []
+  const visited = new Set<string>()
+  const queue: Array<{ fid: string; path: string; top: string }> = []
+
+  // 断点续建：上次扫到一半就接着扫，不用从零开始
+  if (options.resume) {
+    try {
+      const partial = JSON.parse(readFileSync(indexFile(), 'utf8')) as DriveIndex
+      if (partial.done === false && Array.isArray(partial.entries)) {
+        entries = partial.entries
+        for (const fid of partial.visited ?? []) visited.add(fid)
+        for (const e of entries) {
+          if (e.dir && !visited.has(e.fid)) queue.push({ fid: e.fid, path: e.path, top: e.top })
+        }
+        if (!visited.has('0')) queue.unshift({ fid: '0', path: '', top: '' })
+        options.onProgress?.(entries.length, visited.size)
+      }
+    } catch {
+      /* 断点坏了就从零开始 */
+    }
+  }
+  if (!queue.length && !visited.size) queue.push({ fid: options.rootFid ?? '0', path: options.scope ?? '', top: '' })
+
+  let folders = visited.size
+  let sinceCheckpoint = 0
+  const checkpoint = (done: boolean): void => {
+    saveIndex({
+      builtAt: new Date().toISOString(),
+      rootFid: '0',
+      entries,
+      done,
+      visited: [...visited],
+      ...(options.scope ? { scope: options.scope } : {}),
+      ...(maxDepth ? { depth: maxDepth } : {}),
+    })
+  }
 
   const worker = async (): Promise<void> => {
     for (;;) {
@@ -132,6 +187,13 @@ export async function buildIndex(options: {
       if (options.signal?.aborted) return
       const items = await listFolder(current.fid, options.signal)
       folders += 1
+      visited.add(current.fid)
+      sinceCheckpoint += 1
+      if (sinceCheckpoint >= 50) {
+        sinceCheckpoint = 0
+        checkpoint(false)   // 中途落盘，被杀也能续
+      }
+      const currentDepth = current.path ? current.path.split('/').length : 0
       for (const item of items) {
         if (!item.fid || !item.file_name) continue
         const path = current.path ? `${current.path}/${item.file_name}` : item.file_name
@@ -147,7 +209,10 @@ export async function buildIndex(options: {
           updatedAt: Number(item.updated_at ?? 0),
           category: Number(item.category ?? 0),
         })
-        if (isDir) queue.push({ fid: item.fid, path, top })
+        // maxDepth>0 时只下钻到该层：超出的目录只记账、不再展开
+        if (isDir && (maxDepth === 0 || currentDepth < maxDepth)) {
+          queue.push({ fid: item.fid, path, top })
+        }
       }
       options.onProgress?.(entries.length, folders)
     }
@@ -156,17 +221,21 @@ export async function buildIndex(options: {
   const workers = Array.from({ length: concurrency }, () => worker())
   await Promise.all(workers)
 
-  const index: DriveIndex = {
+  checkpoint(true)
+  return {
     builtAt: new Date().toISOString(),
     rootFid: '0',
     entries,
+    done: true,
+    visited: [...visited],
   }
-  saveIndex(index)
-  return index
 }
 
 /** 取索引：够新就用缓存，否则重建。 */
 export async function ensureIndex(options: {
+  scope?: string
+  rootFid?: string
+  depth?: number
   refresh?: boolean
   maxAgeHours?: number
   signal?: AbortSignal
@@ -174,9 +243,33 @@ export async function ensureIndex(options: {
 } = {}): Promise<DriveIndex> {
   if (!options.refresh) {
     const cached = loadIndex(options.maxAgeHours ?? 24)
-    if (cached) return cached
+    const sameScope = cached && (cached.scope ?? '') === (options.scope ?? '')
+    const sameDepth = cached && (cached.depth ?? 0) === (options.depth ?? 0)
+    if (cached && sameScope && sameDepth) return cached
   }
-  return buildIndex({ ...(options.signal ? { signal: options.signal } : {}), ...(options.onProgress ? { onProgress: options.onProgress } : {}) })
+  return buildIndex({
+    resume: !options.refresh,
+    ...(options.scope ? { scope: options.scope } : {}),
+    ...(options.rootFid ? { rootFid: options.rootFid } : {}),
+    ...(options.depth ? { depth: options.depth } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+  })
+}
+
+/** 把 `来自：分享/AI模型` 这样的路径解析成 fid；找不到返回 null。 */
+export async function resolvePath(path: string, signal?: AbortSignal): Promise<{ fid: string; path: string } | null> {
+  const segments = path.split('/').map((x) => x.trim()).filter(Boolean)
+  let fid = '0'
+  const walked: string[] = []
+  for (const segment of segments) {
+    const items = await listFolder(fid, signal)
+    const hit = items.find((x) => x.file_name === segment)
+    if (!hit?.fid) return null
+    fid = hit.fid
+    walked.push(segment)
+  }
+  return { fid, path: walked.join('/') }
 }
 
 export function humanSize(bytes: number): string {

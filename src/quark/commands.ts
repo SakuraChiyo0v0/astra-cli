@@ -13,7 +13,7 @@ import type { Command } from '../core/command.ts'
 import { getConfig } from '../core/config.ts'
 import { checkWritable } from '../core/doctor.ts'
 import { loadQuarkCookie, normalizeCookieInput, saveQuarkCookie, clearQuarkCookie } from './auth.ts'
-import { ensureIndex, extOf, humanSize as humanSize2 } from './index.ts'
+import { ensureIndex, extOf, humanSize as humanSize2, resolvePath } from './index.ts'
 import {
   deleteFiles,
   downloadToFile,
@@ -295,22 +295,43 @@ const get: Command = {
 const du: Command = {
   name: 'quark du',
   summary: '空间体检：按顶层目录 / 扩展名 / 大小区间看谁最占地方',
-  usage: 'astra quark du [--refresh] [--top 12] [--by dir|ext|size]',
+  usage: 'astra quark du [--path 目录] [--depth 2] [--deep] [--refresh] [--top 12] [--by dir|ext|size]',
   notes: [
     '只读，不动任何文件',
-    '第一次跑要遍历整盘建索引（~1500 文件约 30-60 秒），之后 24 小时内复用',
+    '默认只下钻 2 层，几秒出结果；--deep 扫全树（3.5 万条目要几分钟，带断点续建）',
+    '可以只扫某个目录：astra quark du --path "来自：分享"（位置参数写法也支持）',
+    '索引缓存在 <ASTRA_HOME>/quark-index.json，范围/深度变了会自动重建',
     'data.totals / data.byTop / data.byExt / data.bySize',
   ],
+  maxArgs: 1,
   options: {
     refresh: { type: 'boolean', description: '强制重建索引' },
+    deep: { type: 'boolean', description: '扫全树（默认只下钻 2 层）' },
+    path: { type: 'string', description: '只扫这个目录（相对网盘根）', valueName: '目录' },
+    depth: { type: 'string', description: '自定义下钻层数', valueName: 'n' },
     top: { type: 'string', description: '每类显示前 N 条，默认 12', valueName: 'n' },
     by: { type: 'string', description: '只看某一维：dir / ext / size', valueName: 'dim' },
   },
-  async run({ values, signal }) {
+  async run({ positionals, values, signal }) {
     if (!loadQuarkCookie()) {
       throw invalidInput('还没配置夸克 cookie', '先跑 `astra quark cookie set "<cookie>"`')
     }
+    let scope = ''
+    let rootFid = '0'
+    const rawPath = (typeof values.path === 'string' && values.path.trim()) || positionals[0] || ''
+    if (rawPath) {
+      const resolved = await resolvePath(rawPath, signal)
+      if (!resolved) throw invalidInput(`目录不存在：${rawPath}`, '先 `astra quark ls` 看看根目录有哪些')
+      scope = resolved.path
+      rootFid = resolved.fid
+    }
+    const depth = values.deep === true
+      ? 0
+      : Math.max(0, Math.min(20, Number(values.depth ?? '2') || 2))
     const index = await ensureIndex({
+      scope,
+      rootFid,
+      depth,
       refresh: values.refresh === true,
       ...(signal ? { signal } : {}),
       onProgress: (scanned, folders) => {
