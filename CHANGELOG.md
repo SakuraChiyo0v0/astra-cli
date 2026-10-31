@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.31.3 — 2026-11-01
+
+**新增 `bili groups` / `bili group`：B 站关注分组**
+
+- `bili groups`：列出所有分组和人数（`tagid -10` 特别关注、`0` 默认分组是内置的）
+- `bili group <名字|tagid>`：看某一组里的人，支持部分匹配
+- 名字匹配到多个分组时报 `AMBIGUOUS_GROUP` 并列出来，**不自己挑一个**（挑错了用户会以为看到的是另一组）
+- `/x/relation/tag` 的 `data` 是**扁平数组**、没有 total，总数只能从 `/x/relation/tags` 的 `count` 取
+- `resolveGroup()` 纯函数 + 6 个单测（其中「多组匹配必须报错」当场抓到一个 return 写错的 bug）
+
 ## 0.31.2 — 2026-11-01
 
 **新增 `bili relation` / `bili following` / `bili fans`：B 站关注与粉丝**

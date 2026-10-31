@@ -138,3 +138,83 @@ export function following(mid: string | undefined, limit: number, signal?: Abort
 export function fans(mid: string | undefined, limit: number, signal?: AbortSignal): Promise<RelationPage> {
   return fetchList('fans', mid ?? selfMid(), limit, signal)
 }
+
+// ---------------------------------------------------------------------------
+// 关注分组（B 站叫「分组」，接口是 tag）
+// ---------------------------------------------------------------------------
+
+export interface FollowGroup {
+  tagid: number
+  name: string
+  count: number
+  tip: string
+}
+
+/** 关注分组列表。`tagid -10` = 特别关注，`0` = 默认分组，都是系统内置的。 */
+export async function followGroups(signal?: AbortSignal): Promise<FollowGroup[]> {
+  const body = await getJson<{ data?: { tagid?: number; name?: string; count?: number; tip?: string }[] }>(
+    'https://api.bilibili.com/x/relation/tags',
+    '关注分组',
+    signal,
+  )
+  return (body.data ?? []).map((t) => ({
+    tagid: typeof t.tagid === 'number' ? t.tagid : 0,
+    name: (t.name ?? '').trim() || `tag${String(t.tagid)}`,
+    count: typeof t.count === 'number' ? t.count : 0,
+    tip: (t.tip ?? '').trim(),
+  }))
+}
+
+/**
+ * 按名字或 tagid 找分组。
+ *
+ * 优先精确匹配名字，其次唯一前缀匹配；都匹配不上就报错并列出可用名字
+ * （不要静默退回第一个分组——用户会以为看到的是自己要的那组）。
+ */
+export function resolveGroup(groups: FollowGroup[], input: string): FollowGroup {
+  const q = input.trim()
+  if (!q) throw new AstraError('INVALID_INPUT', '分组名不能为空', { exitCode: 2 })
+  if (/^-?\d+$/.test(q)) {
+    const byId = groups.find((g) => g.tagid === Number(q))
+    if (byId) return byId
+  }
+  const exact = groups.find((g) => g.name === q)
+  if (exact) return exact
+  const fuzzy = groups.filter((g) => g.name.includes(q))
+  if (fuzzy.length === 1) {
+    const [only] = fuzzy
+    if (only) return only
+  }
+  if (fuzzy.length > 1) {
+    throw new AstraError('AMBIGUOUS_GROUP', `「${q}」匹配到多个分组：${fuzzy.map((g) => g.name).join(' / ')}`, {
+      exitCode: 2,
+      hint: '换一个更完整的名字，或者直接用 tagid',
+    })
+  }
+  throw new AstraError('GROUP_NOT_FOUND', `没有叫「${q}」的分组`, {
+    exitCode: 4,
+    hint: `可用分组：${groups.map((g) => g.name).join(' / ')}`,
+  })
+}
+
+/**
+ * 分组内的关注者。
+ *
+ * 注意 `/x/relation/tag` 的 `data` 是**扁平数组**（没有 total，也没有 cursor），
+ * 总数得从 `/x/relation/tags` 的 `count` 拿；翻到空页即止。
+ */
+export async function groupMembers(tagid: number, limit: number, signal?: AbortSignal): Promise<RelationUser[]> {
+  const items: RelationUser[] = []
+  for (let page = 1; items.length < limit && page <= 40; page += 1) {
+    const url = `https://api.bilibili.com/x/relation/tag?tagid=${tagid}&pn=${page}&ps=${PAGE_SIZE}&order=desc`
+    const body = await getJson<{ data?: RawRelationUser[] | { list?: RawRelationUser[] } }>(url, '分组成员', signal)
+    const raw = body.data
+    const list = Array.isArray(raw) ? raw : (raw?.list ?? [])
+    if (list.length === 0) break
+    for (const r of list) {
+      items.push(mapRelationUser(r, items.length))
+      if (items.length >= limit) break
+    }
+  }
+  return items
+}

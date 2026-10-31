@@ -24,7 +24,7 @@ import { parseCollectionRef, fetchFavorite, fetchSeasonArchives, fetchSeriesArch
 import { danmakuToAss, fetchDanmaku } from './danmaku.ts'
 import { popular as fetchPopular, weeklyIssues as fetchWeeklyIssues, weeklyOne as fetchWeeklyOne } from './discover.ts'
 import { watchLater, watchHistory } from './account-lists.ts'
-import { fans, following, relationStat } from './relations.ts'
+import { fans, following, followGroups, groupMembers, relationStat, resolveGroup } from './relations.ts'
 import { httpRequest } from '../core/http.ts'
 import { searchUsers, searchVideos } from './search.ts'
 import { parseMid, spaceOverview, spaceVideos } from './space.ts'
@@ -1122,6 +1122,44 @@ const historyCmd: Command = {
   },
 }
 
+const groupsCmd: Command = {
+  name: 'bili groups',
+  summary: '关注分组：列出所有分组和人数（需登录）',
+  usage: 'astra bili groups',
+  notes: [
+    'tagid -10 是「特别关注」、0 是「默认分组」，B 站内置的，不能删',
+    '用 `astra bili group <名字>` 看某一组里都有谁',
+  ],
+  maxArgs: 0,
+  async run({ signal }) {
+    const groups = await followGroups(signal)
+    const total = groups.reduce((sum, g) => sum + (g.tagid > 0 ? g.count : 0), 0)
+    return { data: { count: groups.length, groups, countedInGroups: total } }
+  },
+}
+
+const groupCmd: Command = {
+  name: 'bili group',
+  summary: '看某个关注分组里的人（需登录）',
+  usage: 'astra bili group 我的世界 [--limit 50]',
+  notes: [
+    '参数可以是分组名（支持部分匹配）或 tagid',
+    '同名多组时会报错让你选，不会自己挑一个',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '默认 50，最多 500', valueName: 'n' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const limit = Math.max(1, Math.min(500, Number(values.limit ?? '50') || 50))
+    const groups = await followGroups(signal)
+    const group = resolveGroup(groups, String(positionals[0] ?? ''))
+    const items = await groupMembers(group.tagid, limit, signal)
+    return { data: { group: { tagid: group.tagid, name: group.name, count: group.count }, returned: items.length, items } }
+  },
+}
+
 const relationCmd: Command = {
   name: 'bili relation',
   summary: '关系统计：关注 / 粉丝 / 黑名单（需登录）',
@@ -1662,7 +1700,7 @@ const albumCmd: Command = {
 
 export const biliCommands: Command[] = [
   get, info, comments, subtitle, danmaku, popular, weekly, ranking, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk, audioCmd,
-  relationCmd, followingCmd, fansCmd,
+  relationCmd, followingCmd, fansCmd, groupsCmd, groupCmd,
   favList, favAdd, favRemove, favMkdir, favRmdir,
   dynCmd, albumCmd,
   jobCmd, jobList, jobCancel, jobResume, workerCmd,
