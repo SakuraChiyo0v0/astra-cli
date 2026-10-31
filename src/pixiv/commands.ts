@@ -200,11 +200,15 @@ async function pullWorks(ids: number[], opts: PullOptions): Promise<PullSummary>
         // 先验完整性再落盘：截断的图一旦写进库，下游（日报发图）整组会被
         // Telegram 拒掉，而且没人知道是哪张坏了。这里重试一次，仍坏就报失败。
         const ext = page.ext
-        const fetchVerified = async (url: string): Promise<Buffer> => {
+        // `--quality regular` 拿的是 pixiv 的 `/c/540x540_70/...` 缩略图，**它永远是 JPEG**，
+        // 不管原图是 png 还是 gif。之前这里用 `page.ext`（原图扩展名）去验，于是所有
+        // png 原图在 regular 下都报「不是 PNG（签名不对）」——2026-10-31 日报 22/50 没下来
+        // 就是这个原因。regular 一律按魔数嗅探，原图才按扩展名验。
+        const fetchVerified = async (url: string, expectExt: string | undefined): Promise<Buffer> => {
           let lastReason = ''
           for (let attempt = 0; attempt < 2; attempt += 1) {
             const buf = await downloadImage(url)
-            const check = verifyImage(buf, ext)
+            const check = verifyImage(buf, expectExt)
             if (check.ok) return buf
             lastReason = check.reason ?? '未知原因'
           }
@@ -214,13 +218,13 @@ async function pullWorks(ids: number[], opts: PullOptions): Promise<PullSummary>
         let buf: Buffer
         if (opts.quality === 'regular') {
           // 直接拿 1200px：原图动辄 4000×6000、十几 MB，日报/预览根本用不上
-          buf = await fetchVerified(page.regular)
+          buf = await fetchVerified(page.regular, undefined)
         } else {
           try {
-            buf = await fetchVerified(page.original)
+            buf = await fetchVerified(page.original, ext)
           } catch {
             // 原图拿不全就退 1200px —— 比在库里留一张坏图好
-            buf = await fetchVerified(page.regular)
+            buf = await fetchVerified(page.regular, undefined)
           }
         }
         await writeFile(file, buf)
