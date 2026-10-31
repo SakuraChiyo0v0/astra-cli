@@ -14,7 +14,7 @@ import { getConfig } from '../core/config.ts'
 import { checkWritable } from '../core/doctor.ts'
 import { loadQuarkCookie, normalizeCookieInput, saveQuarkCookie, clearQuarkCookie } from './auth.ts'
 import { ensureIndex, extOf, humanSize as humanSize2, resolvePath } from './index.ts'
-import { buildPlan, type Plan } from './organize.ts'
+import { buildPlan, ruleDedupe, type KeepStrategy, type Plan } from './organize.ts'
 import { makeFolder, moveFiles } from './api.ts'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { homePath } from '../core/paths.ts'
@@ -467,7 +467,7 @@ const find: Command = {
 const dup: Command = {
   name: 'quark dup',
   summary: '找重复文件（同体积 + 同名），算出能省多少空间',
-  usage: 'astra quark dup [--min 100MB] [--limit 20] [--refresh]',
+  usage: 'astra quark dup [--min 100MB] [--limit 20] [--plan] [--keep shortest|oldest|关键词]',
   notes: [
     '夸克列表接口的 md5 恒为 null，所以只能按「体积 + 归一化文件名」判定，属于**保守近似**：',
     '同体积同名的才算重复，宁漏不误杀',
@@ -476,6 +476,9 @@ const dup: Command = {
   options: {
     min: { type: 'string', description: '只统计大于该体积的文件，默认 10MB', valueName: 'size' },
     limit: { type: 'string', description: '最多返回多少组，默认 20', valueName: 'n' },
+    plan: { type: 'boolean', description: '生成去重清单（供 apply 执行），不显示明细' },
+    keep: { type: 'string', description: '保留策略：shortest(默认)/oldest/路径关键词', valueName: '策略' },
+    out: { type: 'string', description: '清单输出路径', valueName: 'file' },
     refresh: { type: 'boolean', description: '强制重建索引' },
   },
   async run({ values, signal }) {
@@ -515,6 +518,45 @@ const dup: Command = {
         keep: g[0]!.path,
         duplicates: g.slice(1).map((x) => ({ path: x.path, fid: x.fid })),
       }))
+
+    if (values.plan === true) {
+      const rawKeep = typeof values.keep === 'string' ? values.keep.trim() : ''
+      const strategy: KeepStrategy =
+        !rawKeep || rawKeep === 'shortest'
+          ? 'shortest'
+          : rawKeep === 'oldest'
+            ? 'oldest'
+            : { prefer: rawKeep }
+      const dedupe = ruleDedupe(index.entries, minBytes, strategy)
+      const outPath = typeof values.out === 'string' ? values.out : homePath('quark-dedupe.json')
+      const payload: Plan = {
+        generatedAt: new Date().toISOString(),
+        scope: '',
+        rules: [`去重：每组保留一份（策略 ${rawKeep || 'shortest'}），其余删除进回收站`],
+        summary: {
+          moveCount: 0,
+          moveBytes: 0,
+          moveText: '0',
+          dirCount: 0,
+          dupGroups: dedupe.actions.length,
+          dupWasted: dedupe.actions.reduce((sum, a) => sum + (a.bytes ?? 0), 0),
+          dupWastedText: humanSize2(dedupe.actions.reduce((sum, a) => sum + (a.bytes ?? 0), 0)),
+        },
+        actions: dedupe.actions,
+        review: dedupe.review.slice(0, 30),
+      }
+      writeFileSync(outPath, JSON.stringify(payload, null, 2) + '\n', 'utf8')
+      return {
+        data: {
+          planPath: outPath,
+          strategy: rawKeep || 'shortest',
+          groups: dedupe.actions.length,
+          files: dedupe.actions.reduce((sum, a) => sum + (a.fids?.length ?? 0), 0),
+          reclaim: payload.summary.dupWastedText,
+          note: '确认后执行：astra quark apply <清单> --purge-empty --yes',
+        },
+      }
+    }
 
     return {
       data: {

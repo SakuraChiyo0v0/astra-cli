@@ -136,6 +136,73 @@ export function ruleScatter(files: DriveEntry[], scope: string): PlanAction[] {
 }
 
 /** 规则 2：找重复（体积 + 归一化文件名相同），只作为 review 建议。 */
+export type KeepStrategy = 'shortest' | 'oldest' | { prefer: string }
+
+/** 按策略从重复组里挑「保留哪一份」。 */
+function pickKeep(group: DriveEntry[], strategy: KeepStrategy): DriveEntry {
+  const sorted = [...group]
+  if (strategy === 'shortest') {
+    sorted.sort((a, b) => a.path.length - b.path.length || a.path.localeCompare(b.path))
+    return sorted[0]!
+  }
+  if (strategy === 'oldest') {
+    sorted.sort((a, b) => (a.updatedAt || Infinity) - (b.updatedAt || Infinity) || a.path.localeCompare(b.path))
+    return sorted[0]!
+  }
+  const keyword = strategy.prefer.toLowerCase()
+  const preferred = sorted.filter((x) => x.path.toLowerCase().includes(keyword))
+  const pool = preferred.length ? preferred : sorted
+  pool.sort((a, b) => a.path.length - b.path.length || a.path.localeCompare(b.path))
+  return pool[0]!
+}
+
+/** 去重清单：每组留一份，其余生成 remove 动作（进回收站）。 */
+export function ruleDedupe(
+  files: DriveEntry[],
+  minBytes: number,
+  strategy: KeepStrategy = 'shortest',
+): { actions: PlanAction[]; review: Plan['review'] } {
+  const norm = (name: string) => name
+    .replace(/\(\d+\)/g, '')
+    .replace(/[\s_\-]+/g, '')
+    .replace(/副本|copy/gi, '')
+    .toLowerCase()
+
+  const groups = new Map<string, DriveEntry[]>()
+  for (const file of files) {
+    if (file.dir || file.size < minBytes) continue
+    const key = `${file.size}::${norm(file.name)}`
+    const list = groups.get(key) ?? []
+    list.push(file)
+    groups.set(key, list)
+  }
+
+  const dups = [...groups.values()].filter((g) => g.length > 1)
+  const actions: PlanAction[] = []
+  const review: Plan['review'] = []
+  let id = 1
+  for (const group of dups) {
+    const keep = pickKeep(group, strategy)
+    const drop = group.filter((x) => x.fid !== keep.fid)
+    if (!drop.length) continue
+    actions.push({
+      id: id++,
+      op: 'remove',
+      label: `保留 ${keep.path}，删除 ${drop.length} 份副本（省 ${humanSize(keep.size * drop.length)}）`,
+      fids: drop.map((x) => x.fid),
+      names: drop.map((x) => x.name),
+      bytes: keep.size * drop.length,
+    })
+    review.push({
+      size: keep.size,
+      sizeText: humanSize(keep.size),
+      keep: keep.path,
+      duplicates: drop.map((x) => ({ path: x.path, fid: x.fid })),
+    })
+  }
+  return { actions, review }
+}
+
 export function ruleDuplicates(files: DriveEntry[], minBytes: number): Plan['review'] {
   const norm = (name: string) => name
     .replace(/\(\d+\)/g, '')
