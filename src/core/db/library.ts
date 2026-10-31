@@ -215,6 +215,9 @@ export interface WalkEntry {
  * 走一趟就取全，扫描的 syscall 数量少一半（线上 2045 个文件差 1 秒左右）。
  * stat 失败的文件直接跳过——扫不到不等于删了，下次再算。
  */
+/** 这些目录里永远不会有资产：回收站和清单索引。 */
+const SKIP_DIRS = new Set(['#recycle', '#snapshot', '_索引'])
+
 async function walk(dir: string): Promise<WalkEntry[]> {
   const out: WalkEntry[] = []
   let entries
@@ -226,6 +229,7 @@ async function walk(dir: string): Promise<WalkEntry[]> {
   for (const entry of entries) {
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) continue
       out.push(...(await walk(full)))
       continue
     }
