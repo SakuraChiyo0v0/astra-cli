@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.31.2 — 2026-11-01
+
+**新增 `bili relation` / `bili following` / `bili fans`：B 站关注与粉丝**
+
+- `bili relation`：关注数 / 粉丝数 / 黑名单，带 `--mid` 可查别人（公开统计免登录也准）
+- `bili following` / `bili fans`：列表，默认 50、上限 500，每页 50 翻页
+- 隐私与风控分开报错：`-403` → `BILI_PRIVATE`（对方设了隐私），`-352/-412` → `BILI_RATE_LIMITED`（retryable）
+- 拍平逻辑抽成 `mapRelationUser()` 纯函数，注销账号没有 `uname` 时退回 `mid<n>`，不让名字变空
+
 ## 0.31.1 — 2026-11-01
 
 **`db query` 修 `show` / `pragma` / `explain` 被强加 limit 导致语法错**

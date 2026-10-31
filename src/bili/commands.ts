@@ -24,6 +24,7 @@ import { parseCollectionRef, fetchFavorite, fetchSeasonArchives, fetchSeriesArch
 import { danmakuToAss, fetchDanmaku } from './danmaku.ts'
 import { popular as fetchPopular, weeklyIssues as fetchWeeklyIssues, weeklyOne as fetchWeeklyOne } from './discover.ts'
 import { watchLater, watchHistory } from './account-lists.ts'
+import { fans, following, relationStat } from './relations.ts'
 import { httpRequest } from '../core/http.ts'
 import { searchUsers, searchVideos } from './search.ts'
 import { parseMid, spaceOverview, spaceVideos } from './space.ts'
@@ -1121,6 +1122,64 @@ const historyCmd: Command = {
   },
 }
 
+const relationCmd: Command = {
+  name: 'bili relation',
+  summary: '关系统计：关注 / 粉丝 / 黑名单（需登录）',
+  usage: 'astra bili relation [--mid 3493079625500884]',
+  notes: [
+    '不带 --mid 看自己的；带 --mid 看别人的公开统计（这一项免登录也准）',
+    '黑名单数量只有自己看得到',
+  ],
+  options: {
+    mid: { type: 'string', description: '看谁的 uid（默认自己）', valueName: 'mid' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const stat = await relationStat(values.mid ? String(values.mid) : undefined, signal)
+    return { data: stat }
+  },
+}
+
+const followingCmd: Command = {
+  name: 'bili following',
+  summary: '关注列表：列出关注的人（需登录）',
+  usage: 'astra bili following [--limit 50] [--mid <mid>]',
+  notes: [
+    '默认 50 条，最多 500；每页 50，翻页之间会等 2 秒避免风控',
+    '顺序是「最近关注在前」，B 站不提供关注时间',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '默认 50，最多 500', valueName: 'n' },
+    mid: { type: 'string', description: '看谁的（默认自己）', valueName: 'mid' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const limit = Math.max(1, Math.min(500, Number(values.limit ?? '50') || 50))
+    const page = await following(values.mid ? String(values.mid) : undefined, limit, signal)
+    return { data: { total: page.total, returned: page.items.length, items: page.items } }
+  },
+}
+
+const fansCmd: Command = {
+  name: 'bili fans',
+  summary: '粉丝列表：列出关注你的人（需登录）',
+  usage: 'astra bili fans [--limit 50] [--mid <mid>]',
+  notes: [
+    '默认 50 条，最多 500',
+    '对方开了「粉丝列表仅自己可见」时会报 BILI_PRIVATE',
+  ],
+  options: {
+    limit: { type: 'string', short: 'n', description: '默认 50，最多 500', valueName: 'n' },
+    mid: { type: 'string', description: '看谁的（默认自己）', valueName: 'mid' },
+  },
+  maxArgs: 0,
+  async run({ values, signal }) {
+    const limit = Math.max(1, Math.min(500, Number(values.limit ?? '50') || 50))
+    const page = await fans(values.mid ? String(values.mid) : undefined, limit, signal)
+    return { data: { total: page.total, returned: page.items.length, items: page.items } }
+  },
+}
+
 const search: Command = {
   name: 'bili search',
   summary: '搜索视频或 UP 主',
@@ -1603,6 +1662,7 @@ const albumCmd: Command = {
 
 export const biliCommands: Command[] = [
   get, info, comments, subtitle, danmaku, popular, weekly, ranking, search, spaceCmd, collectionCmd, watchLaterCmd, historyCmd, bulk, audioCmd,
+  relationCmd, followingCmd, fansCmd,
   favList, favAdd, favRemove, favMkdir, favRmdir,
   dynCmd, albumCmd,
   jobCmd, jobList, jobCancel, jobResume, workerCmd,
