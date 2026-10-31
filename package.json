@@ -1,6 +1,6 @@
 {
   "name": "astra-cli",
-  "version": "0.28.3",
+  "version": "0.28.4",
   "private": true,
   "description": "给 AI 调用的个人能力 CLI：一条命令办完一件事，输出统一 JSON",
   "type": "module",
@@ -25,6 +25,7 @@
     "typescript": "7.0.2"
   },
   "dependencies": {
+    "lzma": "^2.3.2",
     "pg": "^8.23.1",
     "qrcode-generator": "2.0.4",
     "steam-session": "^1.8.0",

@@ -66,3 +66,12 @@ stdout 只有一个 JSON。`ok:true` 看 `data`，`ok:false` 看 `error.code` / 
 
 - 落盘：`comic.dir` / `ASTRA_COMIC_DIR`，默认模板 `{id} {title}/{chapter:02}/{page:03}.{ext}`
 - 解混淆需要 ffmpeg；缺了用 `astra comic doctor` 看
+
+## 发送预览：临时文件名必须带书号
+
+`send_comic_preview.py` 早期用「话号_页名」拼临时文件名（`01_001.webp.jpg`），
+而所有书的路径都一样。脚本又是「先把每本的预览全部转好，再一次性发相册」，
+于是相册每条都指向同一个文件，群里出现一串一模一样的图。
+
+规则：**先转换后发送时，临时文件名必须唯一**（带上书号/作品 id）；
+发相册前对 `items[*].path` 做一次去重 + 哈希校验，比事后看群里的图更早发现问题。

@@ -421,6 +421,20 @@ const loginCancel: Command = {
 
 // ---------- 挂时长 ----------
 
+/**
+ * 挂机进程出错后的退避时间（毫秒）。
+ *
+ * 以前 `error` 事件直接 `process.exit(1)`：一次 ECONNRESET / 超时就死，而代理
+ * reload、切节点都会造成瞬断（2026-11-01 一小时内掉了两次）。改为退避重连，
+ * 连续失败超过这个表才退出，交给看门狗处理。
+ */
+export const IDLE_RETRY_DELAYS = [10_000, 30_000, 60_000] as const
+
+/** 第 attempt 次失败后等多久（attempt 从 0 开始）；超出表长返回 null 表示别再试了。 */
+export function idleRetryDelay(attempt: number): number | null {
+  return IDLE_RETRY_DELAYS[attempt] ?? null
+}
+
 const idleWorker: Command = {
   name: 'steam _idle-worker',
   summary: '内部：常驻保持 Steam 在线并在玩指定游戏',
@@ -442,15 +456,35 @@ const idleWorker: Command = {
     let reconnects = state.reconnects
     writeState('idle', { pid: process.pid, status: 'starting' })
 
+    let errorRetries = 0
+
     client.on('loggedOn', () => {
+      errorRetries = 0
       client.setPersona(SteamUser.EPersonaState.Online)
       client.gamesPlayed(state.appIDs)
       writeState('idle', { status: 'online', connectedAt: new Date().toISOString(), error: null })
     })
 
+    // 网络瞬断（代理 reload、切节点、丢包）不该直接要了进程的命：
+    // 先按 10s/30s/60s 退避重连，三次都失败才退出，让看门狗接手。
     client.on('error', (err) => {
-      writeState('idle', { status: 'failed', error: err.message })
-      process.exit(1)
+      const wait = idleRetryDelay(errorRetries)
+      if (wait === null) {
+        writeState('idle', { status: 'failed', error: err.message })
+        process.exit(1)
+      }
+      errorRetries += 1
+      writeState('idle', {
+        status: 'starting',
+        error: `${err.message}（${Math.round(wait / 1000)} 秒后重试，第 ${errorRetries} 次）`,
+      })
+      setTimeout(() => {
+        try {
+          client.logOn({ refreshToken: token })
+        } catch {
+          // 下一轮退避再试
+        }
+      }, wait)
     })
 
     client.on('disconnected', (_eresult, message) => {
