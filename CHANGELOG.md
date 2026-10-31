@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.31.0 — 2026-11-01
+
+**数据库：`db exec` 跑 SQL 文件 + 用户表 schema 版本管理**
+
+以前只有 `db query`（一条一条敲），批量建表/灌数据只能循环。补上三块：
+
+- `db exec <file.sql> [--write] [--no-tx] [--dry-run]`
+  - 按分号切语句，跳过字符串 / 引号标识符 / `--` 与 `/* */` 注释 / PG `$$` 与 `$tag$` 里的分号
+  - **默认整包一个事务**：一条失败全回滚（实测 bad.sql 里 create 成功、后续 insert 报错，表没留下）
+  - 文件里有写语句才要 `--write`；`--dry-run` 只列语句不连库
+- `db schema init | status | apply`：用户自己的迁移管理（`_astra_schema` 表）
+  - 迁移文件放 `<ASTRA_HOME>/db/migrations/*.sql`，按文件名升序
+  - 每文件一个事务，记录 name / checksum / duration
+  - **drift 检测**：历史迁移被改过默认拒绝继续（`--force` 放行）
+  - `status` 分 pending / applied / drift / missing 四态
+- 新增纯函数 `splitStatements()` / `isReadonly()`，配 8 条单测
+
 ## 0.30.0 — 2026-11-01
 
 **`bili ranking` 分区排行榜 + `bili fav` 收藏夹写入**

@@ -12,6 +12,8 @@ import { invalidInput } from '../errors.ts'
 import { consume, prepare } from '../confirm.ts'
 import type { Command } from '../command.ts'
 import { openDatabase, redact, dbUrl, saveDbUrl, clearDbUrl } from './index.ts'
+import { isReadonly, splitStatements, statementKind } from './sqlfile.ts'
+import { buildPlan, listApplied, requireDirExists, runMigrationFile, schemaDir } from './schema.ts'
 import { appliedMigrations, MIGRATIONS, migrate } from './migrations.ts'
 import { backupDatabase, doctor, exportJson, importJson, restoreDatabase } from './backup.ts'
 
@@ -332,6 +334,177 @@ export const dbCommands: Command[] = [
         return { data: { switched: true, dialect: db.dialect.name, url: redact(target), next: 'astra db migrate' } }
       } finally {
         await db.conn.close()
+      }
+    },
+  },
+  {
+    name: 'db exec',
+    summary: '执行一个 .sql 文件（默认整包一个事务）',
+    usage: 'astra db exec <file.sql> [--write] [--no-tx] [--dry-run]',
+    options: {
+      write: { type: 'boolean', description: '允许文件里出现写语句 / DDL（默认只放行只读语句）' },
+      'no-tx': { type: 'boolean', description: '不用事务，逐条自动提交（出错时前面的已生效）' },
+      'dry-run': { type: 'boolean', description: '只列出会执行哪些语句，不连库' },
+    },
+    notes: [
+      '按分号切语句时会跳过字符串、引号标识符、注释和 $$ 引用里的分号',
+      '默认整包一个事务：任何一条失败全回滚，不会留下半套表',
+      '文件里有写语句才需要 --write；纯 select 的文件不用',
+      '大文件建议配合 db schema apply 用版本管理，而不是手跑',
+    ],
+    minArgs: 1,
+    maxArgs: 1,
+    async run({ positionals, values }) {
+      const file = positionals[0]!
+      const { readFileSync, existsSync } = await import('node:fs')
+      if (!existsSync(file)) throw invalidInput(`文件不存在：${file}`)
+      const text = readFileSync(file, 'utf8')
+      const statements = splitStatements(text)
+      if (!statements.length) throw invalidInput('文件里没有可执行的语句')
+
+      const kinds = statements.map(statementKind)
+      const writes = statements.filter((s) => !isReadonly(s))
+      if (values['dry-run'] === true) {
+        return {
+          data: {
+            file,
+            statements: statements.length,
+            writes: writes.length,
+            dryRun: true,
+            kinds,
+          },
+        }
+      }
+      if (writes.length && values.write !== true) {
+        throw invalidInput(
+          `文件里有 ${writes.length} 条写语句，确认后加 --write 再跑`,
+          `检测到：${[...new Set(writes.map(statementKind))].join(' / ')}`,
+        )
+      }
+
+      const db = await openDatabase()
+      try {
+        const started = Date.now()
+        let changes = 0
+        const transactional = values['no-tx'] !== true
+        if (transactional) {
+          await db.conn.tx(async (conn) => {
+            for (const stmt of statements) changes += await conn.exec(stmt)
+          })
+        } else {
+          for (const stmt of statements) changes += await db.conn.exec(stmt)
+        }
+        return {
+          data: {
+            file,
+            statements: statements.length,
+            writes: writes.length,
+            changes,
+            transactional,
+            durationMs: Date.now() - started,
+            dialect: db.dialect.name,
+            url: redact(db.url),
+          },
+        }
+      } finally {
+        await db.conn.close().catch(() => {})
+      }
+    },
+  },
+  {
+    name: 'db schema init',
+    summary: '初始化用户表的迁移记录表（_astra_schema）',
+    usage: 'astra db schema init',
+    notes: ['只建记录表，不动你的业务表', '迁移文件放 <ASTRA_HOME>/db/migrations/*.sql，按文件名排序执行'],
+    async run() {
+      const db = await openDatabase()
+      try {
+        await listApplied(db.conn)
+        return { data: { ok: true, table: '_astra_schema', dir: schemaDir(), url: redact(db.url) } }
+      } finally {
+        await db.conn.close().catch(() => {})
+      }
+    },
+  },
+  {
+    name: 'db schema status',
+    summary: '看用户迁移的状态（已应用 / 待应用 / 被改过）',
+    usage: 'astra db schema status [--dir <目录>]',
+    options: { dir: { type: 'string', valueName: '目录', description: '迁移目录，默认 <ASTRA_HOME>/db/migrations' } },
+    notes: [
+      'state=pending 待应用；applied 已应用；drift 文件内容跟记录不一致；missing 记录在但文件没了',
+      'drift 一般是有人改了历史迁移文件，别改历史，加新文件',
+    ],
+    async run({ values }) {
+      const dir = typeof values.dir === 'string' ? values.dir : schemaDir()
+      const db = await openDatabase()
+      try {
+        const applied = await listApplied(db.conn)
+        const plan = buildPlan(dir, applied)
+        return {
+          data: {
+            dir,
+            applied: applied.length,
+            pending: plan.filter((p) => p.state === 'pending').length,
+            drift: plan.filter((p) => p.state === 'drift').length,
+            missing: plan.filter((p) => p.state === 'missing').length,
+            entries: plan.map((p) => ({ name: p.name, state: p.state, statements: p.statements, checksum: p.checksum })),
+            url: redact(db.url),
+          },
+        }
+      } finally {
+        await db.conn.close().catch(() => {})
+      }
+    },
+  },
+  {
+    name: 'db schema apply',
+    summary: '应用待执行的用户迁移（每个文件一个事务）',
+    usage: 'astra db schema apply [--dir <目录>] [--dry-run] [--force]',
+    options: {
+      dir: { type: 'string', valueName: '目录', description: '迁移目录，默认 <ASTRA_HOME>/db/migrations' },
+      'dry-run': { type: 'boolean', description: '只报会应用哪些，不执行' },
+      force: { type: 'boolean', description: '有 drift（历史文件被改过）也继续' },
+    },
+    notes: [
+      '按文件名升序应用，建议 01_xxx.sql / 02_xxx.sql 这种前缀',
+      '每个文件包在一个事务里：失败整体回滚，不会留下半套表',
+      '默认发现 drift 就停（防偷偷改历史迁移）；确认没事再加 --force',
+    ],
+    async run({ values }) {
+      const dir = typeof values.dir === 'string' ? values.dir : schemaDir()
+      requireDirExists(dir)
+      const db = await openDatabase()
+      try {
+        const applied = await listApplied(db.conn)
+        const plan = buildPlan(dir, applied)
+        const drift = plan.filter((p) => p.state === 'drift')
+        if (drift.length && values.force !== true) {
+          throw invalidInput(
+            `有 ${drift.length} 个历史迁移被改动过：${drift.map((d) => d.name).join('、')}`,
+            '历史迁移不要改，加一个新文件；确实无所谓再加 --force',
+          )
+        }
+        const pending = plan.filter((p) => p.state === 'pending')
+        if (values['dry-run'] === true) {
+          return { data: { dir, dryRun: true, pending: pending.map((p) => ({ name: p.name, statements: p.statements })) } }
+        }
+        const done = []
+        for (const entry of pending) {
+          const result = await db.conn.tx(async (conn) => runMigrationFile(conn, entry))
+          done.push(result)
+        }
+        return {
+          data: {
+            dir,
+            appliedNow: done.length,
+            alreadyApplied: applied.length,
+            results: done,
+            url: redact(db.url),
+          },
+        }
+      } finally {
+        await db.conn.close().catch(() => {})
       }
     },
   },
