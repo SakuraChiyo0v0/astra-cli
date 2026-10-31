@@ -63,8 +63,6 @@ export interface RankItem {
   danmaku: number
   duration: number
   pubdate: number
-  /** 综合得分（B 站自己算的排序分） */
-  score: number
 }
 
 export async function fetchRanking(
@@ -88,8 +86,11 @@ export async function fetchRanking(
     data?: { list?: RawRank[] | null }
   }
   if (body.code !== 0) {
+    const throttled = body.code === -352 || body.code === -412
     throw new AstraError('BILI_API_ERROR', `B 站排行榜失败（code=${body.code}${body.message ? `：${body.message}` : ''}）`, {
       exitCode: 5,
+      retryable: throttled,
+      ...(throttled ? { hint: '触发了 B 站风控，等几分钟再试（频繁调用会这样）' } : {}),
       details: { code: body.code },
     })
   }
@@ -105,7 +106,6 @@ interface RawRank {
   stat?: { view?: number; like?: number; danmaku?: number }
   duration?: number
   pubdate?: number
-  score?: number
 }
 
 /** 拍平成 RankItem（纯函数，方便单测）。 */
@@ -119,6 +119,5 @@ export function mapRank(row: RawRank): RankItem {
     danmaku: row.stat?.danmaku ?? 0,
     duration: row.duration ?? 0,
     pubdate: row.pubdate ?? 0,
-    score: row.score ?? 0,
   }
 }

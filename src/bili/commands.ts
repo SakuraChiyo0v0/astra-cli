@@ -340,7 +340,6 @@ const ranking: Command = {
           like: item.like,
           danmaku: item.danmaku,
           duration: item.duration,
-          score: item.score,
         })),
       },
     }

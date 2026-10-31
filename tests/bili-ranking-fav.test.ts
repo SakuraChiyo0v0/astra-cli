@@ -34,7 +34,6 @@ test('排行榜条目拍平：stat 里的数字搬出来，缺字段不崩', () 
     stat: { view: 100, like: 10, danmaku: 5 },
     duration: 300,
     pubdate: 1793464124,
-    score: 12345,
   })
   assert.deepEqual(item, {
     bvid: 'BV1xx',
@@ -45,7 +44,6 @@ test('排行榜条目拍平：stat 里的数字搬出来，缺字段不崩', () 
     danmaku: 5,
     duration: 300,
     pubdate: 1793464124,
-    score: 12345,
   })
   const empty = mapRank({})
   assert.equal(empty.bvid, '')

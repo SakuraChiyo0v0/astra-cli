@@ -88,8 +88,11 @@ async function fetchPage(aid: number, sort: CommentSort, pn: number, ps: number,
     data?: { cursor?: { is_end?: boolean; all_count?: number }; replies?: RawReply[] | null }
   }
   if (body.code !== 0) {
+    const throttled = body.code === -352 || body.code === -412
     throw new AstraError('BILI_API_ERROR', `B 站评论失败（code=${body.code}${body.message ? `：${body.message}` : ''}）`, {
       exitCode: body.code === -404 ? 4 : 5,
+      retryable: throttled,
+      ...(throttled ? { hint: '触发了 B 站风控，等几分钟再试' } : {}),
       details: { code: body.code },
     })
   }
