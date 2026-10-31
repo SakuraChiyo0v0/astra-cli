@@ -96,14 +96,30 @@ async function listFolder(fid: string, signal?: AbortSignal): Promise<SortItem[]
       _fetch_total: '1',
       _sort: 'file_type:asc,updated_at:desc',
     })
-    const response = await httpRequest(`${BASE}/file/sort?${params}`, {
+    // 夸克在大批量遍历时会直接回 HTTP 400（不是参数错，是限流）。
+    // 遇到 400/429/5xx 就退避重试，否则几千次请求后整轮扫描前功尽弃。
+    let response = await httpRequest(`${BASE}/file/sort?${params}`, {
       headers: { 'user-agent': UA, referer: REFERER, cookie: loadQuarkCookie() ?? '' },
       timeoutMs: 20_000,
-      retries: 2,
+      retries: 0,
       ...(signal ? { signal } : {}),
     })
+    for (let attempt = 1; attempt <= 6 && !response.ok; attempt += 1) {
+      if (!(response.status === 400 || response.status === 429 || response.status >= 500)) break
+      await new Promise((r) => setTimeout(r, 1500 * attempt + Math.random() * 800))
+      if (signal?.aborted) break
+      response = await httpRequest(`${BASE}/file/sort?${params}`, {
+        headers: { 'user-agent': UA, referer: REFERER, cookie: loadQuarkCookie() ?? '' },
+        timeoutMs: 20_000,
+        retries: 0,
+        ...(signal ? { signal } : {}),
+      })
+    }
     if (!response.ok) {
-      throw new AstraError('QUARK_HTTP', `列目录失败 HTTP ${response.status}`, { exitCode: 5 })
+      throw new AstraError('QUARK_HTTP', `列目录失败 HTTP ${response.status}（重试 6 次仍失败，多半是被限流）`, {
+        exitCode: 5,
+        hint: '歇一会儿再跑，索引有断点会接着来；或把 --depth 调小',
+      })
     }
     const body = (await response.json()) as {
       code?: number
@@ -140,12 +156,103 @@ export async function buildIndex(options: {
   concurrency?: number
   /** 有断点就从断点接着扫 */
   resume?: boolean
+  /** 增量：只下钻 updated_at 变过的目录 */
+  incremental?: boolean
 } = {}): Promise<DriveIndex> {
-  const concurrency = Math.max(1, Math.min(6, options.concurrency ?? 4))
+  const concurrency = Math.max(1, Math.min(6, options.concurrency ?? 3))
   const maxDepth = options.depth ?? 0
   let entries: DriveEntry[] = []
   const visited = new Set<string>()
   const queue: Array<{ fid: string; path: string; top: string }> = []
+
+  // 增量：基于上一份完整索引，只重扫「自己或子项变过」的目录
+  if (options.incremental) {
+    const cached = loadIndex(0)
+    if (cached?.done) {
+      const builtAt = Date.parse(cached.builtAt) || 0
+      const byPath = new Map<string, DriveEntry>()
+      for (const e of cached.entries) byPath.set(e.path, e)
+      const parentOf = (path: string): string => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
+      const freshParents = new Set<string>()
+      const queue: Array<{ fid: string; path: string; top: string }> = [
+        { fid: options.rootFid ?? '0', path: options.scope ?? '', top: '' },
+      ]
+      const seen = new Set<string>()
+      let visitedCount = 0
+      let sinceCheckpoint = 0
+      const checkpoint = (done: boolean): void => {
+        saveIndex({
+          builtAt: done ? new Date().toISOString() : cached.builtAt,
+          rootFid: '0',
+          entries: [...byPath.values()],
+          done,
+          visited: [...seen],
+          ...(options.scope ? { scope: options.scope } : {}),
+          ...(maxDepth ? { depth: maxDepth } : {}),
+        })
+      }
+
+      const worker = async (): Promise<void> => {
+        for (;;) {
+          const current = queue.shift()
+          if (!current) return
+          if (options.signal?.aborted) return
+          const items = await listFolder(current.fid, options.signal)
+          visitedCount += 1
+          freshParents.add(current.path)
+          const freshNames = new Set<string>()
+          const currentDepth = current.path ? current.path.split('/').length : 0
+          for (const item of items) {
+            if (!item.fid || !item.file_name) continue
+            freshNames.add(item.file_name)
+            const path = current.path ? `${current.path}/${item.file_name}` : item.file_name
+            const isDir = Number(item.dir ?? 0) === 1
+            const top = current.top || (isDir ? item.file_name : '')
+            const updatedAt = Number(item.updated_at ?? 0)
+            const previous = byPath.get(path)
+            byPath.set(path, {
+              fid: item.fid,
+              name: item.file_name,
+              dir: isDir,
+              size: Number(item.size ?? 0),
+              path,
+              top,
+              updatedAt,
+              category: Number(item.category ?? 0),
+            })
+            seen.add(item.fid)
+            // 只有「新目录」或「updated_at 变新」才继续下钻
+            const changed = !previous || updatedAt > builtAt
+            if (isDir && changed && (maxDepth === 0 || currentDepth < maxDepth)) {
+              queue.push({ fid: item.fid, path, top })
+            }
+          }
+          // 这个目录里已经不存在的子项，从索引里删掉
+          for (const [path, entry] of [...byPath.entries()]) {
+            if (parentOf(path) === current.path && !freshNames.has(entry.name)) byPath.delete(path)
+          }
+          sinceCheckpoint += 1
+          if (sinceCheckpoint >= 50) {
+            sinceCheckpoint = 0
+            checkpoint(false)
+          }
+          options.onProgress?.(byPath.size, visitedCount)
+        }
+      }
+
+      await Promise.all(Array.from({ length: concurrency }, () => worker()))
+      checkpoint(true)
+      return {
+        builtAt: new Date().toISOString(),
+        rootFid: '0',
+        entries: [...byPath.values()],
+        done: true,
+        visited: [...seen],
+        ...(options.scope ? { scope: options.scope } : {}),
+        ...(maxDepth ? { depth: maxDepth } : {}),
+      }
+    }
+  }
 
   // 断点续建：上次扫到一半就接着扫，不用从零开始
   if (options.resume) {
@@ -237,15 +344,29 @@ export async function ensureIndex(options: {
   rootFid?: string
   depth?: number
   refresh?: boolean
+  /** 强制全量重扫（默认在有完整旧索引时走增量） */
   maxAgeHours?: number
   signal?: AbortSignal
   onProgress?: (scanned: number, folders: number) => void
 } = {}): Promise<DriveIndex> {
+  const sameScopeAs = (index: DriveIndex | null): boolean =>
+    !!index && (index.scope ?? '') === (options.scope ?? '') && (index.depth ?? 0) === (options.depth ?? 0)
+
   if (!options.refresh) {
     const cached = loadIndex(options.maxAgeHours ?? 24)
-    const sameScope = cached && (cached.scope ?? '') === (options.scope ?? '')
-    const sameDepth = cached && (cached.depth ?? 0) === (options.depth ?? 0)
-    if (cached && sameScope && sameDepth) return cached
+    if (sameScopeAs(cached)) return cached!
+    // 索引过期但有完整旧版本 → 增量更新（只重扫变过的目录），比全量快一个数量级
+    const stale = loadIndex(0)
+    if (sameScopeAs(stale) && stale?.done) {
+      return buildIndex({
+        incremental: true,
+        ...(options.scope ? { scope: options.scope } : {}),
+        ...(options.rootFid ? { rootFid: options.rootFid } : {}),
+        ...(options.depth ? { depth: options.depth } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+        ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+      })
+    }
   }
   return buildIndex({
     resume: !options.refresh,
