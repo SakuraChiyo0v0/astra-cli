@@ -248,8 +248,10 @@ export const dbCommands: Command[] = [
           const changes = await db.conn.exec(sql, params)
           return { data: { statement: head, changes, durationMs: Date.now() - started, url: redact(db.url) } }
         }
-        // 只读：没写 limit 就补一个，避免一条 select 把整表喷到终端
-        const limited = /\blimit\s+\d+/i.test(sql) ? sql : `${sql} limit ${limit}`
+        // 只读：没写 limit 就补一个，避免一条 select 把整表喷到终端。
+        // `show` / `pragma` / `explain` 不能接 limit（PG 会语法错），跳过。
+        const skippable = ['show', 'pragma', 'explain'].includes(head)
+        const limited = skippable || /\blimit\s+\d+/i.test(sql) ? sql : `${sql} limit ${limit}`
         const rows = await db.conn.query<Record<string, unknown>>(limited, params)
         const columns = rows.length > 0 ? Object.keys(rows[0]!) : []
         return {

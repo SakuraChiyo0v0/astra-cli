@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.31.1 — 2026-11-01
+
+**`db query` 修 `show` / `pragma` / `explain` 被强加 limit 导致语法错**
+
+- 之前所有只读语句都会补 `limit N`，`show timezone` 会变成 `show timezone limit 100` → PG 报语法错
+- 现在只对 select / with 补 limit
+
+**顺带**：PG 时区三层已统一到 `Asia/Shanghai`
+（服务端 `postgresql.auto.conf` + database 级 + 新连接验证）
+
 ## 0.31.0 — 2026-11-01
 
 **数据库：`db exec` 跑 SQL 文件 + 用户表 schema 版本管理**
