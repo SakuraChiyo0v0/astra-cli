@@ -15,7 +15,7 @@ import path from 'node:path'
 test('douyin 是命令组，且命令齐全', () => {
   assert.equal(commandGroup('douyin'), true)
   const names = groupCommands('douyin')
-  for (const expected of ['douyin get', 'douyin info', 'douyin hot', 'douyin fav', 'douyin login', 'douyin whoami', 'douyin logout', 'douyin doctor']) {
+  for (const expected of ['douyin get', 'douyin info', 'douyin hot', 'douyin related', 'douyin likes', 'douyin collects', 'douyin login', 'douyin whoami', 'douyin logout', 'douyin doctor']) {
     assert.ok(names.includes(expected), `缺 ${expected}`)
   }
 })

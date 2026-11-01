@@ -70,6 +70,8 @@ export interface ApiOptions {
   /** 登录态 cookie 串；不传 = 游客（只有免签接口能用）。 */
   cookie?: string | null
   signal?: AbortSignal
+  /** 少数接口只认 POST（收藏列表就是这样），签名覆盖的是 query，body 留空。 */
+  method?: 'GET' | 'POST'
 }
 
 async function send(url: string, init: { method?: string; headers: Record<string, string> }, signal?: AbortSignal): Promise<{ status: number; text: string }> {
@@ -119,7 +121,7 @@ export async function signedGet(path: string, extra: Pair[], options: ApiOptions
 
   const url = `https://www.douyin.com${path}?${query}&x-secsdk-web-signature=${signature}`
   progress('douyin.request', { path })
-  const { status, text } = await send(url, { headers }, options.signal)
+  const { status, text } = await send(url, { method: options.method ?? 'GET', headers }, options.signal)
   return parseBody(path, status, text)
 }
 
@@ -261,7 +263,7 @@ export interface FavoritePage {
   maxCursor: string | null
 }
 
-/** 「收藏」（点赞旁边那个星标）。**必须登录**。 */
+/** 「喜欢」（点红心）。**必须登录**。 */
 export async function fetchFavorites(cursor: string | number, count: number, options: ApiOptions = {}): Promise<FavoritePage> {
   if (!options.cookie) {
     throw new AstraError('DOUYIN_NOT_LOGGED_IN', '取收藏需要登录态', {
@@ -283,6 +285,34 @@ export async function fetchFavorites(cursor: string | number, count: number, opt
     items: body.aweme_list ?? [],
     hasMore: body.has_more === 1 || body.has_more === true,
     maxCursor: body.max_cursor === undefined ? null : String(body.max_cursor),
+  }
+}
+
+/**
+ * 「收藏」（星星）。**必须登录，而且只能 POST** —— GET 这条路已经 404
+ * （`Unsupported path(Janus)`），踩过一次。
+ */
+export async function fetchCollected(cursor: string | number, count: number, options: ApiOptions = {}): Promise<FavoritePage> {
+  if (!options.cookie) {
+    throw new AstraError('DOUYIN_NOT_LOGGED_IN', '取收藏需要登录态', {
+      exitCode: 3,
+      hint: '先 `astra douyin login` 粘贴浏览器里的 cookie（Copy as cURL）',
+    })
+  }
+  const body = (await signedGet('/aweme/v1/web/aweme/listcollection/', [
+    ['count', String(count)],
+    ['cursor', String(cursor)],
+  ], { ...options, method: 'POST' })) as { status_code?: number; aweme_list?: RawAweme[]; has_more?: number | boolean; cursor?: number | string }
+  if (body.status_code === 8) {
+    throw new AstraError('DOUYIN_NOT_LOGGED_IN', '登录态无效或已过期', {
+      exitCode: 3,
+      hint: '重新 `astra douyin login` 粘贴一份新的 cookie',
+    })
+  }
+  return {
+    items: body.aweme_list ?? [],
+    hasMore: body.has_more === 1 || body.has_more === true,
+    maxCursor: body.cursor === undefined ? null : String(body.cursor),
   }
 }
 

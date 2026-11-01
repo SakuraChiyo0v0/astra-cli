@@ -9,7 +9,7 @@ import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command, CommandResult } from '../core/command.ts'
 import { okResult } from '../core/output.ts'
 import { checkWritable } from '../core/doctor.ts'
-import { fetchAwemeDetail, fetchCollects, fetchFavorites, fetchHotSearch, fetchRelated, mintTtwid, resolveAwemeId, whoAmI, type RawAweme } from './api.ts'
+import { fetchAwemeDetail, fetchCollected, fetchCollects, fetchFavorites, fetchHotSearch, fetchRelated, mintTtwid, resolveAwemeId, whoAmI, type RawAweme } from './api.ts'
 import { clearSession, loadSession, parseCookieInput, saveSession, sessionPath } from './auth.ts'
 import { normalizeAweme, pickGear, summarizeGears, type DouyinItem, type Quality } from './model.ts'
 import { downloadItem } from './download.ts'
@@ -206,93 +206,111 @@ const related: Command = {
   },
 }
 
-const fav: Command = {
-  name: 'douyin fav',
-  summary: '看（并可下载）你自己「收藏」的作品，需要先登录',
-  usage: 'astra douyin fav [--limit 20] [--keyword <词>] [--download] [--quality q] [--out <目录>] [--cursor <n>]',
-  notes: [
-    '不带 `--download` 只列清单（id / 标题 / 作者 / 点赞）',
-    '`--keyword` 在标题与作者里做大小写不敏感的子串过滤，只筛当前取到的这一批',
-    '`--download` 会把筛出来的逐条下载，落盘规则和 `douyin get` 一样',
-    '抖音这个接口每页约 20 条，`--limit` 超过 20 会自动翻页',
-  ],
-  options: {
-    limit: { type: 'string', description: '条数 1..100，默认 20', valueName: 'n' },
-    cursor: { type: 'string', description: '起始游标（分页续取）', valueName: 'n' },
-    keyword: { type: 'string', description: '只保留标题/作者含该词的', valueName: 'text' },
-    download: { type: 'boolean', description: '顺手下载筛出来的作品' },
-    quality: { type: 'string', description: '下载画质上限，默认 best', valueName: 'q' },
-    out: { type: 'string', description: '下载目录（覆盖 douyin.dir）', valueName: 'dir' },
-  },
-  minArgs: 0,
-  maxArgs: 0,
-  async run({ values, signal }): Promise<CommandResult> {
-    const session = loadSession()
-    if (!session) {
-      throw new AstraError('DOUYIN_NOT_LOGGED_IN', '还没登录', {
-        exitCode: 3,
-        hint: '`astra douyin login < cookie.txt`（浏览器里 Copy as cURL 的整段）',
-      })
-    }
-    const limit = limitOf(values.limit, 20, 100)
-    const quality = qualityOf(values.quality)
-    const keyword = typeof values.keyword === 'string' ? values.keyword.toLowerCase() : null
-    let cursor: string = typeof values.cursor === 'string' ? values.cursor : '0'
+type ListKind = 'like' | 'collect'
 
-    const collected: RawAweme[] = []
-    while (collected.length < limit) {
-      const page = await fetchFavorites(cursor, Math.min(20, limit - collected.length), { cookie: session.cookie, signal })
-      collected.push(...page.items)
-      if (!page.hasMore || !page.maxCursor || page.maxCursor === cursor) break
-      cursor = page.maxCursor
-    }
+const LIST_META: Record<ListKind, { title: string; fetcher: typeof fetchFavorites }> = {
+  like: { title: '喜欢', fetcher: fetchFavorites },
+  collect: { title: '收藏', fetcher: fetchCollected },
+}
 
-    const items = collected.slice(0, limit).map(normalizeAweme)
-    const filtered = keyword
-      ? items.filter((i) => i.title.toLowerCase().includes(keyword) || i.author.toLowerCase().includes(keyword))
-      : items
-
-    const results: Record<string, unknown>[] = []
-    const warnings: string[] = []
-    if (values.download === true) {
-      const root = douyinRoot(typeof values.out === 'string' ? values.out : undefined)
-      mkdirSync(root, { recursive: true })
-      for (const item of filtered) {
-        const outcome = await downloadItem(item, { root, quality, force: false, signal })
-        warnings.push(...outcome.warnings)
-        results.push({
-          id: item.id,
-          title: item.title,
-          status: outcome.status,
-          path: 'path' in outcome ? outcome.path : undefined,
-          dir: 'dir' in outcome ? outcome.dir : undefined,
-          bytes: outcome.bytes,
+function listCommand(kind: ListKind, extra: { name?: string; hidden?: boolean } = {}): Command {
+  const meta = LIST_META[kind]
+  return {
+    name: extra.name ?? `douyin ${kind}s`,
+    summary: `看（并可下载）你自己「${meta.title}」的作品，需要先登录`,
+    usage: `astra douyin ${kind}s [--limit 20] [--keyword <词>] [--download] [--quality q] [--out <目录>] [--cursor <n>]`,
+    notes: [
+      '不带 `--download` 只列清单（id / 类型 / 标题 / 作者 / 点赞）',
+      '`--keyword` 在标题与作者里做大小写不敏感的子串过滤，只筛当前取到的这一批',
+      '`--download` 会把筛出来的逐条下载，落盘规则和 `douyin get` 一样',
+      '每页约 13–20 条，`--limit` 超过一页会自动翻页',
+      '要把整份列表存进 PG 用 `scripts/douyin_crawl_list.py` + `douyin_ingest_pg.py`（crawl.douyin_list_view）',
+    ],
+    options: {
+      limit: { type: 'string', description: '条数 1..100，默认 20', valueName: 'n' },
+      cursor: { type: 'string', description: '起始游标（分页续取）', valueName: 'n' },
+      keyword: { type: 'string', description: '只保留标题/作者含该词的', valueName: 'text' },
+      download: { type: 'boolean', description: '顺手下载筛出来的作品' },
+      quality: { type: 'string', description: '下载画质上限，默认 best', valueName: 'q' },
+      out: { type: 'string', description: '下载目录（覆盖 douyin.dir）', valueName: 'dir' },
+    },
+    ...(extra.hidden ? { hidden: true } : {}),
+    minArgs: 0,
+    maxArgs: 0,
+    async run({ values, signal }): Promise<CommandResult> {
+      const session = loadSession()
+      if (!session) {
+        throw new AstraError('DOUYIN_NOT_LOGGED_IN', '还没登录', {
+          exitCode: 3,
+          hint: '`astra douyin login < cookie.txt`（浏览器里 Copy as cURL 的整段）',
         })
       }
-    }
+      const limit = limitOf(values.limit, 20, 100)
+      const quality = qualityOf(values.quality)
+      const keyword = typeof values.keyword === 'string' ? values.keyword.toLowerCase() : null
+      let cursor: string = typeof values.cursor === 'string' ? values.cursor : '0'
 
-    return {
-      ...okResult({
-        fetched: items.length,
-        matched: filtered.length,
-        nextCursor: cursor,
-        items: filtered.map((i) => ({
-          id: i.id,
-          kind: i.kind,
-          title: i.title,
-          author: i.author,
-          durationSec: i.durationSec,
-          likes: i.stats.digg_count ?? null,
-        })),
-        ...(values.download === true ? { downloads: results } : {}),
-      }, warnings),
-      table: {
-        headers: ['id', '类型', '作者', '标题', '赞'],
-        rows: filtered.map((i) => [i.id, i.kind, i.author.slice(0, 12), i.title.slice(0, 36), i.stats.digg_count ?? '-']),
-      },
-    }
-  },
+      const collected: RawAweme[] = []
+      while (collected.length < limit) {
+        const page = await meta.fetcher(cursor, Math.min(20, limit - collected.length), { cookie: session.cookie, signal })
+        collected.push(...page.items)
+        if (!page.hasMore || !page.maxCursor || page.maxCursor === cursor) break
+        cursor = page.maxCursor
+      }
+
+      const items = collected.slice(0, limit).map(normalizeAweme)
+      const filtered = keyword
+        ? items.filter((i) => i.title.toLowerCase().includes(keyword) || i.author.toLowerCase().includes(keyword))
+        : items
+
+      const results: Record<string, unknown>[] = []
+      const warnings: string[] = []
+      if (values.download === true) {
+        const root = douyinRoot(typeof values.out === 'string' ? values.out : undefined)
+        mkdirSync(root, { recursive: true })
+        for (const item of filtered) {
+          const outcome = await downloadItem(item, { root, quality, force: false, signal })
+          warnings.push(...outcome.warnings)
+          results.push({
+            id: item.id,
+            title: item.title,
+            status: outcome.status,
+            path: 'path' in outcome ? outcome.path : undefined,
+            dir: 'dir' in outcome ? outcome.dir : undefined,
+            bytes: outcome.bytes,
+          })
+        }
+      }
+
+      return {
+        ...okResult({
+          list: kind,
+          fetched: items.length,
+          matched: filtered.length,
+          nextCursor: cursor,
+          items: filtered.map((i) => ({
+            id: i.id,
+            kind: i.kind,
+            title: i.title,
+            author: i.author,
+            durationSec: i.durationSec,
+            likes: i.stats.digg_count ?? null,
+          })),
+          ...(values.download === true ? { downloads: results } : {}),
+        }, warnings),
+        table: {
+          headers: ['id', '类型', '作者', '标题', '赞'],
+          rows: filtered.map((i) => [i.id, i.kind, i.author.slice(0, 12), i.title.slice(0, 36), i.stats.digg_count ?? '-']),
+        },
+      }
+    },
+  }
 }
+
+const likes = listCommand('like')
+const collects = listCommand('collect')
+/** 老名字（0.32.0 当天写过一版），保留成隐藏别名，指向「喜欢」。 */
+const favAlias = listCommand('like', { name: 'douyin fav', hidden: true })
 
 const login: Command = {
   name: 'douyin login',
@@ -425,4 +443,4 @@ const doctor: Command = {
   },
 }
 
-export const douyinCommands: Command[] = [get, info, hot, related, fav, login, whoami, logout, doctor]
+export const douyinCommands: Command[] = [get, info, hot, related, likes, collects, favAlias, login, whoami, logout, doctor]
