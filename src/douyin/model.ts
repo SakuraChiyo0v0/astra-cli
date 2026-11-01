@@ -18,7 +18,12 @@ export interface Gear {
   url: string
   width: number
   height: number
+  /** 短边像素：竖屏视频 height 是长边，按「540p」筛必须看短边。 */
+  short: number
   h265: boolean
+  /** 是否带音轨。**由 `format` 决定，不是由 h265 决定**（见下面的注释）。 */
+  audio: boolean
+  format: string
   fps: number | null
 }
 
@@ -64,14 +69,23 @@ export function normalizeAweme(raw: RawAweme): DouyinItem {
     const addr = entry.play_addr ?? {}
     const url = firstUrl(addr.url_list)
     if (!url) continue
+    const width = Number(addr.width ?? video.width ?? 0)
+    const height = Number(addr.height ?? video.height ?? 0)
+    // 同一个 gear_name 会出现两条：`format: "mp4"` 是音视频合一的成品，
+    // `format: "dash"` 是纯视频轨（实测 ffprobe 只有 hevc 一路）。
+    // 所以判断「有没有声音」看 format，不看 is_h265 —— h265 的 mp4 同样带 aac。
+    const format = String(entry.format ?? 'mp4')
     gears.push({
       name: entry.gear_name ?? 'unknown',
       bitrate: Number(entry.bit_rate ?? 0),
       bytes: Number(addr.data_size ?? 0),
       url,
-      width: Number(addr.width ?? video.width ?? 0),
-      height: Number(addr.height ?? video.height ?? 0),
+      width,
+      height,
+      short: Math.min(width, height),
       h265: Number(entry.is_h265 ?? 0) === 1,
+      audio: format !== 'dash',
+      format,
       fps: entry.FPS === undefined ? null : Number(entry.FPS),
     })
   }
@@ -79,14 +93,19 @@ export function normalizeAweme(raw: RawAweme): DouyinItem {
   if (gears.length === 0) {
     const url = firstUrl(video.play_addr?.url_list)
     if (url) {
+      const width = Number(video.width ?? 0)
+      const height = Number(video.height ?? 0)
       gears.push({
         name: 'default',
         bitrate: 0,
         bytes: Number(video.play_addr?.data_size ?? 0),
         url,
-        width: Number(video.width ?? 0),
-        height: Number(video.height ?? 0),
+        width,
+        height,
+        short: Math.min(width, height),
         h265: false,
+        audio: true,
+        format: 'mp4',
         fps: null,
       })
     }
@@ -105,7 +124,8 @@ export function normalizeAweme(raw: RawAweme): DouyinItem {
   return {
     id,
     kind: images.length > 0 ? 'image' : 'video',
-    title: (raw.desc ?? '').trim(),
+    // 抖音的 desc 里常带换行（作者手动分段），拍平时压成一行：表格不会被撑破，文件名也好处理
+    title: (raw.desc ?? '').replace(/\s+/g, ' ').trim(),
     author: raw.author?.nickname ?? '',
     authorId: raw.author?.sec_uid ?? raw.author?.unique_id ?? '',
     createTime: raw.create_time ?? null,
@@ -135,32 +155,34 @@ const QUALITY_CAP: Record<Quality, number> = {
 export function pickGear(gears: Gear[], quality: Quality = 'best'): Gear | null {
   if (gears.length === 0) return null
   const cap = QUALITY_CAP[quality] ?? Number.POSITIVE_INFINITY
-  const muxed = gears.filter((g) => !g.h265 && g.height > 0 && g.height <= cap)
-  const pool = muxed.length > 0 ? muxed : gears.filter((g) => g.height > 0 && g.height <= cap)
-  const candidates = pool.length > 0 ? pool : gears
-  const sorted = [...candidates].sort((a, b) => (b.height - a.height) || (b.bitrate - a.bitrate))
+  const withinCap = gears.filter((g) => g.short > 0 && g.short <= cap)
+  // 只取带音轨的（format=mp4）；一个都没有时退回纯视频轨，调用方给 warning
+  const withAudio = withinCap.filter((g) => g.audio)
+  const pool = withAudio.length > 0 ? withAudio : withinCap.length > 0 ? withinCap : gears
   if (quality === 'small') {
-    const bySize = [...candidates].sort((a, b) => (a.height - b.height) || (a.bitrate - b.bitrate))
-    return bySize.find((g) => g.bytes > 0) ?? bySize[0] ?? null
+    return [...pool].sort((a, b) => (a.short - b.short) || (a.bytes - b.bytes))[0] ?? null
   }
-  return sorted.find((g) => g.bytes > 0) ?? sorted[0] ?? null
+  // 同分辨率优先 h264：兼容性最好（老播放器 / 部分电视不认 hevc）
+  return [...pool].sort(
+    (a, b) => (b.short - a.short) || (Number(a.h265) - Number(b.h265)) || (b.bitrate - a.bitrate),
+  )[0] ?? null
 }
 
 /** 给用户看的档位摘要（去重同名档）。 */
 export function summarizeGears(gears: Gear[]): { name: string; height: number; bitrate: number; mb: number; codec: 'h264' | 'h265'; audio: boolean }[] {
   const seen = new Set<string>()
   const out: { name: string; height: number; bitrate: number; mb: number; codec: 'h264' | 'h265'; audio: boolean }[] = []
-  for (const gear of [...gears].sort((a, b) => (b.height - a.height) || (b.bitrate - a.bitrate))) {
-    const key = `${gear.name}:${gear.bitrate}`
+  for (const gear of [...gears].sort((a, b) => (b.short - a.short) || (a.h265 ? 1 : 0) - (b.h265 ? 1 : 0) || (b.bitrate - a.bitrate))) {
+    const key = `${gear.name}:${gear.bitrate}:${gear.format}`
     if (seen.has(key)) continue
     seen.add(key)
     out.push({
       name: gear.name,
-      height: gear.height,
+      height: gear.short,
       bitrate: gear.bitrate,
       mb: Math.round((gear.bytes / 1024 / 1024) * 10) / 10,
       codec: gear.h265 ? 'h265' : 'h264',
-      audio: !gear.h265,
+      audio: gear.audio,
     })
   }
   return out

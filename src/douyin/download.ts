@@ -94,8 +94,8 @@ export async function downloadVideo(item: DouyinItem, options: DownloadOptions):
       details: { awemeId: item.id },
     })
   }
-  if (gear.h265) {
-    warnings.push('这条只有 h265 档：文件没有音轨（抖音的 h265 档是纯视频流），需要声音得另找 h264 版本')
+  if (!gear.audio) {
+    warnings.push('这条只有纯视频轨（format=dash），下下来没有声音')
   }
   const target = videoPath(options.root, item)
   mkdirSync(options.root, { recursive: true })
@@ -107,7 +107,7 @@ export async function downloadVideo(item: DouyinItem, options: DownloadOptions):
     bytes,
     gear: gear.name,
     codec: gear.h265 ? 'h265' : 'h264',
-    audio: !gear.h265,
+    audio: gear.audio,
     warnings,
   }
 }

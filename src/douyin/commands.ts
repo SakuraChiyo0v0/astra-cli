@@ -107,6 +107,7 @@ const get: Command = {
         dir: 'dir' in outcome ? outcome.dir : undefined,
         bytes: outcome.bytes,
         gear: 'gear' in outcome ? outcome.gear : undefined,
+        codec: 'codec' in outcome ? outcome.codec : undefined,
         audio: 'audio' in outcome ? outcome.audio : undefined,
       })
     }

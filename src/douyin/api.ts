@@ -179,6 +179,8 @@ export interface RawAweme {
       is_h265?: number
       quality_type?: number
       FPS?: number
+      /** `mp4` = 音视频合一，`dash` = 纯视频轨（没有音轨）。 */
+      format?: string
       play_addr?: { url_list?: string[]; data_size?: number; width?: number; height?: number }
     }[]
   }

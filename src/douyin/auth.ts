@@ -74,7 +74,14 @@ export function parseCookieInput(raw: string): string {
   const prefixed = /^\s*cookie:\s*(.+)$/im.exec(text)
   if (prefixed) return normalize(prefixed[1]!)
   if (/[;=]/.test(text) && !/\s-H\s/.test(text)) return normalize(text)
-  throw invalidInput('没从输入里找到 cookie', '要的是 `cookie: …` 或 `-b \'…\'`；Chrome 里用 Copy as cURL (bash)')
+  // 跨域请求（mon.zijieapi.com、lf-*.bytegoofy.com 之类）本来就不带 cookie，
+  // 用户按 Network 里第一条随手一拷就会拷到这种，直接说清楚该换哪一条。
+  const host = /https?:\/\/([^/'"\s]+)/.exec(text)?.[1] ?? ''
+  const foreign = host !== '' && !/(^|\.)douyin\.com$/.test(host)
+  throw invalidInput(
+    foreign ? `这段请求（${host}）本来就不带 cookie` : '没从输入里找到 cookie',
+    '换一条目标为 www.douyin.com 的请求再 Copy as cURL（Network 里按 `douyin.com` 筛，挑 Request Headers 里有 `cookie:` 的那条）',
+  )
 }
 
 function normalize(cookie: string): string {

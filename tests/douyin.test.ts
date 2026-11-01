@@ -120,22 +120,30 @@ test('originalImageUrl：取最后一个（前两个是 webp 缩略）', () => {
   assert.equal(originalImageUrl([]), null)
 })
 
-const G = (over: Partial<Gear>): Gear => ({ name: 'g', bitrate: 1000, bytes: 100, url: 'https://x/y.mp4', width: 1920, height: 1080, h265: false, fps: 25, ...over })
+const G = (over: Partial<Gear>): Gear => ({ name: 'g', bitrate: 1000, bytes: 100, url: 'https://x/y.mp4', width: 1920, height: 1080, short: 1080, h265: false, audio: true, format: 'mp4', fps: 25, ...over })
 
-test('pickGear：默认挑 h264（有音轨）的最高档', () => {
+test('pickGear：同分辨率优先 h264，且必须带音轨', () => {
   const gears = [
-    G({ name: 'h265-1080', height: 1080, bitrate: 5000, h265: true }),
-    G({ name: 'h264-1080', height: 1080, bitrate: 2000 }),
-    G({ name: 'h264-720', height: 720, bitrate: 1500 }),
+    G({ name: 'h265-1080', short: 1080, height: 1080, bitrate: 5000, h265: true }),
+    G({ name: 'h264-1080', short: 1080, height: 1080, bitrate: 2000 }),
+    G({ name: 'h264-720', short: 720, height: 720, bitrate: 1500 }),
+    G({ name: 'dash-1080', short: 1080, height: 1080, bitrate: 9000, h265: true, audio: false, format: 'dash' }),
   ]
   assert.equal(pickGear(gears, 'best')?.name, 'h264-1080')
   assert.equal(pickGear(gears, '720p')?.name, 'h264-720')
   assert.equal(pickGear(gears, 'small')?.name, 'h264-720')
 })
 
-test('pickGear：没有 h264 时退回 h265（调用方要给 warning）', () => {
-  const gears = [G({ name: 'only-h265', h265: true, height: 720 })]
-  assert.equal(pickGear(gears, 'best')?.name, 'only-h265')
+test('pickGear：竖屏按短边判画质（576x1024 属于 540p，不是 1024p）', () => {
+  const vertical = G({ name: 'normal_540_0', width: 576, height: 1024, short: 576, bitrate: 997251 })
+  const uhd = G({ name: 'adapt_lowest_4_1', width: 2160, height: 3840, short: 2160, bitrate: 2204461, h265: true })
+  assert.equal(pickGear([uhd, vertical], '540p')?.name, 'normal_540_0')
+  assert.equal(pickGear([uhd, vertical], 'best')?.name, 'adapt_lowest_4_1')
+})
+
+test('pickGear：只有 dash（纯视频轨）时仍返回，但 audio=false', () => {
+  const gears = [G({ name: 'dash-only', format: 'dash', audio: false, h265: true, short: 720, height: 720 })]
+  assert.equal(pickGear(gears, 'best')?.audio, false)
 })
 
 test('pickGear：空档位返回 null', () => {
@@ -144,8 +152,8 @@ test('pickGear：空档位返回 null', () => {
 
 test('summarizeGears：标出 codec 与有没有音轨', () => {
   const rows = summarizeGears([
-    G({ name: 'normal_1080_0', height: 1080, bitrate: 2047222, bytes: 66699267 }),
-    G({ name: '1080_1_1', height: 1080, bitrate: 1594435, bytes: 51947514, h265: true }),
+    G({ name: 'normal_1080_0', short: 1080, height: 1080, bitrate: 2047222, bytes: 66699267 }),
+    G({ name: '1080_1_1', short: 1080, height: 1080, bitrate: 1594435, bytes: 51947514, h265: true, audio: false, format: 'dash' }),
   ])
   assert.equal(rows[0]!.codec, 'h264')
   assert.equal(rows[0]!.audio, true)
@@ -178,4 +186,15 @@ test('findExisting：按 id 前缀认出已下载的别的标题', () => {
   assert.equal(findExisting(dir, '7691654649154572543'), path.join(dir, '7691654649154572543 旧标题.mp4'))
   assert.equal(findExisting(dir, '123'), null)
   assert.equal(findExisting('/nonexistent/dir', '1'), null)
+})
+
+test('parseCookieInput：跨域请求（不带 cookie 的那种 cURL）要指出该换哪条', () => {
+  const curl = `curl --url 'https://mon.zijieapi.com/monitor_web/settings/browser-settings?bid=uc_secure_sdk&store=1' \\
+  -H 'referer: https://www.douyin.com/'`
+  assert.throws(() => parseCookieInput(curl), /本来就不带 cookie/)
+})
+
+test('normalizeAweme：标题里的换行压成空格', () => {
+  const item = normalizeAweme({ aweme_id: '1', desc: '第一行\n第二行\r\n第三行', video: { bit_rate: [] } })
+  assert.equal(item.title, '第一行 第二行 第三行')
 })
