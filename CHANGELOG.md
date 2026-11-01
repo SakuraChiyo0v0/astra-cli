@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.33.0 — 2026-11-01
+
+**新增 `lol` 域：借 PC 上客户端的 LCU 拿国服战绩，落库后可查可统计**
+
+国服（腾讯/WeGame）没有公开的战绩接口，Riot 官方 API 也不覆盖国服。唯一干净的数据源是
+**客户端本地的 LCU**（`127.0.0.1:<port>` + Basic 认证），而它只监听回环地址，所以
+NAS 上的 astra 必须先 `ssh` 到 PC，把采集脚本推过去跑，再把 JSON 取回来解析入库。
+
+- `lol sync [--pc <host>]`：抓最近约 21 局 + 段位，写 `crawl.lol_match` / `lol_rank_snap` / `lol_summoner`
+- `lol history [--limit] [--champion] [--queue] [--win|--loss]`：查库，PC 关着也能用
+- `lol stats [--days 30] [--by champion|queue]`：总胜率、英雄池、队列分布
+- `lol rank`：每日段位快照
+- `lol champions [--refresh]`：Data Dragon 拉英雄 id→中文名
+- `lol doctor`：分清「PC 不通 / 客户端没开 / 库是空的」
+
+踩出来的几个坑：
+
+- **PowerShell 5.1 的 `Invoke-RestMethod` 打不通 LCU**（远程主机已关闭），`curl.exe -k` 一次就 200；
+  所以采集脚本用 curl，而不是原生 cmdlet
+- 端口和令牌只在 `LeagueClientUx.exe` 的命令行里（`--app-port` / `--remoting-auth-token`），
+  客户端每次重启都变，不能缓存
+- LCU 的 `begIndex/endIndex` **无效**：试到 100 返回的还是同一批 21 局 → 长历史只能靠定时同步累积
+- 出装列原本用 `int[]`，但 astra 的 SQL 是方言中性的，写入只能给 JSON 字符串，PG 会报
+  `malformed array literal`；改成 text 存 JSON
+- PG 的 `timestamptz` 被驱动还原成 `Date` 对象，只判 `typeof === 'string'` 会让日期全变 null
+
 ## 0.32.0 — 2026-11-01
 
 **新增 `douyin` 域：视频 / 图文 / 热榜 / 收藏，纯 HTTP、零依赖、不需要浏览器**
