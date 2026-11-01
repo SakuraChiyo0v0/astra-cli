@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.32.0 — 2026-11-01
+
+**新增 `douyin` 域：视频 / 图文 / 热榜 / 收藏，纯 HTTP、零依赖、不需要浏览器**
+
+抖音的 Web 接口现在有两道门：详情、收藏这类路径要 `x-secsdk-web-signature`，
+而分享页 SSR（`_ROUTER_DATA` → `videoInfoRes`）那条老路已经只剩空壳。这一版把签名算了出来，
+所以不装 Playwright、不跑 a_bogus 的 VM、也不用登录就能下视频和图文。
+
+- `douyin get <链接|ID>...`：视频与图文通吃，短链自动解 302；`--quality` / `--out` / `--dry` / `--force`
+- `douyin info <链接|ID>`：元数据 + 全部档位（明确标 `audio:false` 的 h265 档）
+- `douyin hot [--limit]`：热榜（免签名）
+- `douyin related <ID>`：相似推荐（免签名）
+- `douyin fav [--limit] [--keyword] [--download]`：自己的「收藏」列表，可顺手下载
+- `douyin login` / `whoami` / `logout` / `doctor`：cookie 导入（扫码已不可用，SSO 现在只用 SPA + bdms 签名）
+
+实测出来的几个关键点，都写进代码注释了：
+
+- **签名是纯函数**：`md5(uifid_timestamp_SALT_query)`，`uifid` 传随机 76 位 hex 也能过（10/10），
+  所以只要 `ttwid`（ttwid.bytedance.com 白领）+ 随机访客 id，就能签出平台认可的请求。
+- **h265 档没有音轨**：`1080_1_1` / `720_3_1` 用 ffprobe 看只有 hevc 一路流。
+  选档一律先筛 `is_h265 === 0`，`normal_1080_0` 这类才是 aac+h264 合一的单文件。
+- **图文原图在 `url_list` 最后一个**：前两个是 `tplv-dy-aweme-images:q75` 的 webp，
+  `download_url_list` 是 `tplv-dy-water-v2` 带水印版，两者都不能用。
+- **200 + 空 body 是被风控挡了**，不是「没有数据」：统一抛 `DOUYIN_BLOCKED` 并标 retryable，
+  避免把它当空列表静默少下。
+- `related` 只认固定 `count=10`（`count=12` 直接回空），所以固定 10 再本地截断。
+- 文件名是「作品 id + 标题（截 24 字、去话题与表情）」，同一 id 已存在就跳过。
+
 ## 0.31.4 — 2026-11-01
 
 **`quark` 补齐单点文件操作：`tree` / `mkdir` / `mv` / `rm` / `clean` / `tidy`**

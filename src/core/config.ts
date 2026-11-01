@@ -100,6 +100,8 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (/^[1-3]$/.test(v) ? null : '只能是 1..3') },
   { key: 'music.concurrency', description: '批量下载并发数 1..4', default: '2',
     validate: (v) => (/^[1-4]$/.test(v) ? null : '只能是 1..4') },
+  { key: 'douyin.dir', description: '抖音下载根目录（绝对路径）；留空则必须给 --out', default: '',
+    validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   { key: 'comic.dir', description: '漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先', default: '',
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   { key: 'comic.template', description: '漫画落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}',
