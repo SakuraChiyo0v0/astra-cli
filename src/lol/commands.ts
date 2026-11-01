@@ -118,8 +118,7 @@ export const lolCommands: Command[] = [
           ...(ctx.values.win === true ? { onlyWin: true } : {}),
           ...(ctx.values.loss === true ? { onlyLoss: true } : {}),
         })
-        return okResult(
-          {
+        const data = {
             count: rows.length,
             matches: rows.map((r) => ({
               gameId: Number(r.game_id),
@@ -132,14 +131,24 @@ export const lolCommands: Command[] = [
               damage: Number(r.damage_champ ?? 0),
               minutes: minutes(Number(r.duration_sec ?? 0)),
             })),
-          },
-          [],
-        )
+          }
+        const tableRows = rows.map((r) => [
+          fmtDate(r.game_creation) ?? '-',
+          String(r.champion ?? ''),
+          (r.win === true || r.win === 1 || r.win === '1' || r.win === 'true') ? '胜' : '负',
+          `${Number(r.kills ?? 0)}/${Number(r.deaths ?? 0)}/${Number(r.assists ?? 0)}`,
+          Number(r.cs ?? 0),
+          Number(r.damage_champ ?? 0),
+          minutes(Number(r.duration_sec ?? 0)),
+        ])
+        return {
+          ...okResult(data, []),
+          table: { headers: ['时间', '英雄', '结果', 'KDA', '补刀', '伤害', '分钟'], rows: tableRows },
+        }
       } finally {
         await db.conn.close()
       }
     },
-    // 表格在 run 里拼不进来（Table 只能来自 run 返回值），所以这里复用 data
   },
   {
     name: 'lol stats',
@@ -165,8 +174,7 @@ export const lolCommands: Command[] = [
           games: acc.games + r.games,
           wins: acc.wins + r.wins,
         }), { games: 0, wins: 0 })
-        return okResult(
-          {
+        const data = {
             days: days > 0 ? days : 'all',
             overall: {
               games: total.games,
@@ -174,9 +182,15 @@ export const lolCommands: Command[] = [
               winRate: total.games ? Math.round((total.wins / total.games) * 100) : 0,
             },
             buckets: rows,
+          }
+        return {
+          ...okResult(data, []),
+          table: {
+            headers: ['分组', '场次', '胜', '胜率%', 'K/D/A', '补刀', '伤害', '分钟'],
+            rows: rows.map((r) => [r.bucket, r.games, r.wins, r.winRate,
+              `${r.avgKills}/${r.avgDeaths}/${r.avgAssists}`, r.avgCs, r.avgDamage, r.avgDurationMin]),
           },
-          [],
-        )
+        }
       } finally {
         await db.conn.close()
       }
@@ -191,20 +205,21 @@ export const lolCommands: Command[] = [
       const db = await openLolDb()
       try {
         const rows = await latestRanks(db.conn)
-        return okResult(
-          {
-            count: rows.length,
-            ranks: rows.map((r) => ({
-              queue: String(r.queue),
-              tier: r.tier ? `${String(r.tier)} ${String(r.division ?? '')}`.trim() : null,
-              lp: Number(r.league_points ?? 0),
-              wins: Number(r.wins ?? 0),
-              losses: Number(r.losses ?? 0),
-              date: String(r.snap_date ?? ''),
-            })),
+        const ranks = rows.map((r) => ({
+          queue: String(r.queue),
+          tier: r.tier ? `${String(r.tier)} ${String(r.division ?? '')}`.trim() : null,
+          lp: Number(r.league_points ?? 0),
+          wins: Number(r.wins ?? 0),
+          losses: Number(r.losses ?? 0),
+          date: String(r.snap_date ?? ''),
+        }))
+        return {
+          ...okResult({ count: ranks.length, ranks }, []),
+          table: {
+            headers: ['队列', '段位', 'LP', '胜', '负', '日期'],
+            rows: ranks.map((r) => [r.queue, r.tier ?? '-', r.lp, r.wins, r.losses, r.date]),
           },
-          [],
-        )
+        }
       } finally {
         await db.conn.close()
       }
