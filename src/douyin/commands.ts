@@ -86,7 +86,11 @@ const get: Command = {
       const raw = await fetchAwemeDetail(awemeId, { cookie: loadSession()?.cookie ?? null, signal })
       const item = normalizeAweme(raw)
       if (values.dry === true) {
-        results.push({ status: 'resolved', ...itemSummary(item), picked: pickGear(item.gears, quality)?.name ?? null })
+        results.push({
+          status: 'resolved',
+          ...itemSummary(item),
+          picked: item.kind === 'video' ? pickGear(item.gears, quality)?.name ?? null : null,
+        })
         continue
       }
       const outcome = await downloadItem(item, {
@@ -142,7 +146,7 @@ const info: Command = {
     return okResult({
       ...itemSummary(item),
       gears: summarizeGears(item.gears),
-      picked: pickGear(item.gears, 'best')?.name ?? null,
+      picked: item.kind === 'video' ? pickGear(item.gears, 'best')?.name ?? null : null,
     })
   },
 }
