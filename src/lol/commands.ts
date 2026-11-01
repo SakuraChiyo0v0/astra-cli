@@ -95,7 +95,7 @@ export const lolCommands: Command[] = [
     usage: 'astra lol history [--limit 20] [--champion <英雄>] [--queue <id>] [--win|--loss]',
     notes: [
       '数据来自 `lol sync`，不是实时；PC 关着也能查。',
-      '--queue 用 LCU 的 queueId：420 单双排、440 灵活、450 大乱斗、400 匹配、2400 斗魂竞技场。',
+      '--queue 用 LCU 的 queueId：420 单双排、440 灵活排、400 匹配、2400 极地大乱斗（国服 ARAM，map 12，带强化符文）。',
     ],
     options: {
       limit: { type: 'string', description: '返回条数（默认 20，最多 200）', valueName: 'n' },
