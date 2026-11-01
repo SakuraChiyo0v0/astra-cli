@@ -284,3 +284,11 @@ export async function latestRanks(conn: Conn) {
        from ${t('lol_rank_snap')} order by snap_date desc, queue`,
   )
 }
+
+/** 英雄 id → 中文名。表空时返回空 Map（调用方回落到 id）。 */
+export async function championNameMap(conn: Conn, dialectName: string): Promise<Map<number, string>> {
+  const rows = await conn.query<{ champion_id: number; name: string }>(
+    `select champion_id, name from ${tableName(dialectName, 'lol_champion')}`,
+  )
+  return new Map(rows.map((r) => [Number(r.champion_id), String(r.name)]))
+}

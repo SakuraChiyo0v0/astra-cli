@@ -14,7 +14,7 @@ import path from 'node:path'
 import { getConfig } from '../core/config.ts'
 import { AstraError } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
-import { LCU_DUMP_PS1 } from './ps1.ts'
+import { LCU_DUMP_PS1, LCU_SGP_PLAYER_PS1 } from './ps1.ts'
 
 export interface LcuSnapshot {
   summoner: LcuSummoner
@@ -195,4 +195,99 @@ export function myParticipant(game: LcuGame): LcuParticipant | null {
     if (match) return match
   }
   return parts[0] ?? null
+}
+
+/**
+ * 查任意召唤师（`名字#TAG`）的最近对局。
+ *
+ * 走 **SGP**（Riot 的战绩服务），不是 LCU 的 match-history —— 后者对「隐藏战绩」的账号
+ * 只返回 gameCount 不给 games（实测：好友隐藏后 LCU 0 局、SGP 5 局）。
+ * Akari 的「查隐藏战绩」也是这条路。
+ *
+ * 参数走 UTF-8 JSON 文件而不是命令行：中文昵称过 ssh → PowerShell 会按 ANSI 解码。
+ */
+export interface SgpGameSummary {
+  metadata?: { match_id?: string; timestamp?: number; participants?: string[] }
+  json?: {
+    gameId?: number
+    gameCreation?: number
+    gameDuration?: number
+    queueId?: number
+    gameMode?: string
+    gameVersion?: string
+    participants?: Record<string, unknown>[]
+    teams?: { teamId?: number; win?: boolean }[]
+  }
+}
+
+export async function fetchPlayerSnapshot(name: string, count: number, options: { host?: string } = {}): Promise<{
+  puuid: string
+  region: string
+  games: SgpGameSummary[]
+  missing: number
+}> {
+  if (!name.includes('#')) {
+    throw new AstraError('LOL_BAD_NAME', '查询别人要写成「名字#TAG」', {
+      exitCode: 2,
+      hint: '例如 `astra lol player 某个名字#1234`；只给名字 LCU 会回 422 INVALID_EMPTY_REQUEST（实测）',
+    })
+  }
+  const host = options.host ?? pcHost()
+  const { dir } = remotePaths()
+  const script = `${dir}/lcu_sgp_player.ps1`
+  const work = await mkdtemp(path.join(tmpdir(), 'astra-lol-player-'))
+  try {
+    const localPs1 = path.join(work, 'lcu_sgp_player.ps1')
+    await writeFile(localPs1, LCU_SGP_PLAYER_PS1, 'utf8')
+    await pushScript(host, script, localPs1, 120_000)
+
+    const reqFile = path.join(work, 'player_req.json')
+    await writeFile(reqFile, JSON.stringify({ name, count }), 'utf8')
+    await pushScript(host, `${dir}/player_req.json`, reqFile, 120_000)
+
+    const dump = await run('ssh', [host, `powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:ASTRA_LOL_DUMP_DIR='${dir}'; & '${script}'"`], 240_000)
+    const out = `${dump.stdout}\n${dump.stderr}`
+    if (out.includes('NO_CLIENT')) {
+      throw new AstraError('LOL_CLIENT_NOT_RUNNING', 'PC 上没检测到英雄联盟客户端', {
+        exitCode: 3,
+        hint: '先把 LoL 客户端打开，再查别人',
+      })
+    }
+    if (out.includes('LOOKUP_FAIL')) {
+      const detail = out.split('LOOKUP_FAIL')[1]?.slice(0, 200) ?? ''
+      throw new AstraError('LOL_SUMMONER_NOT_FOUND', `找不到召唤师：${name}`, {
+        exitCode: 4,
+        hint: '确认「名字#TAG」写对；国服 TAG 是昵称后面那个 4-5 位数字',
+        details: { upstream: detail.trim() },
+      })
+    }
+    if (out.includes('SGP_LIST_FAIL') || out.includes('NO_ACCESS_TOKEN')) {
+      throw new AstraError('LOL_SGP_FAILED', 'SGP 战绩服务没给出列表', {
+        exitCode: 5,
+        retryable: true,
+        hint: '通常是大区取错了（region 从 /riotclient/region-locale 读）；重开客户端再试',
+        details: { stdout: dump.stdout.slice(0, 300) },
+      })
+    }
+    if (!out.includes('SGP_DONE')) {
+      throw new AstraError('LOL_SGP_FAILED', 'SGP 取数没跑完', {
+        exitCode: 5,
+        details: { stdout: dump.stdout.slice(0, 400), stderr: dump.stderr.slice(0, 300) },
+      })
+    }
+
+    const local = path.join(work, 'player_sgp.json')
+    const r = await run('scp', ['-q', `${host}:${dir}/player_sgp.json`, local], 120_000)
+    if (r.code !== 0) throw new AstraError('LOL_SCP_FAILED', '取回 player_sgp.json 失败', { exitCode: 5 })
+    const payload = parseJson<{ puuid?: string; region?: string; games?: SgpGameSummary[] }>(await readFile(local, 'utf8'), 'player_sgp.json')
+    const missingMatch = out.match(/missing=(\d+)/)
+    return {
+      puuid: payload.puuid ?? '',
+      region: payload.region ?? '',
+      games: payload.games ?? [],
+      missing: missingMatch ? Number(missingMatch[1]) : 0,
+    }
+  } finally {
+    await rm(work, { recursive: true, force: true })
+  }
 }

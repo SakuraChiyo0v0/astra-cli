@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.33.1 — 2026-11-01
+
+**`lol player <名字#TAG>`：查任意召唤师，包括「隐藏战绩」的**
+
+LCU 的 match-history 对隐藏账号只给 `gameCount` 不给 `games`（实测某好友 LCU 0 局、SGP 5 局），
+所以改成走 **SGP**（Riot 的战绩服务，Akari 的「查隐藏战绩」也是这条路）：
+
+- 用 LCU 的 `/entitlements/v1/token` 换 SGP 的 Bearer token
+- 大区从客户端命令行的 `--rso_platform_id`（HN1 / TJ100 …）取 —— `/riotclient/region-locale`
+  在国服只会回 `TENCENT`，不能直接用
+- 国服 SGP 主机是 `{大区}-k8s-sgp.lol.qq.com:21019`，不是 riotgames.com
+- `match-history-query/v1/products/lol/player/{puuid}/SUMMARY` 拿 match_id 列表，
+  `.../lol/{matchId}/SUMMARY` 拿整局 10 人数据
+
+踩坑：
+- PowerShell 脚本里**不能有中文注释**：PS 5.1 按 ANSI 读脚本，中文变乱码后能把后面整段代码吞掉
+  （表现为变量莫名是空），所以 PS 模板保持纯 ASCII，解释写在 TS 注释里
+- 命令行参数在 `CommandLine` 里是**带引号**的（`"--rso_platform_id=HN1"`），匹配前要先 `Trim('"')`
+- 老对局的文件可能已在 SGP 归档：列表给 id、取详情 404 `match file not found`，
+  这时返回里会给 `warnings` 说明有几局取不到，不要当成 0 场
+
 ## 0.33.0 — 2026-11-01
 
 **新增 `lol` 域：借 PC 上客户端的 LCU 拿国服战绩，落库后可查可统计**

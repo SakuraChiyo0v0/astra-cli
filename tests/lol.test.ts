@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { myParticipant, type LcuGame } from '../src/lol/bridge.ts'
+import { fetchPlayerSnapshot, myParticipant, type LcuGame } from '../src/lol/bridge.ts'
 import { toMatchRow, tableName } from '../src/lol/db.ts'
 import { commandGroup, groupCommands } from '../src/main.ts'
 
@@ -105,4 +105,11 @@ test('tableName：PG 走 crawl schema，其它方言裸表名', () => {
   assert.equal(tableName('postgres', 'lol_match'), 'crawl.lol_match')
   assert.equal(tableName('sqlite', 'lol_match'), 'lol_match')
   assert.equal(tableName('mysql', 'lol_match'), 'lol_match')
+})
+
+test('lol player：名字里没有 #TAG 直接报错，不去碰 PC', async () => {
+  await assert.rejects(
+    () => fetchPlayerSnapshot('只有名字', 5),
+    (err: Error & { code?: string }) => err.code === 'LOL_BAD_NAME',
+  )
 })

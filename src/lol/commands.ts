@@ -13,8 +13,8 @@ import { getConfig } from '../core/config.ts'
 import type { Command, CommandResult } from '../core/command.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { okResult } from '../core/output.ts'
-import { fetchLcuSnapshot, pcHost } from './bridge.ts'
-import { latestRanks, openLolDb, recentMatches, stats, storeSnapshot, tableName } from './db.ts'
+import { fetchLcuSnapshot, fetchPlayerSnapshot, pcHost, myParticipant } from './bridge.ts'
+import { championNameMap, latestRanks, openLolDb, recentMatches, stats, storeSnapshot, tableName } from './db.ts'
 import { fetchChampions, storeChampions } from './champions.ts'
 
 const ASTRA = '/opt/astra/bin/astra'
@@ -218,6 +218,74 @@ export const lolCommands: Command[] = [
           table: {
             headers: ['队列', '段位', 'LP', '胜', '负', '日期'],
             rows: ranks.map((r) => [r.queue, r.tier ?? '-', r.lp, r.wins, r.losses, r.date]),
+          },
+        }
+      } finally {
+        await db.conn.close()
+      }
+    },
+  },
+  {
+    name: 'lol player',
+    summary: '查任意召唤师（名字#TAG）的最近对局',
+    usage: 'astra lol player <名字#TAG> [--limit 20] [--pc <host>] [--table]',
+    notes: [
+      '必须写成「名字#TAG」：只给名字 LCU 会回 422 INVALID_EMPTY_REQUEST（实测）。',
+      '对方隐藏战绩时返回 hidden=true、games=[]，**不是没打过**，别当成 0 场。',
+      '这是实时读，不入库 —— 别人的战绩混进自己的统计会污染胜率。',
+      '需要 PC 客户端在跑（同 `lol sync`）。',
+    ],
+    options: {
+      limit: { type: 'string', description: '取多少局，默认 20（LCU 最多约 21）', valueName: 'n' },
+      pc: { type: 'string', description: 'PC 的 ssh 主机名', valueName: 'host' },
+    },
+    minArgs: 1,
+    maxArgs: 1,
+    run: async (ctx): Promise<CommandResult> => {
+      const who = ctx.positionals[0] ?? ''
+      const limit = limitOf(ctx.values.limit, 20, 50)
+      const snapshot = await fetchPlayerSnapshot(who, limit, {
+        ...(typeof ctx.values.pc === 'string' ? { host: ctx.values.pc } : {}),
+      })
+      const db = await openLolDb()
+      try {
+        const champions = await championNameMap(db.conn, db.dialect.name)
+        const matches = snapshot.games.map((summary) => {
+          const info = summary.json ?? {}
+          const parts = (info.participants ?? []) as Record<string, unknown>[]
+          const me = parts.find((p) => p.puuid === snapshot.puuid) ?? parts[0] ?? {}
+          const statsObj = (me.challenges ?? {}) as Record<string, unknown>
+          return {
+            gameId: Number(info.gameId ?? 0),
+            date: fmtDate(info.gameCreation ? new Date(Number(info.gameCreation)) : null),
+            queueId: Number(info.queueId ?? 0),
+            champion: champions.get(Number(me.championId ?? 0)) ?? String(me.championId ?? ''),
+            win: me.win === true,
+            kda: `${Number(me.kills ?? 0)}/${Number(me.deaths ?? 0)}/${Number(me.assists ?? 0)}`,
+            cs: Number(me.totalMinionsKilled ?? 0) + Number(me.neutralMinionsKilled ?? 0),
+            damage: Number(me.totalDamageDealtToChampions ?? 0),
+            minutes: minutes(Number(info.gameDuration ?? 0)),
+            position: String(me.teamPosition ?? statsObj.teamPosition ?? ''),
+          }
+        }).sort((a, b) => Number(b.gameId) - Number(a.gameId)).slice(0, limit)
+        const wins = matches.filter((m) => m.win).length
+        const data = {
+          // LCU 的 summoner 对象里没有 gameTag，显示名直接用用户传进来的「名字#TAG」
+          name: who,
+          puuid: snapshot.puuid || null,
+          region: snapshot.region,
+          source: 'sgp',
+          hidden: false,
+          games: matches.length,
+          wins,
+          winRate: matches.length ? Math.round((wins / matches.length) * 100) : 0,
+          matches,
+        }
+        return {
+          ...okResult(data, snapshot.missing > 0 ? [`有 ${snapshot.missing} 局取不到（上游 404，通常是老对局文件已归档）`] : []),
+          table: {
+            headers: ['时间', '英雄', '结果', 'KDA', '补刀', '伤害', '分钟'],
+            rows: matches.map((m) => [m.date ?? '-', m.champion, m.win ? '胜' : '负', m.kda, m.cs, m.damage, m.minutes]),
           },
         }
       } finally {
