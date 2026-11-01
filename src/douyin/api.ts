@@ -316,6 +316,61 @@ export async function fetchCollected(cursor: string | number, count: number, opt
   }
 }
 
+export interface DouyinComment {
+  cid: string
+  text: string
+  nickname: string
+  uniqueId: string | null
+  diggCount: number
+  ipLabel: string | null
+  replyCount: number
+  /** 秒级时间戳；老接口给的是 `createTime`（驼峰），不是 `create_time`。 */
+  createTime: number | null
+}
+
+/**
+ * 评论：只有**移动端老接口**这条路通。
+ *
+ * - Web 端 `/aweme/v1/web/comment/list/` 要 a_bogus，实测 200 + 空 body（带登录也一样）。
+ * - `iesdouyin.com/web/api/v2/comment/list/` 免签免登录，但**只给固定约 20 条热门**，
+ *   `cursor` / `offset` / `count` 都改不动（实测 cursor=10 给另一批 10 条，再翻就重复）。
+ *   所以别指望拿全量评论，这里只当「看看大家在说什么」。
+ * - 二级回复 `comment/list/reply/` 回 `Url doesn't match`，已下线。
+ */
+export async function fetchComments(awemeId: string, cursor = 0, options: ApiOptions = {}): Promise<DouyinComment[]> {
+  const url = `https://www.iesdouyin.com/web/api/v2/comment/list/?aweme_id=${awemeId}&cursor=${cursor}&count=20`
+  const response = await httpRequest(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      Accept: 'application/json',
+      Referer: 'https://www.iesdouyin.com/',
+    },
+    timeoutMs: 20_000,
+    ...(options.signal ? { signal: options.signal } : {}),
+  })
+  const text = await response.text()
+  if (!text.trim()) return []
+  let body: { comments?: Record<string, unknown>[]; status_code?: number }
+  try {
+    body = JSON.parse(text) as typeof body
+  } catch {
+    return []
+  }
+  return (body.comments ?? []).map((c) => {
+    const user = (c.user ?? {}) as { nickname?: string; unique_id?: string }
+    return {
+      cid: String(c.cid ?? ''),
+      text: String(c.text ?? ''),
+      nickname: user.nickname ?? '',
+      uniqueId: user.unique_id ?? null,
+      diggCount: Number(c.digg_count ?? 0),
+      ipLabel: typeof c.ip_label === 'string' ? c.ip_label : null,
+      replyCount: Number(c.reply_comment_total ?? 0),
+      createTime: c.createTime === undefined ? null : Number(c.createTime) || null,
+    }
+  })
+}
+
 /** 收藏夹（用户自己建的夹子）列表。 */
 export async function fetchCollects(options: ApiOptions = {}): Promise<{ id: string; name: string; count: number | null }[]> {
   const body = (await signedGet('/aweme/v1/web/collects/list/', [

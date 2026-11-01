@@ -9,7 +9,7 @@ import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command, CommandResult } from '../core/command.ts'
 import { okResult } from '../core/output.ts'
 import { checkWritable } from '../core/doctor.ts'
-import { fetchAwemeDetail, fetchCollected, fetchCollects, fetchFavorites, fetchHotSearch, fetchRelated, mintTtwid, resolveAwemeId, whoAmI, type RawAweme } from './api.ts'
+import { fetchAwemeDetail, fetchCollected, fetchCollects, fetchComments, fetchFavorites, fetchHotSearch, fetchRelated, mintTtwid, resolveAwemeId, whoAmI, type RawAweme } from './api.ts'
 import { clearSession, loadSession, parseCookieInput, saveSession, sessionPath } from './auth.ts'
 import { normalizeAweme, pickGear, summarizeGears, type DouyinItem, type Quality } from './model.ts'
 import { downloadItem } from './download.ts'
@@ -312,6 +312,51 @@ const collects = listCommand('collect')
 /** 老名字（0.32.0 当天写过一版），保留成隐藏别名，指向「喜欢」。 */
 const favAlias = listCommand('like', { name: 'douyin fav', hidden: true })
 
+const comments: Command = {
+  name: 'douyin comments',
+  summary: '看一条作品的评论（只拿得到热门前约 20 条，翻不到全量）',
+  usage: 'astra douyin comments <链接|ID> [--cursor 0|10] [--limit 20]',
+  notes: [
+    '**拿不到全量**：Web 评论接口要 a_bogus（带登录也回空），移动端老接口只给热门前约 10 条（多打几次可能凑到 20）',
+    '`cursor` 0/10 两批内容会重叠，按 cid 去重后通常只剩 10 条左右',
+    '每条给：昵称 / 正文 / 点赞 / IP 属地 / 子评论数（子评论正文拿不到，回复接口已下线）',
+    '只读快照，不入库；要入库得另说（1358 个作品 ×2 次请求）',
+  ],
+  options: {
+    cursor: { type: 'string', description: '0 或 10（两批不同的热门评论）', valueName: 'n' },
+    limit: { type: 'string', description: '最多返回几条，默认 20', valueName: 'n' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }): Promise<CommandResult> {
+    const awemeId = await resolveAwemeId(positionals[0]!, signal)
+    const limit = limitOf(values.limit, 20, 40)
+    const cursor = typeof values.cursor === 'string' ? Number(values.cursor) : 0
+    if (!Number.isFinite(cursor) || cursor < 0) throw invalidInput('--cursor 只能是 0 或 10')
+    const first = await fetchComments(awemeId, cursor, { signal })
+    let rows = first
+    if (rows.length < limit && cursor === 0) {
+      const second = await fetchComments(awemeId, 10, { signal })
+      const seen = new Set(rows.map((r) => r.cid))
+      rows = rows.concat(second.filter((r) => !seen.has(r.cid)))
+    }
+    rows = rows.slice(0, limit)
+    return {
+      ...okResult({
+        awemeId,
+        count: rows.length,
+        partial: true,
+        note: '只有热门前约 10–20 条，不是全量；全量评论需要 a_bogus 或浏览器',
+        comments: rows,
+      }),
+      table: {
+        headers: ['赞', '昵称', '评论', 'IP', '子评论'],
+        rows: rows.map((r) => [r.diggCount, r.nickname.slice(0, 12), r.text.replace(/\s+/g, ' ').slice(0, 44), r.ipLabel ?? '-', r.replyCount]),
+      },
+    }
+  },
+}
+
 const login: Command = {
   name: 'douyin login',
   summary: '导入浏览器 cookie（扫码登录已不可用，只能粘 cookie）',
@@ -443,4 +488,4 @@ const doctor: Command = {
   },
 }
 
-export const douyinCommands: Command[] = [get, info, hot, related, likes, collects, favAlias, login, whoami, logout, doctor]
+export const douyinCommands: Command[] = [get, info, hot, related, comments, likes, collects, favAlias, login, whoami, logout, doctor]
