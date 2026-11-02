@@ -13,7 +13,7 @@ import { getConfig } from '../core/config.ts'
 import type { Command, CommandResult } from '../core/command.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { okResult } from '../core/output.ts'
-import { fetchLcuSnapshot, fetchPlayerSnapshot, pcHost, myParticipant } from './bridge.ts'
+import { fetchLcuSnapshot, fetchPlayerRank, fetchPlayerSnapshot, pcHost, myParticipant } from './bridge.ts'
 import { championNameMap, latestRanks, openLolDb, recentMatches, stats, storeSnapshot, tableName } from './db.ts'
 import { fetchChampions, storeChampions } from './champions.ts'
 
@@ -198,10 +198,44 @@ export const lolCommands: Command[] = [
   },
   {
     name: 'lol rank',
-    summary: '看段位快照（每天一条）',
-    usage: 'astra lol rank',
-    notes: ['每次 `lol sync` 会写一条当天快照；同一天多次 sync 只保留最后一次。'],
-    run: async (): Promise<CommandResult> => {
+    summary: '看自己的段位快照；给「名字#TAG」则实时查任意召唤师的当前段位',
+    usage: 'astra lol rank [名字#TAG] [--pc <host>]',
+    notes: [
+      '不带参数：读库里自己的段位快照（每天一条，`lol sync` 时写入）。',
+      '带「名字#TAG」：实时打 LCU `/lol-ranked/v1/ranked-stats/{puuid}`，对任意 puuid 都有效（实测 2700 个全 200），需要客户端开着。',
+      '实时查到的段位**不入库** —— 别人的段位混进自己的快照会污染曲线。',
+      '一次只能查一个玩家，没有批量接口。',
+    ],
+    options: {
+      pc: { type: 'string', description: 'PC 的 ssh 主机名', valueName: 'host' },
+    },
+    minArgs: 0,
+    maxArgs: 1,
+    run: async (ctx): Promise<CommandResult> => {
+      const who = ctx.positionals[0]
+      if (who) {
+        const live = await fetchPlayerRank(who, {
+          ...(typeof ctx.values.pc === 'string' ? { host: ctx.values.pc } : {}),
+        })
+        const fmt = (e: { tier?: string; division?: string; leaguePoints?: number; wins?: number; losses?: number } | null) => {
+          if (!e?.tier) return null
+          const div = e.division && e.division !== 'NA' ? ` ${e.division}` : ''
+          return { tier: `${e.tier}${div}`, lp: Number(e.leaguePoints ?? 0), wins: Number(e.wins ?? 0), losses: Number(e.losses ?? 0) }
+        }
+        const solo = fmt(live.solo)
+        const flex = fmt(live.flex)
+        const rows: (string | number)[][] = []
+        if (solo) rows.push(['单双', solo.tier, solo.lp, solo.wins, solo.losses])
+        if (flex) rows.push(['灵活', flex.tier, flex.lp, flex.wins, flex.losses])
+        if (rows.length === 0) rows.push(['单双', '未定级', 0, 0, 0])
+        return {
+          ...okResult({ player: live.name, puuid: live.puuid, solo, flex, source: 'lcu' }, []),
+          table: {
+            headers: ['队列', '段位', 'LP', '胜', '负'],
+            rows,
+          },
+        }
+      }
       const db = await openLolDb()
       try {
         const rows = await latestRanks(db.conn)
@@ -211,7 +245,7 @@ export const lolCommands: Command[] = [
           lp: Number(r.league_points ?? 0),
           wins: Number(r.wins ?? 0),
           losses: Number(r.losses ?? 0),
-          date: String(r.snap_date ?? ''),
+          date: fmtDate(r.snap_date) ?? '',
         }))
         return {
           ...okResult({ count: ranks.length, ranks }, []),

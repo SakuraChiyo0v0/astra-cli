@@ -14,7 +14,7 @@ import path from 'node:path'
 import { getConfig } from '../core/config.ts'
 import { AstraError } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
-import { LCU_DUMP_PS1, LCU_SGP_PLAYER_PS1 } from './ps1.ts'
+import { LCU_DUMP_PS1, LCU_RANK_PS1, LCU_SGP_PLAYER_PS1 } from './ps1.ts'
 
 export interface LcuSnapshot {
   summoner: LcuSummoner
@@ -286,6 +286,84 @@ export async function fetchPlayerSnapshot(name: string, count: number, options: 
       region: payload.region ?? '',
       games: payload.games ?? [],
       missing: missingMatch ? Number(missingMatch[1]) : 0,
+    }
+  } finally {
+    await rm(work, { recursive: true, force: true })
+  }
+}
+
+
+/** 任意召唤师的当前段位（实时，不入库）。`who` 可以是「名字#TAG」，也可以直接给 puuid。 */
+export async function fetchPlayerRank(
+  who: string,
+  options: { host?: string } = {},
+): Promise<{
+  puuid: string
+  name: string
+  solo: LcuRankedEntry | null
+  flex: LcuRankedEntry | null
+  highest: LcuRankedEntry | null
+}> {
+  const isPuuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(who)
+  if (!isPuuid && !who.includes('#')) {
+    throw new AstraError('LOL_BAD_NAME', '查询要写成「名字#TAG」，或者直接给 puuid', {
+      exitCode: 2,
+      hint: '例如 `astra lol rank Aurora#58597`',
+    })
+  }
+  const host = options.host ?? pcHost()
+  const { dir } = remotePaths()
+  const script = `${dir}/lcu_rank.ps1`
+  const work = await mkdtemp(path.join(tmpdir(), 'astra-lol-rank-'))
+  try {
+    const localPs1 = path.join(work, 'lcu_rank.ps1')
+    await writeFile(localPs1, LCU_RANK_PS1, 'utf8')
+    await pushScript(host, script, localPs1, 120_000)
+
+    const reqFile = path.join(work, 'rank_req.json')
+    await writeFile(reqFile, JSON.stringify(isPuuid ? { puuid: who } : { name: who }), 'utf8')
+    await pushScript(host, `${dir}/rank_req.json`, reqFile, 120_000)
+
+    const dump = await run('ssh', [host, `powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:ASTRA_LOL_DUMP_DIR='${dir}'; & '${script}'"`], 180_000)
+    const out = `${dump.stdout}\n${dump.stderr}`
+    if (out.includes('NO_CLIENT')) {
+      throw new AstraError('LOL_CLIENT_NOT_RUNNING', 'PC 上没检测到英雄联盟客户端', {
+        exitCode: 3,
+        hint: '先把 LoL 客户端打开（或跑 `sh /opt/data/scripts/lol_launch.sh`）',
+      })
+    }
+    if (out.includes('LOOKUP_FAIL')) {
+      const detail = out.split('LOOKUP_FAIL')[1]?.slice(0, 200) ?? ''
+      throw new AstraError('LOL_SUMMONER_NOT_FOUND', `找不到召唤师：${who}`, {
+        exitCode: 4,
+        hint: '确认「名字#TAG」写对；国服 TAG 是昵称后面那个 4-5 位数字',
+        details: { upstream: detail.trim() },
+      })
+    }
+    if (out.includes('RANK_FAIL') || !out.includes('RANK_DONE')) {
+      throw new AstraError('LOL_RANK_FAILED', 'LCU 没给出段位数据', {
+        exitCode: 5,
+        retryable: true,
+        details: { stdout: dump.stdout.slice(0, 300) },
+      })
+    }
+
+    const local = path.join(work, 'rank_lookup.json')
+    const r = await run('scp', ['-q', `${host}:${dir}/rank_lookup.json`, local], 120_000)
+    if (r.code !== 0) throw new AstraError('LOL_SCP_FAILED', '取回 rank_lookup.json 失败', { exitCode: 5 })
+    const payload = parseJson<{
+      puuid?: string
+      name?: string
+      solo?: LcuRankedEntry | null
+      flex?: LcuRankedEntry | null
+      highest?: LcuRankedEntry | null
+    }>(await readFile(local, 'utf8'), 'rank_lookup.json')
+    return {
+      puuid: payload.puuid ?? '',
+      name: payload.name ?? who,
+      solo: payload.solo ?? null,
+      flex: payload.flex ?? null,
+      highest: payload.highest ?? null,
     }
   } finally {
     await rm(work, { recursive: true, force: true })

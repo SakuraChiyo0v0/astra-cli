@@ -141,3 +141,72 @@ $wrap = [pscustomobject]@{ puuid = $summoner.puuid; region = $region; games = $c
 [System.IO.File]::WriteAllText((Join-Path $outDir 'player_sgp.json'), ($wrap | ConvertTo-Json -Depth 40 -Compress), [System.Text.UTF8Encoding]::new($false))
 Write-Output "SGP_DONE"
 `
+
+/**
+ * 查「别人」的当前段位：`名字#TAG` → puuid → `/lol-ranked/v1/ranked-stats/{puuid}`。
+ *
+ * 实测（2026-11）：这个端点对**任意 puuid** 都回 200，不限好友，也没有批量接口 ——
+ * 一个玩家一个请求，所以批量打标要限速（见 /opt/data/scripts/lol_rank_scan.sh）。
+ * 返回的 `queueMap` 里 `RANKED_SOLO_5x5` / `RANKED_FLEX_SR` 各有一份，
+ * 没打过的队列直接缺键，不是 null —— 取值前要判属性存在。
+ */
+export const LCU_RANK_PS1 = String.raw`$ProgressPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Stop'
+
+$ux = Get-CimInstance Win32_Process -Filter "Name = 'LeagueClientUx.exe'"
+if (-not $ux) { Write-Output "NO_CLIENT"; exit 2 }
+$cmd = $ux.CommandLine
+$port = ([regex]::Match($cmd, '--app-port=(\d+)')).Groups[1].Value
+$tok = ([regex]::Match($cmd, '--remoting-auth-token=([\w\-]+)')).Groups[1].Value
+if (-not $port -or -not $tok) { Write-Output "NO_CREDENTIALS"; exit 2 }
+
+$outDir = $env:ASTRA_LOL_DUMP_DIR
+if (-not $outDir) { $outDir = 'C:\LocalSpace\lol-dump' }
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+$base = "https" + "://" + "127.0.0.1:" + $port
+$cred = "riot:" + $tok
+
+$req = [System.IO.File]::ReadAllText((Join-Path $outDir 'rank_req.json'), [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+$name = [string]$req.name
+$puuid = [string]$req.puuid
+
+if (-not $puuid) {
+  $sFile = Join-Path $outDir 'rank_summoner.json'
+  $code = & curl.exe -k -s -G --noproxy "*" -m 25 -o $sFile -w "%{http_code}" --user $cred --data-urlencode ("name=" + $name) ($base + '/lol-summoner/v1/summoners')
+  Write-Output ("LOOKUP http=" + $code)
+  if ($code -ne "200") {
+    $body = ''
+    if (Test-Path $sFile) { $body = [System.IO.File]::ReadAllText($sFile, [System.Text.Encoding]::UTF8) }
+    Write-Output ("LOOKUP_FAIL " + $body)
+    exit 0
+  }
+  $summoner = [System.IO.File]::ReadAllText($sFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  if (-not $summoner.puuid) { Write-Output "LOOKUP_NO_PUUID"; exit 0 }
+  $puuid = [string]$summoner.puuid
+  if (-not $name) { $name = [string]$summoner.gameName }
+}
+
+$rFile = Join-Path $outDir 'rank_stats.json'
+$rc = & curl.exe -k -s --noproxy "*" -m 25 -o $rFile -w "%{http_code}" --user $cred ($base + '/lol-ranked/v1/ranked-stats/' + $puuid)
+Write-Output ("RANK http=" + $rc)
+if ($rc -ne "200") { Write-Output "RANK_FAIL"; exit 0 }
+
+$obj = [System.IO.File]::ReadAllText($rFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+$keys = @()
+if ($obj.queueMap) { $keys = @($obj.queueMap.PSObject.Properties.Name) }
+$solo = $null
+$flex = $null
+if ($keys -contains 'RANKED_SOLO_5x5') { $solo = $obj.queueMap.RANKED_SOLO_5x5 }
+if ($keys -contains 'RANKED_FLEX_SR') { $flex = $obj.queueMap.RANKED_FLEX_SR }
+
+$wrap = [pscustomobject]@{
+  puuid = $puuid
+  name = $name
+  solo = $solo
+  flex = $flex
+  highest = $obj.highestRankedEntry
+  queues = $keys
+}
+[System.IO.File]::WriteAllText((Join-Path $outDir 'rank_lookup.json'), ($wrap | ConvertTo-Json -Depth 12 -Compress), [System.Text.UTF8Encoding]::new($false))
+Write-Output "RANK_DONE"
+`
