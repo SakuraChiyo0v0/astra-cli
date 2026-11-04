@@ -30,6 +30,7 @@ import { modelCommands } from './model/commands.ts'
 import { pixivCommands } from './pixiv/commands.ts'
 import { comicCommands } from './comic/commands.ts'
 import { quarkCommands } from './quark/commands.ts'
+import { cloudCommands } from './cloud/commands.ts'
 import { douyinCommands } from './douyin/commands.ts'
 import { lolCommands } from './lol/commands.ts'
 import { listSources } from './lx/store.ts'
@@ -368,7 +369,7 @@ const commands: Command[] = [
 
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest,
   ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands, ...modelCommands,
-  ...dbCommands, ...libCommands, ...quarkCommands,
+  ...dbCommands, ...libCommands, ...quarkCommands, ...cloudCommands,
   ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands,
 ]
 

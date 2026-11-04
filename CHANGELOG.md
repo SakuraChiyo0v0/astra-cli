@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.33.3 — 2026-11-03
+
+**新增 `astra cloud` 域：夸克 / 百度共用一套接口**
+
+抽了 `src/cloud/types.ts` 的 `CloudDrive` 接口（list/stat/mkdir/move/remove/downloadTarget + capabilities），
+两个实现：
+
+- `src/cloud/quark.ts`：薄壳，底下仍是跑通的 `quark/api.ts`，网络行为一点没改
+- `src/cloud/baidu.ts`：新写。只吃 OAuth `access_token`（30 天）；下载直链必须带
+  `User-Agent: pan.baidu.com` 且要把 token 拼回 dlink；移动/删除是异步任务（返回 taskid）
+
+命令：`cloud ls / stat / mkdir / mv / rm / get / login / logout / status`，
+统一用 `--drive quark|baidu` 切换，路径按 `/` 写。
+
+**没有动 `astra quark` 的任何子命令**——那套依赖夸克专属索引与分享转存，抽象成通用接口会磨平两边差异。
+
+百度侧实测限制：非会员限速几十 KB/s，只适合整理搬运；`errno -6/-7/-9/31066` 都做了中文解释。
+
 ## 0.33.2 — 2026-11-02
 
 **`lol rank <名字#TAG>`：实时查任意召唤师的当前段位**
