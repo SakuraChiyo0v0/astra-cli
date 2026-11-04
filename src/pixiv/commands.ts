@@ -331,14 +331,14 @@ const rank: Command = {
   options: {
     mode: { type: 'string', description: `榜种，默认 daily；可选 ${RANK_MODES.join(' / ')}（_r18 需要 cookie）`, valueName: 'm' },
     pages: { type: 'string', description: '翻几页（每页 50），默认 1', valueName: 'n' },
-    limit: { type: 'string', description: '最多返回多少条，默认 50', valueName: 'n' },
+    limit: { type: 'string', description: '最多返回多少条，默认 50；上限 500（需配合 --pages，每页 50）', valueName: 'n' },
   },
   maxArgs: 0,
   async run({ values }) {
     const mode = (typeof values.mode === 'string' ? values.mode : 'daily') as RankMode
     if (!RANK_MODES.includes(mode)) throw invalidInput(`不认识的榜种：${mode}`, `可选 ${RANK_MODES.join(' / ')}`)
     const pages = num(values.pages, 1, 1, 10, '--pages')
-    const limit = num(values.limit, 50, 1, 200, '--limit')
+    const limit = num(values.limit, 50, 1, 500, '--limit')
     let ids: number[]
     try {
       ids = (await ranking(mode, pages)).slice(0, limit)
