@@ -46,6 +46,15 @@ jobs:
       - name: 测试
         run: npm test
 
+      # version 是三处一起改的（package.json / CHANGELOG / dist 内联），漏一处很常见
+      - name: 版本一致性
+        run: |
+          v=$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")
+          echo "package.json = $v"
+          node dist/astra.mjs version | tee /tmp/v.json
+          grep -q "\"$v\"" /tmp/v.json || { echo "dist 内联版本与 package.json 不一致"; exit 1; }
+          grep -q "^## $v" CHANGELOG.md || { echo "CHANGELOG 缺少 $v 的条目"; exit 1; }
+
       # 打包产物要能真的跑起来 —— 光"编译成功"不算
       - name: 冒烟：打包产物能执行
         run: |
