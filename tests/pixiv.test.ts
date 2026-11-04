@@ -22,6 +22,7 @@ function detail(over: Partial<IllustDetail> = {}): IllustDetail {
     pageCount: 1,
     xRestrict: 0,
     sl: 2,
+    aiType: 1,
     illustType: 0,
     width: 1000,
     height: 1400,

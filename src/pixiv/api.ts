@@ -180,6 +180,8 @@ export interface IllustDetail {
   xRestrict: number
   /** 安全等级：2 = 一般，4 = 轻度，6 = 有性表现。匿名访客拿不到 >=4 的图。 */
   sl: number
+  /** 1 = 非 AI，2 = AI 生成 */
+  aiType: number
   illustType: number
   width: number
   height: number
@@ -195,6 +197,8 @@ interface RawIllust {
   pageCount?: number
   xRestrict?: number
   sl?: number
+  /** 1 = 非 AI，2 = AI 生成（作者投稿时自报，pixiv 强制标注） */
+  aiType?: number
   illustType?: number
   width?: number
   height?: number
@@ -219,6 +223,7 @@ export async function illustDetail(illustId: number): Promise<IllustDetail> {
     pageCount: body.pageCount ?? 1,
     xRestrict: body.xRestrict ?? 0,
     sl: body.sl ?? 0,
+    aiType: body.aiType ?? 0,
     illustType: body.illustType ?? 0,
     width: body.width ?? 0,
     height: body.height ?? 0,

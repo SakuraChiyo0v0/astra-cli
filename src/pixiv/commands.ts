@@ -314,6 +314,8 @@ const info: Command = {
         xRestrict: d.xRestrict,
         // sl 决定「能不能发到普通群」：>=4 就是敏感（4 轻度 / 6 有性表现）
         sl: d.sl,
+        // aiType: 1 非 AI / 2 AI 生成（pixiv 端强制自报，普通榜不含 AI 作品）
+        aiType: d.aiType,
         r18: d.xRestrict > 0,
         bookmarks: (await illustStats(id)).bookmarkCount,
         tags: d.tags,
