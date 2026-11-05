@@ -9,6 +9,7 @@ import { invalidInput } from '../core/errors.ts'
 import { okResult } from '../core/output.ts'
 import { listFeeds, mapLink, searchLinks, getLinkTree, fetchSession } from './api.ts'
 import { clearCredential, loadCredential, saveCredential } from './auth.ts'
+import { openHeyboxDb, readPost, savePost, searchPosts } from './db.ts'
 
 function num(value: unknown, fallback: number, min: number, max: number, name: string): number {
   if (value === undefined) return fallback
@@ -191,6 +192,7 @@ const post: Command = {
   notes: ['需要 `heybox login` 保存过 cookie；匿名调用会被人机验证拦下。', '请求间自动限速 5 秒。'],
   options: {
     comments: { type: 'string', description: '带多少条评论，默认 10，0 表示只看正文', valueName: 'n' },
+    refresh: { type: 'boolean', description: '强制重新请求接口（默认库里有时直接读库）' },
     raw: { type: 'boolean', description: '附上原始 link/comments 结构（调试字段映射用）' },
   },
   minArgs: 1,
@@ -200,6 +202,15 @@ const post: Command = {
     if (!cred) throw invalidInput('没有登录态', '先跑 astra heybox login <cookie>')
     const linkId = requireLinkId(positionals[0])
     const limit = num(values.comments, 10, 0, 50, '--comments')
+    const refresh = values.refresh === true
+    const db = await openHeyboxDb()
+
+    // 先读库：详情接口 5 分钟一次，同一篇不该重复请求
+    if (!refresh) {
+      const cached = await readPost(db, linkId)
+      if (cached) return renderPost(cached.post, cached.comments.slice(0, limit), 'cache')
+    }
+
     await throttle()
     const { link, comments } = await getLinkTree(linkId, { limit: Math.max(limit, 1), credential: cred })
     if (!link) throw invalidInput('没拿到帖子', '链接 id 可能不存在，或登录态已失效')
@@ -208,37 +219,78 @@ const post: Command = {
     const text = rich.text || cleanText(String(link.description ?? ''))
     const images = [...rich.images, ...((link.imgs as string[] | undefined) ?? [])]
     const picked = flattenComments(comments).slice(0, limit).map(mapComment)
-    const data = {
+    const row = {
       linkId,
       title: cleanText(String(link.title ?? '')),
       author: String((link.user as Record<string, unknown> | undefined)?.username ?? ''),
+      authorId: link.userid ? Number(link.userid) : null,
       topic: (link.topics as Array<{ name?: string }> | undefined)?.[0]?.name ?? null,
-      text,
+      body: text,
       images,
       up: Number(link.up ?? 0),
       comments: Number(link.comment_num ?? 0),
-      createdAt: link.create_at ? new Date(Number(link.create_at) * 1000).toISOString().slice(0, 16).replace('T', ' ') : null,
-      url: `https://www.xiaoheihe.cn/app/bbs/link/${linkId}`,
-      commentPreview: picked,
+      createdAt: link.create_at
+        ? new Date(Number(link.create_at) * 1000).toISOString().slice(0, 16).replace('T', ' ')
+        : null,
+      fetchedAt: new Date().toISOString(),
     }
-    if (values.raw) {
-      return okResult({ ...data, raw: { link, comments: comments.slice(0, 2) } })
-    }
-    return {
-      ...okResult(data),
-      table: {
-        headers: ['项', '值'],
-        rows: [
-          ['标题', data.title.slice(0, 40)],
-          ['作者', data.author || '-'],
-          ['话题', data.topic ?? '-'],
-          ['赞/评论', `${data.up} / ${data.comments}`],
-          ['图片', String(images.length)],
-          ['时间', data.createdAt ?? '-'],
-        ],
-      },
-    }
+    const flat = flattenComments(comments)
+    const rows = flat
+      .filter((c) => c.commentid)
+      .map((c) => ({
+        commentId: String(c.commentid),
+        userId: c.userid ? Number(c.userid) : null,
+        text: cleanText(String(c.text ?? '')),
+        images: Array.isArray(c.imgs) ? c.imgs.length : 0,
+        createdAt: c.create_at
+          ? new Date(Number(c.create_at) * 1000).toISOString().slice(0, 16).replace('T', ' ')
+          : null,
+      }))
+    await savePost(db, row, rows, { link, comments })
+    return renderPost(row, rows.slice(0, limit), 'network')
   },
+}
+
+/** 统一的输出：库里读出来的和刚抓的都是这张表。 */
+function renderPost(
+  post: { linkId: string; title: string; author: string; topic: string | null; body: string; images: string[]; up: number; comments: number; createdAt: string | null },
+  comments: Array<{ commentId?: string; userId: number | null; text: string; images: number; createdAt: string | null }>,
+  source: 'cache' | 'network',
+) {
+  const data = {
+    linkId: post.linkId,
+    title: post.title,
+    author: post.author,
+    topic: post.topic,
+    text: post.body,
+    images: post.images,
+    up: post.up,
+    comments: post.comments,
+    createdAt: post.createdAt,
+    url: `https://www.xiaoheihe.cn/app/bbs/link/${post.linkId}`,
+    source,
+    commentPreview: comments.map((c) => ({
+      userId: c.userId,
+      text: c.text,
+      images: c.images,
+      at: c.createdAt,
+    })),
+  }
+  return {
+    ...okResult(data),
+    table: {
+      headers: ['项', '值'],
+      rows: [
+        ['标题', data.title.slice(0, 40)],
+        ['作者', data.author || '-'],
+        ['话题', data.topic ?? '-'],
+        ['赞/评论', `${data.up} / ${data.comments}`],
+        ['图片', String(data.images.length)],
+        ['时间', data.createdAt ?? '-'],
+        ['来源', source === 'cache' ? '本地库（未请求接口）' : '刚从小黑盒抓取并入库'],
+      ],
+    },
+  }
 }
 
 const comments: Command = {
@@ -340,4 +392,36 @@ function cleanText(input: string): string {
     .trim()
 }
 
-export const heyboxCommands: Command[] = [feed, search, login, status, logout, post, comments]
+const find: Command = {
+  name: 'heybox find',
+  summary: '在本地小黑盒库里搜已存过的帖子（不请求接口）',
+  usage: 'astra heybox find <关键词> [--limit 10]',
+  notes: ['只搜 `crawl.heybox_post`：标题 / 正文 / 作者模糊匹配。', '想拉新帖子用 `heybox post <链接>`，它会入库。'],
+  options: {
+    limit: { type: 'string', description: '最多几条，默认 10，上限 50', valueName: 'n' },
+  },
+  minArgs: 1,
+  maxArgs: 10,
+  async run({ positionals, values }) {
+    const keyword = positionals.join(' ').trim()
+    if (!keyword) throw invalidInput('要给关键词', '例：astra heybox find 法环')
+    const limit = num(values.limit, 10, 1, 50, '--limit')
+    const db = await openHeyboxDb()
+    const items = await searchPosts(db, keyword, limit)
+    return {
+      ...okResult({ keyword, count: items.length, items }),
+      table: {
+        headers: ['linkId', '标题', '作者', '评论', '时间'],
+        rows: items.map((i) => [
+          i.linkId,
+          i.title.slice(0, 34),
+          i.author || '-',
+          String(i.comments),
+          i.createdAt ?? '-',
+        ]),
+      },
+    }
+  },
+}
+
+export const heyboxCommands: Command[] = [feed, search, login, status, logout, post, comments, find]

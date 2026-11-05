@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.35.0 — 2026-11-05
+
+**`astra heybox` 落库：帖子只抓一次，之后都读本地库**
+
+- 新表 `crawl.heybox_post` / `crawl.heybox_comment`（习惯字段拆列 + raw 兜底，沿用 lol/douyin 的思路）
+- `heybox post <链接>` **默认先查库**，命中直接返回（`source=cache`），不再请求接口；
+  要强制刷新用 `--refresh`
+- `heybox find <关键词>`：本地模糊搜已存帖子（标题/正文/作者），完全不碰网络
+
+动机：详情接口 5 分钟一次、撞码会被锁，而用户的真实用法是「发一条链接，看一下内容」——
+存下来以后同一个问题不用再冒险请求。
+
 ## 0.34.2 — 2026-11-05
 
 **`heybox post/comments` 修正评论结构 + 验证码冷却**
