@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process'
 import type { Command } from '../core/command.ts'
 import { invalidInput } from '../core/errors.ts'
 import { addDevice, loadStore, removeDevice, saveStore } from './store.ts'
+import { remoteLine, run, sshBase, sshOnline } from './remote.ts'
 import type { Device } from './types.ts'
 
 function str(value: unknown): string {
@@ -40,7 +41,10 @@ const add: Command = {
     user: { type: 'string', description: 'ssh 用户', valueName: 'u' },
     caps: { type: 'string', description: '能力标签，逗号分隔，默认 ffmpeg', valueName: 'a,b' },
     tmp: { type: 'string', description: '设备上的临时目录', valueName: 'dir' },
+    os: { type: 'string', description: 'linux / windows（决定引号规则）', valueName: 'os' },
+    ffmpeg: { type: 'string', description: 'ffmpeg 可执行文件路径', valueName: 'path' },
     probe: { type: 'string', description: '自定义探活命令（ssh 上执行）', valueName: 'cmd' },
+    busy: { type: 'string', description: '忙判定命令，输出含 BUSY 表示在忙', valueName: 'cmd' },
     map: { type: 'string', description: '路径映射 from=to，可重复', valueName: 'from=to' },
     note: { type: 'string', description: '备注', valueName: 'text' },
     force: { type: 'boolean', description: '覆盖同名设备' },
@@ -77,7 +81,10 @@ const add: Command = {
       ...(str(values.user) ? { user: str(values.user) } : {}),
       caps: capsOf(str(values.caps) || 'ffmpeg'),
       ...(str(values.tmp) ? { tmpDir: str(values.tmp) } : {}),
+      ...(str(values.os) ? { os: str(values.os).toLowerCase() as Device['os'] } : {}),
+      ...(str(values.ffmpeg) ? { ffmpegPath: str(values.ffmpeg) } : {}),
       ...(str(values.probe) ? { probe: str(values.probe) } : {}),
+      ...(str(values.busy) ? { busyCmd: str(values.busy) } : {}),
       ...(pathMap.length > 0 ? { pathMap } : {}),
       ...(str(values.note) ? { note: str(values.note) } : {}),
       addedAt: new Date().toISOString(),
@@ -137,31 +144,6 @@ const remove: Command = {
 }
 
 /** 跑一条命令，返回 { code, out, err, ms }；不抛异常。 */
-function runCmd(argv: string[], timeoutMs = 60_000): Promise<{ code: number; out: string; err: string; ms: number }> {
-  return new Promise((resolve) => {
-    const started = Date.now()
-    const child = spawn(argv[0]!, argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] })
-    let out = ''
-    let err = ''
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
-    child.stdout.on('data', (b) => { out += String(b) })
-    child.stderr.on('data', (b) => { err += String(b) })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      resolve({ code: code ?? -1, out, err, ms: Date.now() - started })
-    })
-    child.on('error', (exc) => {
-      clearTimeout(timer)
-      resolve({ code: -1, out, err: String(exc), ms: Date.now() - started })
-    })
-  })
-}
-
-function sshBase(device: Device): string[] {
-  const target = device.user ? `${device.user}@${device.host}` : String(device.host)
-  return ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', target]
-}
-
 const check: Command = {
   name: 'device check',
   summary: '探活 + 编码基准（6 秒 720p x264），写回实测倍率',
@@ -188,9 +170,7 @@ const check: Command = {
 
       let online = true
       if (device.kind === 'ssh') {
-        const probe = device.probe || 'true'
-        const r = await runCmd([...sshBase(device), probe], 20_000)
-        online = r.code === 0
+        online = await sshOnline(device)
       }
       if (!online) {
         results.push({ name, ok: false, online: false })
@@ -204,8 +184,8 @@ const check: Command = {
         '-f', 'lavfi', '-i', 'testsrc=duration=6:size=1280x720:rate=30',
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-f', 'null', '-',
       ]
-      const cmd = device.kind === 'ssh' ? [...sshBase(device), ff.map((a) => `'${a}'`).join(' ')] : ff
-      const r = await runCmd(cmd, 120_000)
+      const cmd = device.kind === 'ssh' ? ['ssh', ...sshBase(device), remoteLine(device, ff)] : ff
+      const r = await run(cmd, 120_000)
       if (r.code !== 0) {
         results.push({ name, ok: false, online: true, error: (r.err || r.out).slice(0, 200) })
         rows.push([name, '✓', '—', 'ffmpeg 不可用'])

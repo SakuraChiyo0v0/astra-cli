@@ -22,10 +22,16 @@ export interface Device {
   caps: string[]
   /** 设备上的临时目录（ssh 用） */
   tmpDir?: string
+  /** 设备系统，决定命令引号规则；缺省按 linux（POSIX）处理 */
+  os?: 'linux' | 'windows'
+  /** ffmpeg 可执行文件路径（Windows 上通常不在 PATH） */
+  ffmpegPath?: string
   /** 路径映射，便于把 NAS 路径翻成设备路径 */
   pathMap?: DevicePathMap[]
   /** 自定义探活命令；缺省 ssh 用 `true`，local 恒在线 */
   probe?: string
+  /** 忙判定命令：输出含 BUSY 视为在忙，不接活（如 pc_busy.sh） */
+  busyCmd?: string
   /** 最近一次实测的编码速度（实时倍率），由 `device check` 写入 */
   speed?: number
   note?: string

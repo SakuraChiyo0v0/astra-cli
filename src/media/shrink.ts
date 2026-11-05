@@ -9,6 +9,7 @@ import { mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { loadStore, mapPath, pickDevice } from '../device/store.ts'
+import { remoteLine, run, sshBase, sshOnline } from '../device/remote.ts'
 import type { Device } from '../device/types.ts'
 import { mediaInfo, type MediaInfo } from './tools.ts'
 
@@ -34,42 +35,9 @@ interface ShrinkResult {
   info: MediaInfo
 }
 
-function run(argv: string[], timeoutMs = 900_000): Promise<{ code: number; out: string; err: string; ms: number }> {
-  return new Promise((resolve) => {
-    const started = Date.now()
-    const child = spawn(argv[0]!, argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] })
-    let out = ''
-    let err = ''
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
-    child.stdout.on('data', (b) => { out += String(b) })
-    child.stderr.on('data', (b) => { err += String(b) })
-    const finish = (code: number) => {
-      clearTimeout(timer)
-      resolve({ code, out, err, ms: Date.now() - started })
-    }
-    child.on('close', (code) => finish(code ?? -1))
-    child.on('error', (exc) => {
-      clearTimeout(timer)
-      resolve({ code: -1, out, err: String(exc), ms: Date.now() - started })
-    })
-  })
-}
-
-function sshTarget(device: Device): string {
-  return device.user ? `${device.user}@${device.host}` : String(device.host)
-}
-
-function sshArgs(device: Device, timeoutConnect = 8): string[] {
-  return ['-o', 'BatchMode=yes', '-o', `ConnectTimeout=${timeoutConnect}`, sshTarget(device)]
-}
-
-function shellQuote(arg: string): string {
-  return `'${arg.replace(/'/g, `'\\''`)}'`
-}
-
 /** 算一档码率：目标体积留 8% 余量，扣掉音轨。 */
 export function bitrateForTarget(targetMb: number, durationSec: number, audioKbps = 96): number {
-  if (!(durationSec > 0)) return 1500          // 时长不明时给个保守默认，别算出天文数字
+  if (!(durationSec > 0)) return 1500
   const budgetKbps = (targetMb * 8 * 1024) / durationSec
   const kbps = Math.floor(budgetKbps * 0.92 - audioKbps)
   return Math.min(20000, Math.max(120, kbps))
@@ -99,27 +67,28 @@ async function runLocal(input: string, output: string, height: number, bitrate: 
 }
 
 async function runRemote(device: Device, input: string, output: string, height: number, bitrate: number) {
-  const tmp = device.tmpDir ?? '/tmp'
+  const tmp = (device.tmpDir ?? '/tmp').replace(/\/+$/, '')
   const stamp = `${Date.now()}`
-  const remoteIn = mapPath(device, `${tmp}/astra-in-${stamp}${path.extname(input)}`)
-  const remoteOut = mapPath(device, `${tmp}/astra-out-${stamp}.mp4`)
+  const remoteIn = `${tmp}/astra-in-${stamp}${path.extname(input)}`
+  const remoteOut = `${tmp}/astra-out-${stamp}.mp4`
 
-  // 1) 传过去
-  const up = await run(['scp', input, `${sshTarget(device)}:${remoteIn}`], 600_000)
-  if (up.code !== 0) throw new AstraError('DEVICE_TRANSFER_FAILED', `上传到 ${device.name} 失败：${up.err.trim().slice(0, 200)}`, { exitCode: 5 })
-
-  // 2) 远端跑 ffmpeg（POSIX shell 引用；Windows 上需要设备装 bash 或改为 PowerShell 包装）
-  const remoteCmd = ['ffmpeg', ...ffmpegArgs(remoteIn, remoteOut, height, bitrate)].map(shellQuote).join(' ')
-  const enc = await run(['ssh', ...sshArgs(device), remoteCmd], 900_000)
-  if (enc.code !== 0) {
-    await run(['ssh', ...sshArgs(device), ['rm', '-f', shellQuote(remoteIn)].join(' ')], 30_000)
-    throw new AstraError('FFMPEG_FAILED', `${device.name} 转码失败：${enc.err.trim().slice(0, 300)}`, { exitCode: 5 })
+  const up = await run(['scp', input, `${device.user ? `${device.user}@` : ''}${device.host}:${remoteIn}`], 600_000)
+  if (up.code !== 0) {
+    throw new AstraError('DEVICE_TRANSFER_FAILED', `上传到 ${device.name} 失败：${up.err.trim().slice(0, 200)}`, { exitCode: 5 })
   }
 
-  // 3) 取回来
-  const down = await run(['scp', `${sshTarget(device)}:${remoteOut}`, output], 600_000)
-  await run(['ssh', ...sshArgs(device), ['rm', '-f', shellQuote(remoteIn), shellQuote(remoteOut)].join(' ')], 30_000)
-  if (down.code !== 0) throw new AstraError('DEVICE_TRANSFER_FAILED', `从 ${device.name} 取回失败：${down.err.trim().slice(0, 200)}`, { exitCode: 5 })
+  const cmd = remoteLine(device, ['ffmpeg', ...ffmpegArgs(remoteIn, remoteOut, height, bitrate)])
+  const enc = await run(['ssh', ...sshBase(device), cmd], 900_000)
+  if (enc.code !== 0) {
+    await run(['ssh', ...sshBase(device), remoteLine(device, ['cmd', '/c', 'del', '/q', remoteIn])], 30_000)
+    throw new AstraError('FFMPEG_FAILED', `${device.name} 转码失败：${(enc.err || enc.out).trim().slice(0, 300)}`, { exitCode: 5 })
+  }
+
+  const down = await run(['scp', `${device.user ? `${device.user}@` : ''}${device.host}:${remoteOut}`, output], 600_000)
+  await run(['ssh', ...sshBase(device), remoteLine(device, ['cmd', '/c', 'del', '/q', remoteIn, remoteOut])], 30_000)
+  if (down.code !== 0) {
+    throw new AstraError('DEVICE_TRANSFER_FAILED', `从 ${device.name} 取回失败：${down.err.trim().slice(0, 200)}`, { exitCode: 5 })
+  }
 }
 
 export async function shrink(options: ShrinkOptions, signal?: AbortSignal): Promise<ShrinkResult> {
@@ -142,13 +111,16 @@ export async function shrink(options: ShrinkOptions, signal?: AbortSignal): Prom
     if (!device) throw invalidInput(`没有这个设备：${wanted}`, `已登记：${Object.keys(store.devices).join(', ')}`)
   } else {
     const online: Record<string, boolean> = {}
+    const busy: Record<string, boolean> = {}
     for (const d of Object.values(store.devices)) {
       if (d.kind === 'local') { online[d.name] = true; continue }
-      const probe = d.probe || 'true'
-      const r = await run(['ssh', ...sshArgs(d, 5), probe], 15_000)
-      online[d.name] = r.code === 0
+      online[d.name] = await sshOnline(d)
+      if (online[d.name] && d.busyCmd) {
+        const r = await run(['ssh', ...sshBase(d), d.busyCmd], 20_000)
+        busy[d.name] = /\bBUSY\b/.test(r.out)
+      }
     }
-    device = pickDevice(store, { requires: ['ffmpeg'], online }) ?? store.devices.nas ?? null
+    device = pickDevice(store, { requires: ['ffmpeg'], online, busy }) ?? store.devices.nas ?? null
   }
 
   const targetBytes = targetMb * 1024 * 1024
