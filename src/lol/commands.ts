@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 /**
  * `astra lol ...` — 英雄联盟战绩（数据源：PC 上客户端的 LCU）。
  *
@@ -48,7 +49,43 @@ function minutes(sec: number | null | undefined): number {
   return sec ? Math.round(sec / 60) : 0
 }
 
+
+const save: Command = {
+  name: 'lol save',
+  summary: '按 gameId 把指定对局抓进库（客户端在线时从 SGP 补）',
+  usage: 'astra lol save <gameId> [更多 gameId]',
+  notes: [
+    '用于「刚才那把」这类还没被爬虫覆盖的对局；先 `lol player 名字#TAG` 拿 gameId。',
+    'gameId 可带 HN1_ 前缀；不带默认 HN1。',
+    '需要 PC 上 LoL 客户端在线（借它的 token），客户端没开时会失败。',
+    '入库后可直接用 social_sql / `lol history` 查；同 id 重复执行不会写重。',
+  ],
+  minArgs: 1,
+  maxArgs: 10,
+  async run({ positionals }) {
+    const ids = positionals.map((x) => x.trim()).filter(Boolean)
+    if (ids.length === 0) throw invalidInput('缺少 gameId', '例：astra lol save 11441752865')
+    const script = '/opt/data/scripts/lol_save_match.sh'
+    const result = await new Promise<{ code: number; out: string }>((resolve) => {
+      const child = spawn('sh', [script, ...ids], { stdio: ['ignore', 'pipe', 'pipe'] })
+      let out = ''
+      child.stdout.on('data', (b) => { out += String(b) })
+      child.stderr.on('data', () => {})
+      child.on('close', (code) => resolve({ code: code ?? -1, out }))
+      child.on('error', () => resolve({ code: -1, out: '' }))
+    })
+    const line = result.out.trim().split('\n').filter(Boolean).pop() ?? ''
+    let parsed: Record<string, unknown> = {}
+    try { parsed = JSON.parse(line) as Record<string, unknown> } catch { parsed = { ok: false, raw: line.slice(0, 200) } }
+    if (parsed.ok !== true) {
+      throw new AstraError('LOL_SAVE_FAILED', `入库失败：${String(parsed.error ?? line).slice(0, 200)}`, { exitCode: 5 })
+    }
+    return { data: { requested: ids, saved: parsed.saved ?? 0, ids: parsed.ids ?? '', ingest: parsed.ingest ?? '' } }
+  },
+}
+
 export const lolCommands: Command[] = [
+  save,
   {
     name: 'lol sync',
     summary: '从 PC 客户端（LCU）拉最近约 20 局战绩并入库',
