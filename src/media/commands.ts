@@ -7,6 +7,7 @@
 import path from 'node:path'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command } from '../core/command.ts'
+import { shrink } from './shrink.ts'
 import { cut, extractAudio, mediaInfo, parseTime, thumbnail, transcode } from './tools.ts'
 import { concat, watermark, pickFont, type WatermarkPosition } from './compose.ts'
 
@@ -235,4 +236,39 @@ const watermarkCmd: Command = {
   },
 }
 
-export const mediaCommands: Command[] = [info, audio, cutCmd, transcodeCmd, thumb, concatCmd, watermarkCmd]
+
+const shrinkCmd: Command = {
+  name: 'media shrink',
+  summary: '按目标体积压缩视频（默认 28MB，够飞书单条上限），可指定设备',
+  usage: 'astra media shrink <文件> [--target-mb 28] [--out 路径] [--device auto|名字] [--max-height 1080]',
+  notes: [
+    '按目标体积自动挑码率；一档压不下就降高度（1080→720→480）。',
+    '--device auto：能力匹配 + 在线 + 实测倍率，PC 优先；远端失败自动回本机。',
+    '本地默认 veryfast + 码率上限，适合“发出去能看”而不是收藏级画质。',
+  ],
+  options: {
+    'target-mb': { type: 'string', description: '目标体积 MB，默认 28', valueName: 'mb' },
+    out: { type: 'string', description: '输出路径，默认 <原名>.small.mp4', valueName: 'path' },
+    device: { type: 'string', description: 'auto（默认）/ 设备名', valueName: 'name' },
+    'max-height': { type: 'string', description: '起始高度，默认 1080', valueName: 'px' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values, signal }) {
+    const targetMb = values['target-mb'] === undefined ? 28 : Number(values['target-mb'])
+    if (!Number.isFinite(targetMb)) throw invalidInput('--target-mb 要是数字')
+    const maxHeight = values['max-height'] === undefined ? 1080 : Number(values['max-height'])
+    if (!Number.isInteger(maxHeight) || maxHeight < 240 || maxHeight > 2160) throw invalidInput('--max-height 240..2160')
+    const result = await shrink({
+      input: positionals[0]!,
+      ...(typeof values.out === 'string' ? { output: values.out } : {}),
+      targetMb,
+      ...(typeof values.device === 'string' ? { device: values.device } : {}),
+      maxHeight,
+    }, signal)
+    return { data: result }
+  },
+}
+
+export const mediaCommands: Command[] = [
+  shrinkCmd,info, audio, cutCmd, transcodeCmd, thumb, concatCmd, watermarkCmd]

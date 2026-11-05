@@ -1,3 +1,19 @@
+## 0.38.0
+
+### 新增 `astra device`：设备清单 + 探活基准
+
+- `device add/list/remove/check`，配置存 `<ASTRA_HOME>/devices.json`（600），首次自动登记本机 `nas`。
+- `device check` 真跑 6 秒 720p x264 基准，把「实时倍率」写回配置，供任务侧排序。
+- 能力标签（`ffmpeg`/`gpu`）决定谁能接哪类活；密码不落盘，走系统 ssh。
+
+### 新增 `astra media shrink`：按目标体积压视频
+
+- `media shrink <文件> --target-mb 28 --device auto`：按时长算码率，超了自动降高度（1080→720→480）。
+- `--device auto` = 能力匹配 → 在线 → 不忙 → 实测倍率排序；远端失败自动回落本机。
+- 典型用途：飞书单条 30MB 上限，发视频前先压到 28MB。
+
+为什么：转码是重活，NAS 的 R2514 只有 1.4× 实时；PC 空闲时应该用 PC，不在线再降级本机，
+而不是把机器写死在代码里。
 ## 0.37.0
 
 ### 新增 `astra llm`：一个可配置的 OpenAI 兼容端点
