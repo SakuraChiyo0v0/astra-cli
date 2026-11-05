@@ -191,6 +191,7 @@ const post: Command = {
   notes: ['需要 `heybox login` 保存过 cookie；匿名调用会被人机验证拦下。', '请求间自动限速 5 秒。'],
   options: {
     comments: { type: 'string', description: '带多少条评论，默认 10，0 表示只看正文', valueName: 'n' },
+    raw: { type: 'boolean', description: '附上原始 link/comments 结构（调试字段映射用）' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -203,14 +204,10 @@ const post: Command = {
     const { link, comments } = await getLinkTree(linkId, { limit: Math.max(limit, 1), credential: cred })
     if (!link) throw invalidInput('没拿到帖子', '链接 id 可能不存在，或登录态已失效')
 
-    const text = cleanText(String(link.text ?? link.description ?? ''))
-    const images = (link.imgs as string[] | undefined) ?? []
-    const picked = comments.slice(0, limit).map((c) => ({
-      user: String((c.user as Record<string, unknown> | undefined)?.username ?? ''),
-      text: cleanText(String(c.text ?? '')),
-      up: Number((c.up as number | undefined) ?? 0),
-      floor: Number((c.floor as number | undefined) ?? 0),
-    }))
+    const rich = parseRichText(link.text)
+    const text = rich.text || cleanText(String(link.description ?? ''))
+    const images = [...rich.images, ...((link.imgs as string[] | undefined) ?? [])]
+    const picked = flattenComments(comments).slice(0, limit).map(mapComment)
     const data = {
       linkId,
       title: cleanText(String(link.title ?? '')),
@@ -223,6 +220,9 @@ const post: Command = {
       createdAt: link.create_at ? new Date(Number(link.create_at) * 1000).toISOString().slice(0, 16).replace('T', ' ') : null,
       url: `https://www.xiaoheihe.cn/app/bbs/link/${linkId}`,
       commentPreview: picked,
+    }
+    if (values.raw) {
+      return okResult({ ...data, raw: { link, comments: comments.slice(0, 2) } })
     }
     return {
       ...okResult(data),
@@ -260,20 +260,67 @@ const comments: Command = {
     const page = num(values.page, 1, 1, 200, '--page')
     await throttle()
     const { comments: raw } = await getLinkTree(linkId, { page, limit, credential: cred })
-    const items = raw.map((c) => ({
-      user: String((c.user as Record<string, unknown> | undefined)?.username ?? ''),
-      text: cleanText(String(c.text ?? '')),
-      up: Number((c.up as number | undefined) ?? 0),
-      floor: Number((c.floor as number | undefined) ?? 0),
-    }))
+    const items = flattenComments(raw).map(mapComment)
     return {
       ...okResult({ linkId, page, count: items.length, items }),
       table: {
-        headers: ['#', '用户', '内容', '赞'],
-        rows: items.map((i, idx) => [String(idx + 1), i.user.slice(0, 14), i.text.slice(0, 46), String(i.up)]),
+        headers: ['#', '用户id', '内容', '图', '时间'],
+        rows: items.map((i, idx) => [
+          String(idx + 1),
+          String(i.userId ?? '-'),
+          i.text.slice(0, 44),
+          String(i.images),
+          String(i.at ?? '-'),
+        ]),
       },
     }
   },
+}
+
+/** 正文 `text` 是一段 JSON 字符串：富文本块数组，text 块拼正文、img 块取 url。 */
+function parseRichText(raw: unknown): { text: string; images: string[] } {
+  if (typeof raw !== 'string' || !raw.trim().startsWith('[')) {
+    return { text: cleanText(String(raw ?? '')), images: [] }
+  }
+  try {
+    const blocks = JSON.parse(raw) as Array<Record<string, unknown>>
+    const text = blocks
+      .filter((b) => (b.type ?? 'text') === 'text')
+      .map((b) => String(b.text ?? ''))
+      .join('\n')
+    const images = blocks
+      .filter((b) => b.type === 'img' && typeof b.url === 'string')
+      .map((b) => String(b.url))
+    return { text: cleanText(text), images }
+  } catch {
+    return { text: cleanText(raw), images: [] }
+  }
+}
+
+/**
+ * 评论的真实结构是「一层 wrapper」：
+ * `{ comment: [ {commentid,userid,text,imgs,create_at}, ... ] }`，第一个是主楼、后面是楼中楼。
+ * 且**只有 userid，没有昵称**——补昵称要再打一次用户接口，撞验证码不值得，先只用 id。
+ */
+function flattenComments(raw: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  for (const item of raw) {
+    const inner = item.comment
+    if (Array.isArray(inner)) out.push(...(inner as Array<Record<string, unknown>>))
+    else if (item.commentid) out.push(item)
+  }
+  return out
+}
+
+function mapComment(c: Record<string, unknown>): { userId: number | null; text: string; images: number; at: string | null; reply: boolean } {
+  const at = c.create_at ? new Date(Number(c.create_at) * 1000).toISOString().slice(0, 16).replace('T', ' ') : null
+  return {
+    userId: c.userid ? Number(c.userid) : null,
+    text: cleanText(String(c.text ?? c.content ?? '')),
+    images: Array.isArray(c.imgs) ? c.imgs.length : 0,
+    at,
+    reply: Boolean(c.is_link_owner) || Boolean(c.reply_id && Number(c.reply_id) > 0),
+  }
 }
 
 function requireLinkId(raw: string | undefined): string {

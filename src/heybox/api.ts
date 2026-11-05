@@ -7,10 +7,18 @@
  *
  * 所以这一层只做两条只读命令，别急着铺写接口：写接口要账号全权 + 验证码熔断。
  */
+import { readFileSync, writeFileSync } from 'node:fs'
 import { signPath } from './sign.ts'
 import { AstraError } from '../core/errors.ts'
+import { homePath } from '../core/paths.ts'
 
 const API_ORIGIN = 'https://api.xiaoheihe.cn'
+/**
+ * 验证码冷却：小黑盒对**同一 cookie 的详情类接口**限得很死（实测连续两次就 show_captcha，
+ * 冷却约 5 分钟）。命中后把到期时间落盘，冷却期内的调用直接失败，不再去撞接口——
+ * 越撞冷却越长。
+ */
+const COOLDOWN_FILE = 'heybox-cooldown.json'
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 
@@ -46,6 +54,8 @@ export async function heyboxGet<T = Record<string, unknown>>(
     insertHSrc?: boolean
   } = {},
 ): Promise<T> {
+  assertNotCooling(options.credential)
+
   const signed = signPath(path)
   const params = new URLSearchParams({
     ...baseParams(
@@ -102,9 +112,11 @@ export async function heyboxGet<T = Record<string, unknown>>(
 
   const status = String(data.status ?? '')
   if (status === 'show_captcha') {
-    throw new AstraError('CAPTCHA_REQUIRED', '小黑盒要求人机验证（这个接口通常需要登录态）', {
-      hint: '等 5 分钟再试，或先在浏览器打开 https://www.xiaoheihe.cn 手动过验证',
+    markCooling(options.credential)
+    throw new AstraError('CAPTCHA_REQUIRED', '小黑盒要求人机验证（详情接口对同一账号限得很死）', {
+      hint: '等 5 分钟再试；频繁重试会延长冷却，必要时先在浏览器过一次验证',
       retryable: true,
+      details: { cooldownSeconds: 300 },
     })
   }
   if (status && status !== 'ok') {
@@ -113,6 +125,36 @@ export async function heyboxGet<T = Record<string, unknown>>(
     })
   }
   return data as T
+}
+
+function cooldownPath(): string {
+  return homePath(COOLDOWN_FILE)
+}
+
+function assertNotCooling(credential: { cookie: string; heyboxId: string } | null | undefined): void {
+  if (!credential) return
+  try {
+    const data = JSON.parse(readFileSync(cooldownPath(), 'utf8')) as { until?: number }
+    const left = Math.ceil(((data.until ?? 0) - Date.now()) / 1000)
+    if (left > 0) {
+      throw new AstraError('CAPTCHA_COOLDOWN', `验证码冷却中，还需 ${left} 秒`, {
+        hint: '冷却结束后再试；期间不要重复请求，会延长冷却',
+        retryable: true,
+        details: { cooldownSeconds: left },
+      })
+    }
+  } catch (error) {
+    if (error instanceof AstraError) throw error
+  }
+}
+
+function markCooling(credential: { cookie: string; heyboxId: string } | null | undefined): void {
+  if (!credential) return
+  try {
+    writeFileSync(cooldownPath(), JSON.stringify({ until: Date.now() + 300_000 }))
+  } catch {
+    // 写不了就退化成「每次都会真的撞接口」，不影响主流程
+  }
 }
 
 export interface HeyboxLink {

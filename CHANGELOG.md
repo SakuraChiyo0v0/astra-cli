@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.2 — 2026-11-05
+
+**`heybox post/comments` 修正评论结构 + 验证码冷却**
+
+- 评论实际是「嵌套一层」：`{comment: [{commentid,userid,text,imgs,create_at}, …]}`，
+  第一项是主楼、后面是楼中楼，现在会拍平再取
+- 评论只有 `userid`，没有昵称（补昵称要再打用户接口，撞验证码不值得）
+- 正文 `text` 是 JSON 富文本块：text 块拼正文、img 块取图，已解析
+- 详情接口实测**同一账号约 5 分钟只能打一次**，触发后写 `heybox-cooldown.json`，
+  冷却期内直接拒绝，不再撞接口
+
 ## 0.34.1 — 2026-11-05
 
 **`astra heybox` 接登录态：帖子详情与评论**
