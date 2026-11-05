@@ -30,6 +30,7 @@ import { modelCommands } from './model/commands.ts'
 import { pixivCommands } from './pixiv/commands.ts'
 import { heyboxCommands } from './heybox/commands.ts'
 import { comicCommands } from './comic/commands.ts'
+import { llmCommands } from './llm/commands.ts'
 import { quarkCommands } from './quark/commands.ts'
 import { cloudCommands } from './cloud/commands.ts'
 import { douyinCommands } from './douyin/commands.ts'
@@ -371,7 +372,7 @@ const commands: Command[] = [
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest,
   ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands, ...modelCommands,
   ...dbCommands, ...libCommands, ...quarkCommands, ...cloudCommands,
-  ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands,
+  ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands, ...llmCommands,
 ]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */

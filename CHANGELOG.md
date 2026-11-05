@@ -1,3 +1,16 @@
+## 0.37.0
+
+### 新增 `astra llm`：一个可配置的 OpenAI 兼容端点
+
+- `llm provider add|remove` / `llm providers` / `llm doctor`：base-url + key + 模型名存
+  `<ASTRA_HOME>/llm-providers.json`（600，多端点、可指定默认），回显一律 `maskKey()`。
+- `llm chat`：`/v1/chat/completions`，支持 --system / --temperature / --max-tokens。
+- `llm image`：`/v1/images/generations`，binary 落盘（默认 `<ASTRA_HOME>/llm-out/`），返回 path。
+- `llm edit`：`/v1/images/edits`（multipart 自己拼，不依赖 FormData），端点不支持时回 404。
+- 上游错误只带前 300 字且 key 打码；`doctor` 探活失败不抛异常，把原因带回 JSON。
+
+为什么要这个：换端点/换模型不该改代码。一次配置，之后文本、文生图、图生图共用一条通道。
+
 # Changelog
 
 ## 0.36.0 — 2026-11-05
