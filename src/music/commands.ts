@@ -182,7 +182,10 @@ const search: Command = {
   name: 'music search',
   summary: '只搜索不下载：歌曲（默认）/ 专辑 / 歌单 / 歌手',
   usage: 'astra music search <关键词> [--type song|album|playlist|artist] [--limit 10]',
-  notes: ['每项都带 ref，可以直接交给 `astra music get <ref>`'],
+  notes: [
+    '每项都带 ref，可以直接交给 `astra music get <ref>`',
+    '列表按 total / returned / truncated 读：returned 是本次返回条数，不是总数',
+  ],
   options: {
     type: { type: 'string', short: 't', description: 'song（默认）/ album / playlist / artist', valueName: 'type' },
     limit: { type: 'string', short: 'n', description: '1..30，默认 10', valueName: 'n' },
@@ -196,12 +199,27 @@ const search: Command = {
     const type = (values.type as string | undefined) ?? 'song'
     if (type === 'song') {
       const { total, tracks } = await searchSongs(keyword, limit, (page - 1) * limit, signal)
-      return { data: { type, keyword, total, page, items: tracks.map((t, i) => candidateView(scoreTrack(keyword, t), i)) } }
+      return {
+        data: {
+          type, keyword, total, page,
+          returned: tracks.length,
+          truncated: total > (page - 1) * limit + tracks.length,
+          items: tracks.map((t, i) => candidateView(scoreTrack(keyword, t), i)),
+        },
+      }
     }
     if (type !== 'album' && type !== 'playlist' && type !== 'artist') throw invalidInput(`--type ${type} 不合法`, '可选：song / album / playlist / artist')
     const items = await searchCollection(type, keyword, limit, signal)
     const prefix = type === 'album' ? 'album' : type === 'playlist' ? 'playlist' : 'artist'
-    return { data: { type, keyword, items: items.map((x, i) => ({ index: i + 1, ref: `${prefix}:${x.id}`, ...x, id: undefined })) } }
+    return {
+      data: {
+        type, keyword,
+        returned: items.length,
+        // 集合类搜索上游不给总数：返回条数等于 limit 才提示可能还有
+        truncated: items.length >= limit,
+        items: items.map((x, i) => ({ index: i + 1, ref: `${prefix}:${x.id}`, ...x, id: undefined })),
+      },
+    }
   },
 }
 
@@ -210,6 +228,7 @@ const info: Command = {
   summary: '查看歌曲 / 专辑 / 歌单 / 歌手的曲目，不下载',
   usage: 'astra music info <链接|ref>',
   options: { limit: { type: 'string', short: 'n', description: '列表最多显示几首，默认 50', valueName: 'n' } },
+  notes: ['曲目列表给 total / returned / truncated；报数用 total，别说成 returned'],
   minArgs: 1,
   async run({ positionals, values, signal }) {
     const target = await resolveTarget(positionals.join(' '))
@@ -225,6 +244,7 @@ const info: Command = {
       data: {
         title,
         total: tracks.length,
+        returned: Math.min(tracks.length, limit),
         inLibrary: tracks.filter((t) => findTrack('wy', t.id) !== null).length,
         tracks: tracks.slice(0, limit).map(trackView),
         truncated: tracks.length > limit,
