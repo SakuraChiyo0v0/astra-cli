@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.34.1 — 2026-11-05
+
+**`astra heybox` 接登录态：帖子详情与评论**
+
+- `heybox login <cookie>` 存 `<ASTRA_HOME>/heybox.json`（600），并用「消息列表」接口验一次登录态
+- `heybox status` / `heybox logout`
+- `heybox post <linkId>`：正文 + 图片 + 首屏评论；`heybox comments <linkId>`：分页评论
+- 登录态请求之间强制 5 秒间隔——小黑盒频率一高就弹验证码
+- 仍然不实现写接口（评论/发帖）：那是账号全权操作，风控落在用户号上
+
 ## 0.34.0 — 2026-11-05
 
 **新增 `astra heybox` 域：小黑盒社区只读查询**

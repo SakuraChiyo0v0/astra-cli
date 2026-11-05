@@ -37,11 +37,21 @@ function baseParams(webVersion: string, heyboxId: string): Record<string, string
 export async function heyboxGet<T = Record<string, unknown>>(
   path: string,
   query: HeyboxQuery = {},
-  options: { webVersion?: '2.5' | '3.0'; heyboxId?: string } = {},
+  options: {
+    webVersion?: '2.5' | '3.0'
+    heyboxId?: string
+    /** 登录态（读详情用）；没有就走匿名，只读接口会回 show_captcha。 */
+    credential?: { cookie: string; heyboxId: string } | null
+    /** link/tree 要求 link_id 之前插一个裸标记 `h_src`。 */
+    insertHSrc?: boolean
+  } = {},
 ): Promise<T> {
   const signed = signPath(path)
   const params = new URLSearchParams({
-    ...baseParams(options.webVersion ?? '2.5', options.heyboxId ?? ''),
+    ...baseParams(
+      options.webVersion ?? '2.5',
+      options.heyboxId ?? options.credential?.heyboxId ?? '',
+    ),
     hkey: signed.hkey,
     _time: String(signed._time),
     nonce: signed.nonce,
@@ -50,16 +60,22 @@ export async function heyboxGet<T = Record<string, unknown>>(
     if (value !== undefined) params.set(key, String(value))
   }
 
+  let qs = params.toString()
+  if (options.insertHSrc) qs = qs.replace('&link_id=', '&h_src&link_id=')
+
+  const headers: Record<string, string> = {
+    'user-agent': UA,
+    accept: 'application/json, text/plain, */*',
+    'accept-language': 'zh-CN,zh;q=0.9',
+    origin: 'https://www.xiaoheihe.cn',
+    referer: 'https://www.xiaoheihe.cn/',
+  }
+  if (options.credential?.cookie) headers.cookie = options.credential.cookie
+
   let response: Response
   try {
-    response = await fetch(`${API_ORIGIN}${path}?${params.toString()}`, {
-      headers: {
-        'user-agent': UA,
-        accept: 'application/json, text/plain, */*',
-        'accept-language': 'zh-CN,zh;q=0.9',
-        origin: 'https://www.xiaoheihe.cn',
-        referer: 'https://www.xiaoheihe.cn/',
-      },
+    response = await fetch(`${API_ORIGIN}${path}?${qs}`, {
+      headers,
       signal: AbortSignal.timeout(20_000),
     })
   } catch (error) {
@@ -135,6 +151,41 @@ export async function searchLinks(keyword: string, limit = 20, offset = 0): Prom
 }
 
 const clean = (s: string): string => s.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+
+/** 帖子详情 + 首屏评论（必须登录态，匿名会 show_captcha）。 */
+export async function getLinkTree(
+  linkId: string | number,
+  options: { page?: number; limit?: number; credential?: { cookie: string; heyboxId: string } | null } = {},
+): Promise<{ link: Record<string, unknown> | null; comments: Array<Record<string, unknown>> }> {
+  const page = options.page ?? 1
+  const data = await heyboxGet<{
+    result?: { link?: Record<string, unknown>; comments?: Array<Record<string, unknown>> }
+  }>(
+    '/bbs/app/link/tree',
+    {
+      link_id: String(linkId),
+      is_first: page === 1 ? '1' : '0',
+      page,
+      index: 1,
+      limit: options.limit ?? 20,
+      owner_only: 0,
+    },
+    { credential: options.credential ?? null, insertHSrc: true },
+  )
+  return { link: data.result?.link ?? null, comments: data.result?.comments ?? [] }
+}
+
+/** 用一条最轻的接口验证登录态；返回 heybox_id（cookie 里没有时靠它补）。 */
+export async function fetchSession(
+  credential: { cookie: string; heyboxId: string },
+): Promise<{ loggedIn: boolean; heyboxId: string }> {
+  const data = await heyboxGet<{ result?: { messages?: unknown[] } }>(
+    '/bbs/app/user/message',
+    { list_type: 0, offset: 0, limit: 1, no_more: 'false' },
+    { credential },
+  )
+  return { loggedIn: Array.isArray(data.result?.messages) || Boolean(data.result), heyboxId: credential.heyboxId }
+}
 
 /** 统一拍平成命令层用的形状。 */
 export function mapLink(link: HeyboxLink): Record<string, unknown> {
