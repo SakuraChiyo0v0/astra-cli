@@ -7,9 +7,9 @@
 import type { Command } from '../core/command.ts'
 import { invalidInput } from '../core/errors.ts'
 import { okResult } from '../core/output.ts'
-import { listFeeds, mapLink, searchLinks, getLinkTree, fetchSession } from './api.ts'
+import { listFeeds, mapLink, searchLinks, getLinkTree, fetchSession, searchGames, getGameDetail } from './api.ts'
 import { clearCredential, loadCredential, saveCredential } from './auth.ts'
-import { openHeyboxDb, readPost, savePost, searchPosts } from './db.ts'
+import { openHeyboxDb, readGame, readPost, saveGame, savePost, searchPosts } from './db.ts'
 
 function num(value: unknown, fallback: number, min: number, max: number, name: string): number {
   if (value === undefined) return fallback
@@ -424,4 +424,115 @@ const find: Command = {
   },
 }
 
-export const heyboxCommands: Command[] = [feed, search, login, status, logout, post, comments, find]
+const game: Command = {
+  name: 'heybox game',
+  summary: '看游戏：评分、现价/史低、关注数、平台（小黑盒游戏库）',
+  usage: 'astra heybox game <游戏名 或 appid> [--refresh]',
+  notes: [
+    '名称会先搜一次再取详情；也可以直接给 steam appid（纯数字）。',
+    '价格 6 小时内直接用库里的，`--refresh` 强制重抓（价格波动不频繁，没必要每次都打接口）。',
+  ],
+  options: {
+    refresh: { type: 'boolean', description: '强制重新抓取（默认 6 小时内读库）' },
+  },
+  minArgs: 1,
+  maxArgs: 10,
+  async run({ positionals, values }) {
+    const keyword = positionals.join(' ').trim()
+    let appid = /^\d+$/.test(keyword) ? keyword : ''
+    let name = ''
+    if (!appid) {
+      const hits = await searchGames(keyword, 8)
+      // 优先 PC（有 steam_appid），手游/主机专区也能搜到，但详情接口只认 PC 的 appid
+      const first = hits.find((h) => h.steam_appid) ?? hits[0]
+      if (!first) throw invalidInput('没搜到这个游戏', '换个写法，或直接给 steam appid')
+      appid = String(first.appid ?? '')
+      name = String(first.name ?? '')
+    }
+
+    const db = await openHeyboxDb()
+    if (values.refresh !== true) {
+      const row = await readGame(db, appid)
+      const fresh = row && Date.now() - Date.parse(String(row.fetched_at ?? 0)) < 6 * 3600_000
+      if (row && fresh) return renderGame(row, 'cache')
+    }
+
+    const detail = await getGameDetail(appid).catch((error: unknown) => {
+      const msg = error instanceof Error ? error.message : String(error)
+      if (msg.includes('非法游戏id')) {
+        throw invalidInput('这个 appid 小黑盒不收', '多半是手游/主机专区，详情接口只认 PC 游戏；可试 steam appid')
+      }
+      throw error
+    })
+    if (!detail) throw invalidInput('没拿到游戏详情', 'appid 可能不对')
+    const price = (detail.price as Record<string, unknown> | undefined) ?? {}
+    const fields = {
+      name: String(detail.name ?? name),
+      nameEn: detail.name_en ?? null,
+      score: detail.score ?? null,
+      scoreDesc: detail.score_desc ?? null,
+      priceCurrent: price.current ?? null,
+      priceInitial: price.initial ?? null,
+      lowestPrice: price.lowest_price ?? null,
+      lowestDiscount: price.lowest_discount ?? null,
+      followNum: detail.follow_num ?? null,
+      // comment_stats 里没有 total：评分人数在 score_comment，期望人数在 expect_num
+      commentNum: (detail.comment_stats as Record<string, unknown> | undefined)?.score_comment ?? null,
+      platforms: (detail.platforms as unknown[] | undefined) ?? [],
+      tags: (detail.common_tags as unknown[] | undefined) ?? [],
+      about: typeof detail.about_the_game === 'string' ? detail.about_the_game.slice(0, 600) : null,
+    }
+    await saveGame(db, appid, fields, detail)
+    return renderGame({ appid, ...fields, fetched_at: new Date().toISOString() }, 'network')
+  },
+}
+
+function renderGame(row: Record<string, unknown>, source: 'cache' | 'network') {
+  const priceNow = row.price_current ?? row.priceCurrent ?? null
+  const lowest = row.lowest_price ?? row.lowestPrice ?? null
+  const discount = row.lowest_discount ?? row.lowestDiscount ?? null
+  const data = {
+    appid: Number(row.appid),
+    name: String(row.name ?? ''),
+    nameEn: row.name_en ?? row.nameEn ?? null,
+    score: row.score ?? null,
+    scoreDesc: row.score_desc ?? row.scoreDesc ?? null,
+    price: { current: priceNow, lowest, lowestDiscount: discount },
+    followNum: row.follow_num ?? row.followNum ?? null,
+    commentNum: row.comment_num ?? row.commentNum ?? null,
+    platforms: parseArr(row.platforms),
+    tags: parseArr(row.tags),
+    about: row.about ?? null,
+    fetchedAt: row.fetched_at ?? null,
+    source,
+  }
+  return {
+    ...okResult(data),
+    table: {
+      headers: ['项', '值'],
+      rows: [
+        ['游戏', `${data.name}${data.nameEn ? ` / ${data.nameEn}` : ''}`],
+        ['小黑盒评分', String(data.score ?? '-')],
+        ['现价 / 史低', `${data.price.current ?? '-'} / ${data.price.lowest ?? '-'}${discount ? `（-${discount}%）` : ''}`],
+        ['关注 / 评论', `${data.followNum ?? '-'} / ${data.commentNum ?? '-'}`],
+        ['平台', data.platforms.join(' / ') || '-'],
+        ['抓取时间', String(data.fetchedAt ?? '-').slice(0, 19).replace('T', ' ')],
+        ['来源', source === 'cache' ? '本地库（6 小时内）' : '刚抓取并入库'],
+      ],
+    },
+  }
+}
+
+function parseArr(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map((x) => String(x))
+  if (typeof raw === 'string' && raw.startsWith('[')) {
+    try {
+      return (JSON.parse(raw) as unknown[]).map((x) => String(x))
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+export const heyboxCommands: Command[] = [feed, search, login, status, logout, post, comments, find, game]

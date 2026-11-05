@@ -69,6 +69,24 @@ export async function ensureSchema(conn: Conn, dialectName = 'postgres'): Promis
     fetched_at text
   )`)
   await conn.exec(`create index if not exists heybox_comment_link_idx on ${t('heybox_comment')} (link_id)`)
+  await conn.exec(`create table if not exists ${t('heybox_game')} (
+    appid bigint primary key,
+    name text,
+    name_en text,
+    score numeric,
+    score_desc text,
+    price_current numeric,
+    price_initial numeric,
+    lowest_price numeric,
+    lowest_discount integer,
+    follow_num bigint,
+    comment_num integer,
+    platforms text,
+    tags text,
+    about text,
+    raw text,
+    fetched_at text
+  )`)
 }
 
 /** 库里已有就返回，没有返回 null（不区分「没存过」和「存过但内容空」）。 */
@@ -115,6 +133,42 @@ function parseImages(raw: unknown): string[] {
   } catch {
     return []
   }
+}
+
+/** 游戏详情：价格会变，所以带 fetchedAt 给调用方判断新鲜度。 */
+export async function readGame(db: Database, appid: string): Promise<Record<string, unknown> | null> {
+  const t = (name: string) => tableName(db.dialect.name, name)
+  const p = db.dialect.name === 'postgres' ? '$1' : '?'
+  const rows = await db.conn.query<Record<string, unknown>>(`select * from ${t('heybox_game')} where appid = ${p}`, [Number(appid)])
+  return rows[0] ?? null
+}
+
+export async function saveGame(db: Database, appid: string, fields: Record<string, unknown>, raw: unknown): Promise<void> {
+  const t = (name: string) => tableName(db.dialect.name, name)
+  const pg = db.dialect.name === 'postgres'
+  const p = (i: number) => (pg ? `$${i}` : '?')
+  await db.conn.query(
+    `insert into ${t('heybox_game')}
+       (appid, name, name_en, score, score_desc, price_current, price_initial, lowest_price,
+        lowest_discount, follow_num, comment_num, platforms, tags, about, raw, fetched_at)
+     values (${p(1)},${p(2)},${p(3)},${p(4)},${p(5)},${p(6)},${p(7)},${p(8)},${p(9)},${p(10)},${p(11)},${p(12)},${p(13)},${p(14)},${p(15)},${p(16)})
+     on conflict (appid) do update set
+       name = excluded.name, name_en = excluded.name_en, score = excluded.score,
+       score_desc = excluded.score_desc, price_current = excluded.price_current,
+       price_initial = excluded.price_initial, lowest_price = excluded.lowest_price,
+       lowest_discount = excluded.lowest_discount, follow_num = excluded.follow_num,
+       comment_num = excluded.comment_num, platforms = excluded.platforms, tags = excluded.tags,
+       about = excluded.about, raw = excluded.raw, fetched_at = excluded.fetched_at`,
+    [
+      Number(appid),
+      fields.name ?? null, fields.nameEn ?? null, fields.score ?? null, fields.scoreDesc ?? null,
+      fields.priceCurrent ?? null, fields.priceInitial ?? null, fields.lowestPrice ?? null,
+      fields.lowestDiscount ?? null, fields.followNum ?? null, fields.commentNum ?? null,
+      JSON.stringify(fields.platforms ?? []), JSON.stringify(fields.tags ?? []),
+      fields.about ?? null, JSON.stringify(raw ?? null),
+      new Date().toISOString(),
+    ],
+  )
 }
 
 /** 覆盖写：同一篇帖子重新抓取时整行替换，评论按 comment_id upsert。 */

@@ -229,6 +229,22 @@ export async function fetchSession(
   return { loggedIn: Array.isArray(data.result?.messages) || Boolean(data.result), heyboxId: credential.heyboxId }
 }
 
+/** 游戏搜索：返回候选（name / appid / 价格）。 */
+export async function searchGames(keyword: string, limit = 5): Promise<Array<Record<string, unknown>>> {
+  const data = await heyboxGet<{ result?: { games?: Array<Record<string, unknown>> } }>('/game/search', {
+    q: keyword,
+    offset: 0,
+    limit,
+  })
+  return data.result?.games ?? []
+}
+
+/** 游戏详情：评分、价格（现价/史低）、关注数、平台、简介。 */
+export async function getGameDetail(appid: number | string): Promise<Record<string, unknown> | null> {
+  const data = await heyboxGet<{ result?: Record<string, unknown> }>('/game/get_game_detail', { appid: String(appid) })
+  return data.result ?? null
+}
+
 /** 统一拍平成命令层用的形状。 */
 export function mapLink(link: HeyboxLink): Record<string, unknown> {
   const created = link.create_at ? new Date(link.create_at * 1000) : null
