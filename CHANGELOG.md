@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.0 — 2026-11-05
+
+**新增 `astra heybox` 域：小黑盒社区只读查询**
+
+- `heybox feed [--limit] [--offset]`：首页信息流
+- `heybox search <关键词> [--limit] [--offset]`：全站搜索（只保留帖子类结果）
+
+签名算法（`hkey` / `_time` / `nonce`）移植自 MIT 许可的 Insect-rippler/XIAOHEIHE_MCP，
+附 8 条固定向量做回归，签名改动会先红单测。匿名即可读：feeds 与 search 实测可用；
+`link/tree`（帖子详情+评论）匿名会回 `show_captcha`，需登录态，v1 未接。
+
 ## 0.33.5 — 2026-11-04
 
 **`pixiv info` 输出 `aiType`（1 = 非 AI / 2 = AI 生成）**
