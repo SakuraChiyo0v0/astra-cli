@@ -167,6 +167,8 @@ const MIGRATIONS: string[] = [
   `alter table subscriptions add column current_min integer not null default 0`,
   // 账户机制（M1）：审计要能回答「谁做的」。没有计牌时记 owner。
   `alter table audit_log add column principal text`,
+  // 可见性（M3）：任务归属主体，受限调用只看到自己起的。
+  `alter table jobs add column owner text`,
 ]
 
 export function db(): DatabaseSync {

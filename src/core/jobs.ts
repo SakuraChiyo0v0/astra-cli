@@ -20,6 +20,7 @@ import { db } from './db.ts'
 import { AstraError } from './errors.ts'
 import { homePath } from './paths.ts'
 import { notify } from './notify.ts'
+import { currentIdentity } from './identity.ts'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'partial' | 'failed' | 'cancelled' | 'interrupted'
 // 任务项状态。`downloaded` 与单曲 `data.status` 同词，调用方可以用一套过滤；
@@ -41,6 +42,8 @@ export interface JobView {
   failed: number
   createdAt: string
   updatedAt: string
+  /** 谁起的（M3）；老任务为 null，只有 owner 看得到。 */
+  owner: string | null
   error: string | null
   meta: Record<string, unknown> | null
 }
@@ -137,6 +140,7 @@ interface JobRow {
   created_at: string
   updated_at: string
   meta: string | null
+  owner: string | null
 }
 
 interface ItemRow {
@@ -174,6 +178,12 @@ function alive(pid: number | null): boolean {
   }
 }
 
+/** 受限主体（带令牌且不是 owner）只能看自己起的任务。 */
+function ownerScope(): string | null {
+  const identity = currentIdentity()
+  return identity.kind === 'owner' ? null : identity.name
+}
+
 function toView(row: JobRow): JobView {
   const meta = parseJson(row.meta)
   let status = row.status as JobStatus
@@ -194,6 +204,7 @@ function toView(row: JobRow): JobView {
     failed: row.failed,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    owner: row.owner,
     error: row.error,
     meta,
   }
@@ -222,8 +233,11 @@ function jobMeta(domain: string, extra: Record<string, unknown>): string {
 }
 
 function jobRow(id: string, domain?: string): JobRow {
+  const scope = ownerScope()
   const rows = db().prepare('select * from jobs where id = ? or id like ?').all(id, `${id}%`) as unknown as JobRow[]
-  const filtered = domain ? rows.filter((r) => toView(r).domain === domain) : rows
+  // 别人的任务当作不存在，不暴露它们的存在
+  const visible = scope ? rows.filter((r) => r.owner === scope) : rows
+  const filtered = domain ? visible.filter((r) => toView(r).domain === domain) : visible
   if (filtered.length === 0) throw new AstraError('NOT_FOUND', `没有任务 ${id}`, { exitCode: 4, hint: '用 `jobs` 看最近的任务' })
   if (filtered.length > 1) throw new AstraError('AMBIGUOUS_ID', `任务 id 前缀 ${id} 对应多个任务`, { exitCode: 2, hint: '多写几位 id' })
   return filtered[0]!
@@ -246,8 +260,8 @@ export function createJob(options: CreateJobOptions): JobView {
   database.exec('begin immediate')
   try {
     database
-      .prepare('insert into jobs (id, kind, title, status, quality, total, created_at, updated_at, meta) values (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, options.kind, options.title, 'queued', options.profile ?? null, options.items.length, now(), now(), jobMeta(options.domain, options.meta ?? {}))
+      .prepare('insert into jobs (id, kind, title, status, quality, total, created_at, updated_at, meta, owner) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, options.kind, options.title, 'queued', options.profile ?? null, options.items.length, now(), now(), jobMeta(options.domain, options.meta ?? {}), currentIdentity().name)
     const insert = database.prepare('insert into job_items (job_id, seq, native_id, title, artists, status, updated_at, meta) values (?, ?, ?, ?, ?, ?, ?, ?)')
     options.items.forEach((item, i) => insert.run(id, i, item.id, item.title, item.subtitle ?? '', 'queued', now(), item.meta ? JSON.stringify(item.meta) : null))
     database.exec('commit')
@@ -287,7 +301,11 @@ export function getJob(id: string, withItems: boolean, domain?: string): { job: 
 
 export function listJobs(limit: number, activeOnly: boolean, domain?: string): JobView[] {
   const rows = db().prepare('select * from jobs order by created_at desc limit ?').all(activeOnly ? 200 : limit) as unknown as JobRow[]
-  const views = rows.map(toView).filter((j) => !domain || j.domain === domain)
+  const scope = ownerScope()
+  const views = rows
+    .map(toView)
+    .filter((j, i) => (scope ? rows[i]!.owner === scope : true))
+    .filter((j) => !domain || j.domain === domain)
   return activeOnly ? views.filter((j) => j.status === 'running' || j.status === 'queued').slice(0, limit) : views
 }
 

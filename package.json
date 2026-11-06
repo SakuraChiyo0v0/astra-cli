@@ -1,6 +1,6 @@
 {
   "name": "astra-cli",
-  "version": "0.42.1",
+  "version": "0.43.0",
   "private": true,
   "description": "\u7ed9 AI \u8c03\u7528\u7684\u4e2a\u4eba\u80fd\u529b CLI\uff1a\u4e00\u6761\u547d\u4ee4\u529e\u5b8c\u4e00\u4ef6\u4e8b\uff0c\u8f93\u51fa\u7edf\u4e00 JSON",
   "type": "module",
