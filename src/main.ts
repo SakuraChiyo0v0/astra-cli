@@ -37,7 +37,8 @@ import { cloudCommands } from './cloud/commands.ts'
 import { douyinCommands } from './douyin/commands.ts'
 import { lolCommands } from './lol/commands.ts'
 import { xCommands } from './x/commands.ts'
-import { authCommands, resolveIdentityFromToken } from './auth/commands.ts'
+import { authCommands } from './auth/commands.ts'
+import { allowedPatterns, authorize, openAuth, resolveToken, scopeOf } from './core/auth.ts'
 import { readToken, setIdentity } from './core/identity.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
@@ -469,16 +470,34 @@ async function main(): Promise<number> {
   process.once('SIGTERM', onSignal)
   try {
     const parsed = parseCommandArgs(routed.command, restoreCommandFlags(argv, routed.command, routed.rest))
-    // 身份解析（M1：只记录不拦截）。没有令牌就是本机 owner，连库都不开。
+    // 身份 + 判权。没有令牌就是本机 owner（行为与以前一致）；带了令牌就必须有效且有权。
     const bearer = readToken()
     if (bearer) {
+      const auth = await openAuth()
       try {
-        const hit = await resolveIdentityFromToken(bearer.token)
-        if (hit) {
-          setIdentity({ id: hit.principal.id, kind: hit.principal.kind, name: hit.principal.name, source: bearer.source, tokenId: hit.tokenId })
+        const hit = await resolveToken(auth, bearer.token)
+        if (!hit) {
+          throw new AstraError('AUTH_INVALID_TOKEN', '令牌无效（已吊销 / 过期 / 主体停用）', {
+            exitCode: 3,
+            hint: '换一个有效令牌；不带 ASTRA_TOKEN 时按本机 owner 运行',
+          })
         }
-      } catch {
-        // 鉴权库不可用不能挡住命令本身：M1 阶段按 owner 继续
+        const principal = hit.principal
+        setIdentity({ id: principal.id, kind: principal.kind, name: principal.name, source: bearer.source, tokenId: hit.tokenId })
+        const scope = scopeOf(routed.command.name)
+        const alwaysOpen = new Set(['help', 'version', 'auth.whoami', 'auth.status'])
+        if (!alwaysOpen.has(scope)) {
+          const verdict = await authorize(auth, principal, scope)
+          if (!verdict.allowed) {
+            const patterns = await allowedPatterns(auth, principal)
+            throw new AstraError('FORBIDDEN', `主体「${principal.name}」无权执行：${routed.command.name}`, {
+              exitCode: 2,
+              hint: `已授权 ${patterns.length} 条 scope；查看：astra auth principal roles ${principal.name}`,
+            })
+          }
+        }
+      } finally {
+        await auth.conn.close()
       }
     }
     const result = await routed.command.run({ ...parsed, signal: controller.signal })

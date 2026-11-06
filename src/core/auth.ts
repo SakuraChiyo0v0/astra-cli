@@ -1,5 +1,5 @@
 /**
- * 账户存储（M1）：主体 + 令牌。
+ * 账户存储（M1/M2）：主体、令牌、角色、判权。
  *
  * 存哪：走 `core/db` 的抽象层 —— 配了 PG 就在 PG（多 bot 共享），
  * 没配就落本机 SQLite（`<ASTRA_HOME>/astra.db`），不另建一套连接。
@@ -31,6 +31,25 @@ export interface TokenRow {
   revokedAt: string | null
 }
 
+/** 命令名 → scope：`bili get` → `bili.get`。 */
+export function scopeOf(commandName: string): string {
+  return commandName.trim().toLowerCase().replace(/\s+/g, '.')
+}
+
+/** scope 模式匹配：`*` 全通，`bili.*` 前缀，否则精确。 */
+export function matchScope(pattern: string, scope: string): boolean {
+  if (pattern === '*' || pattern === scope) return true
+  if (pattern.endsWith('.*')) return scope.startsWith(pattern.slice(0, -1))
+  return false
+}
+
+export interface Role {
+  id: string
+  name: string
+  note: string | null
+  createdAt: string
+}
+
 const SCHEMA = [
   `create table if not exists astra_principal (
      id text primary key,
@@ -49,6 +68,24 @@ const SCHEMA = [
      last_used_at text,
      expires_at text,
      revoked_at text
+   )`,
+  `create table if not exists astra_role (
+     id text primary key,
+     name text not null unique,
+     note text,
+     created_at text not null
+   )`,
+  `create table if not exists astra_grant (
+     role_id text not null,
+     pattern text not null,
+     created_at text not null,
+     primary key (role_id, pattern)
+   )`,
+  `create table if not exists astra_principal_role (
+     principal_id text not null,
+     role_id text not null,
+     created_at text not null,
+     primary key (principal_id, role_id)
    )`,
 ]
 
@@ -203,3 +240,153 @@ export async function revokeToken(db: Database, idPrefix: string): Promise<Token
   await db.conn.exec('update astra_token set revoked_at = ? where id = ?', [new Date().toISOString(), row.id])
   return { ...row, revokedAt: new Date().toISOString() }
 }
+// —— 角色与授权（M2） ——
+
+function roleFrom(row: Record<string, unknown>): Role {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    note: row.note === null || row.note === undefined ? null : String(row.note),
+    createdAt: String(row.created_at),
+  }
+}
+
+async function roleByName(db: Database, name: string): Promise<Role> {
+  const rows = await db.conn.query('select * from astra_role where name = ? or id = ?', [name, name])
+  if (!rows[0]) {
+    throw new AstraError('NOT_FOUND', `没有这个角色：${name}`, {
+      hint: '`astra auth role list` 看现有角色；可用 `astra auth role add <名字>` 新建',
+    })
+  }
+  return roleFrom(rows[0])
+}
+
+export async function ensureRole(db: Database, name: string, note?: string): Promise<Role> {
+  const rows = await db.conn.query('select * from astra_role where name = ?', [name])
+  if (rows[0]) return roleFrom(rows[0])
+  const role: Role = { id: randomUUID().slice(0, 8), name, note: note ?? null, createdAt: new Date().toISOString() }
+  await db.conn.exec('insert into astra_role (id, name, note, created_at) values (?, ?, ?, ?)', [
+    role.id,
+    role.name,
+    role.note,
+    role.createdAt,
+  ])
+  return role
+}
+
+export async function listRoles(db: Database): Promise<Array<Role & { grants: number; principals: number }>> {
+  const rows = await db.conn.query('select * from astra_role order by created_at')
+  const out: Array<Role & { grants: number; principals: number }> = []
+  for (const r of rows) {
+    const role = roleFrom(r)
+    const g = await db.conn.query('select count(*) n from astra_grant where role_id = ?', [role.id])
+    const p = await db.conn.query('select count(*) n from astra_principal_role where role_id = ?', [role.id])
+    out.push({ ...role, grants: Number(g[0]?.n ?? 0), principals: Number(p[0]?.n ?? 0) })
+  }
+  return out
+}
+
+/** 给角色加 scope 模式。已存在则跳过，返回真正新增的。 */
+export async function grantScope(db: Database, roleName: string, patterns: string[]): Promise<string[]> {
+  const role = await roleByName(db, roleName)
+  const added: string[] = []
+  for (const raw of patterns) {
+    const pattern = raw.trim().toLowerCase()
+    if (!pattern) continue
+    if (!/^[a-z0-9_.*-]+$/.test(pattern)) {
+      throw invalidInput(`scope 不合法：${pattern}`, '只能用小写字母/数字/. _ * -，例如 `bili.get` 或 `bili.*`')
+    }
+    const hit = await db.conn.query('select 1 from astra_grant where role_id = ? and pattern = ?', [role.id, pattern])
+    if (hit.length > 0) continue
+    await db.conn.exec('insert into astra_grant (role_id, pattern, created_at) values (?, ?, ?)', [
+      role.id,
+      pattern,
+      new Date().toISOString(),
+    ])
+    added.push(pattern)
+  }
+  return added
+}
+
+export async function revokeScope(db: Database, roleName: string, pattern: string): Promise<boolean> {
+  const role = await roleByName(db, roleName)
+  const n = await db.conn.exec('delete from astra_grant where role_id = ? and pattern = ?', [role.id, pattern.trim().toLowerCase()])
+  return n > 0
+}
+
+export async function listGrants(db: Database, roleName: string): Promise<string[]> {
+  const role = await roleByName(db, roleName)
+  const rows = await db.conn.query('select pattern from astra_grant where role_id = ? order by pattern', [role.id])
+  return rows.map((r) => String(r.pattern))
+}
+
+export async function assignRole(db: Database, principalName: string, roleName: string): Promise<void> {
+  const principal = await findPrincipal(db, principalName)
+  if (!principal) {
+    throw new AstraError('NOT_FOUND', `主体不存在：${principalName}`, { hint: '`astra auth principal list` 看现有主体' })
+  }
+  const role = await roleByName(db, roleName)
+  await db.conn.exec(
+    `insert into astra_principal_role (principal_id, role_id, created_at) values (?, ?, ?)
+     on conflict (principal_id, role_id) do nothing`,
+    [principal.id, role.id, new Date().toISOString()],
+  )
+}
+
+export async function unassignRole(db: Database, principalName: string, roleName: string): Promise<boolean> {
+  const principal = await findPrincipal(db, principalName)
+  if (!principal) return false
+  const role = await roleByName(db, roleName)
+  const n = await db.conn.exec('delete from astra_principal_role where principal_id = ? and role_id = ?', [
+    principal.id,
+    role.id,
+  ])
+  return n > 0
+}
+
+export async function principalRoles(db: Database, principalName: string): Promise<string[]> {
+  const principal = await findPrincipal(db, principalName)
+  if (!principal) return []
+  const rows = await db.conn.query(
+    `select r.name from astra_principal_role pr join astra_role r on r.id = pr.role_id
+     where pr.principal_id = ? order by r.name`,
+    [principal.id],
+  )
+  return rows.map((r) => String(r.name))
+}
+
+export interface Verdict {
+  allowed: boolean
+  /** 命中的 scope 模式；没命中是 null。 */
+  matched: string | null
+  scope: string
+}
+
+/**
+ * 判权。owner 主体（含没带令牌的本机调用）全通；其余按「角色 → scope 模式」并集判断。
+ */
+export async function authorize(db: Database, principal: Principal, scope: string): Promise<Verdict> {
+  if (principal.kind === 'owner') return { allowed: true, matched: '*', scope }
+  const rows = await db.conn.query(
+    `select g.pattern from astra_principal_role pr
+     join astra_grant g on g.role_id = pr.role_id
+     where pr.principal_id = ?`,
+    [principal.id],
+  )
+  const hit = rows.map((r) => String(r.pattern)).find((p) => matchScope(p, scope))
+  return { allowed: Boolean(hit), matched: hit ?? null, scope }
+}
+
+/** 受限主体拿到的全部 scope 模式（拒绝提示与帮助用）。 */
+export async function allowedPatterns(db: Database, principal: Principal): Promise<string[]> {
+  if (principal.kind === 'owner') return ['*']
+  const rows = await db.conn.query(
+    `select distinct g.pattern from astra_principal_role pr
+     join astra_grant g on g.role_id = pr.role_id
+     where pr.principal_id = ?
+     order by g.pattern`,
+    [principal.id],
+  )
+  return rows.map((r) => String(r.pattern))
+}
+

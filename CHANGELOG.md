@@ -1,3 +1,19 @@
+## 0.42.1
+
+- `auth status` 的拦截状态改为 `on（M2）`，并说明「带令牌判权、不带令牌按 owner 全通」
+- `auth whoami` 返回该主体的角色与 scope 数，便于确认权限面
+
+## 0.42.0
+
+账户机制 M2：权限判定（角色 + scope 模式，在下发点统一拦截）。
+
+- 新增表 `astra_role` / `astra_grant` / `astra_principal_role`；scope 就是命令名换点（`bili get` → `bili.get`）
+- 新增命令：`auth role add|list|grant|revoke|grants`、`auth principal grant|roles`
+- 拦截点唯一：`main.ts` 下发前判权；owner 与不带令牌的本机调用全通，行为不变
+- 带了无效/过期/吊销的令牌**直接拒绝**（`AUTH_INVALID_TOKEN`），不再静默回落 owner
+- `help` / `version` / `auth whoami` / `auth status` 对任何有效令牌开放
+- 拒绝时返回 `FORBIDDEN` 并提示该主体的 scope 数量，便于自查
+
 ## 0.41.0
 
 账户机制 M1：身份、令牌、审计带主体。**这一版只记录，不做权限拦截**（M2 才开）。

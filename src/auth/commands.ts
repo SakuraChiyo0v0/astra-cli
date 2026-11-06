@@ -15,13 +15,23 @@ import { invalidInput } from '../core/errors.ts'
 import { readToken, type PrincipalKind } from '../core/identity.ts'
 import {
   addPrincipal,
+  allowedPatterns,
+  assignRole,
   createToken,
+  ensureRole,
   findPrincipal,
+  grantScope,
+  listGrants,
   listPrincipals,
+  listRoles,
   listTokens,
   openAuth,
+  principalRoles,
   resolveToken,
+  revokeScope,
   revokeToken,
+  scopeOf,
+  unassignRole,
 } from '../core/auth.ts'
 
 const KINDS: PrincipalKind[] = ['user', 'bot', 'service']
@@ -53,6 +63,8 @@ const whoami: Command = {
           note: '令牌无效（已吊销 / 过期 / 主体停用），M1 阶段仍按 owner 放行',
         })
       }
+      const roles = await principalRoles(db, hit.principal.name)
+      const patterns = await allowedPatterns(db, hit.principal)
       return okResult({
         identity: {
           id: hit.principal.id,
@@ -61,6 +73,8 @@ const whoami: Command = {
           source: token.source,
         },
         tokenId: hit.tokenId,
+        roles,
+        scopeCount: patterns.length,
       })
     } finally {
       await db.conn.close()
@@ -206,6 +220,152 @@ const tokenRevoke: Command = {
   },
 }
 
+
+const roleAdd: Command = {
+  name: 'auth role add',
+  summary: '新建角色',
+  usage: 'astra auth role add <名字> [--note 说明]',
+  minArgs: 1,
+  maxArgs: 1,
+  options: { note: { type: 'string', description: '备注', valueName: '说明' } },
+  async run(ctx) {
+    const db = await openAuth()
+    try {
+      const role = await ensureRole(db, ctx.positionals[0]!, typeof ctx.values.note === 'string' ? ctx.values.note : undefined)
+      return okResult(role)
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
+const roleList: Command = {
+  name: 'auth role list',
+  summary: '列出角色（含 scope 数与主体数）',
+  usage: 'astra auth role list',
+  async run() {
+    const db = await openAuth()
+    try {
+      const rows = await listRoles(db)
+      return {
+        ...okResult({ total: rows.length, roles: rows }),
+        table: {
+          headers: ['角色', 'scope 数', '主体数', '备注'],
+          rows: rows.map((r) => [r.name, String(r.grants), String(r.principals), r.note ?? '']),
+        },
+      }
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
+const roleGrant: Command = {
+  name: 'auth role grant',
+  summary: '给角色加 scope（可一次多条；支持 bili.* 通配）',
+  usage: 'astra auth role grant <角色> <scope...>',
+  notes: ['scope 就是命令名换点：`bili get` → `bili.get`，`x media` → `x.media`；`*` 表示全通。'],
+  minArgs: 2,
+  async run(ctx) {
+    const db = await openAuth()
+    try {
+      const added = await grantScope(db, ctx.positionals[0]!, ctx.positionals.slice(1))
+      const all = await listGrants(db, ctx.positionals[0]!)
+      return okResult({ added, total: all.length })
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
+const roleRevoke: Command = {
+  name: 'auth role revoke',
+  summary: '从角色删掉一个 scope',
+  usage: 'astra auth role revoke <角色> <scope>',
+  minArgs: 2,
+  maxArgs: 2,
+  async run(ctx) {
+    const db = await openAuth()
+    try {
+      const removed = await revokeScope(db, ctx.positionals[0]!, ctx.positionals[1]!)
+      return okResult({ removed })
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
+const roleGrants: Command = {
+  name: 'auth role grants',
+  summary: '列出角色的 scope',
+  usage: 'astra auth role grants <角色>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run(ctx) {
+    const db = await openAuth()
+    try {
+      const rows = await listGrants(db, ctx.positionals[0]!)
+      return {
+        ...okResult({ role: ctx.positionals[0], total: rows.length, grants: rows }),
+        table: { headers: ['scope'], rows: rows.map((r) => [r]) },
+      }
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
+const principalGrant: Command = {
+  name: 'auth principal grant',
+  summary: '把角色发给主体（或 --remove 收回）',
+  usage: 'astra auth principal grant <主体> <角色> [--remove]',
+  minArgs: 2,
+  maxArgs: 2,
+  options: { remove: { type: 'boolean', description: '收回这个角色' } },
+  async run(ctx) {
+    const db = await openAuth()
+    try {
+      if (ctx.values.remove === true) {
+        const removed = await unassignRole(db, ctx.positionals[0]!, ctx.positionals[1]!)
+        return okResult({ removed, roles: await principalRoles(db, ctx.positionals[0]!) })
+      }
+      await assignRole(db, ctx.positionals[0]!, ctx.positionals[1]!)
+      return okResult({ assigned: ctx.positionals[1], roles: await principalRoles(db, ctx.positionals[0]!) })
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
+const principalRolesCmd: Command = {
+  name: 'auth principal roles',
+  summary: '看主体有哪些角色与生效的 scope 模式',
+  usage: 'astra auth principal roles <主体>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run(ctx) {
+    const db = await openAuth()
+    try {
+      const principal = await findPrincipal(db, ctx.positionals[0]!)
+      const roles = await principalRoles(db, ctx.positionals[0]!)
+      const patterns = principal ? await allowedPatterns(db, principal) : []
+      return {
+        ...okResult({ principal: ctx.positionals[0], roles, patterns, scopeCount: patterns.length }),
+        table: {
+          headers: ['项', '值'],
+          rows: [
+            ['主体', ctx.positionals[0]!],
+            ['角色', roles.join(', ') || '（无）'],
+            ['scope 模式', String(patterns.length)],
+          ],
+        },
+      }
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
 const status: Command = {
   name: 'auth status',
   summary: '账户机制状态（存储后端、主体数、令牌数）',
@@ -224,8 +384,8 @@ const status: Command = {
           tokens: tokens.length,
           activeTokens: tokens.filter((t) => !t.revokedAt).length,
           identity: hit ? { name: hit.principal.name, kind: hit.principal.kind, source: token!.source } : { name: 'owner', kind: 'owner', source: 'local' },
-          enforcement: 'off',
-          note: 'M1：身份与审计已就绪，权限判定（M2）还没开',
+          enforcement: 'on',
+          note: 'M2：带令牌的调用按角色判权；不带令牌的本机调用按 owner 全通',
         }),
         table: {
           headers: ['项', '值'],
@@ -234,7 +394,7 @@ const status: Command = {
             ['主体', String(principals.length)],
             ['令牌', String(tokens.length)],
             ['当前身份', hit ? `${hit.principal.name}（${token!.source}）` : 'owner（本机）'],
-            ['权限拦截', 'off（M1）'],
+            ['权限拦截', 'on（M2）'],
           ],
         },
       }
@@ -266,6 +426,13 @@ export async function principalByName(name: string) {
 export const authCommands: Command[] = [
   whoami,
   status,
+  roleAdd,
+  roleList,
+  roleGrant,
+  roleRevoke,
+  roleGrants,
+  principalGrant,
+  principalRolesCmd,
   principalAdd,
   principalList,
   tokenCreate,
