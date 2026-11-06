@@ -290,36 +290,104 @@ function saveSubs(list: SubEntry[]): void {
   }
 }
 
+/** 单件作品的返回体。批量与单件共用，保证两种调用拿到的字段完全一致。 */
+async function illustPayload(id: number): Promise<Record<string, unknown>> {
+  const d = await illustDetail(id)
+  return {
+    illustId: Number(d.id),
+    title: d.title,
+    userId: Number(d.userId),
+    userName: d.userName,
+    pages: d.pageCount,
+    size: `${d.width}x${d.height}`,
+    xRestrict: d.xRestrict,
+    // sl 决定「能不能发到普通群」：>=4 就是敏感（4 轻度 / 6 有性表现）
+    sl: d.sl,
+    // aiType: 1 非 AI / 2 AI 生成（pixiv 端强制自报，普通榜不含 AI 作品）
+    aiType: d.aiType,
+    r18: d.xRestrict > 0,
+    bookmarks: (await illustStats(id)).bookmarkCount,
+    tags: d.tags,
+    original: d.urls.original,
+  }
+}
+
+/**
+ * 有界并发跑一批异步任务，保持返回顺序。
+ *
+ * 为什么要并发：单个 id 要发两次请求（详情 + 收藏数），每次都新建一条到 pixiv 的
+ * TLS 连接（经代理），握手 1–4 秒；串行时 400 个 id 就是半小时。
+ * 并发只重叠握手与等待，不提高请求频率上限，所以仍然受 pixiv 的 429 约束——
+ * 上限压在 6，默认 2。
+ */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      out[i] = await fn(items[i]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker))
+  return out
+}
+
 const info: Command = {
   name: 'pixiv info',
-  summary: '看单个作品详情（作者、页数、尺寸、标签、分级 sl、是否 R-18）',
-  usage: 'astra pixiv info <illustId>',
+  summary: '看作品详情（作者、页数、尺寸、标签、分级 sl、是否 R-18）；可一次给多个 id',
+  usage: 'astra pixiv info <illustId> [更多 id...] [--concurrency 2]',
   notes: [
     '只读，不下载。R-18 作品会照实返回 xRestrict=1，但 `pull` 默认跳过。',
     '拿不到详情通常是作品已删除或仅登录可见（需要 `pixiv cookie set`）。',
+    '**一次给多个 id 时**返回 `{count, items:[…]}`（items 与单件调用的字段完全一致，顺序按传入顺序），并带 `--table`。',
+    '多 id 的耗时瓶颈是每条到 pixiv 的 TLS 握手（经代理 1–4 秒），`--concurrency` 只重叠等待、默认 2；',
+    '批量核验几百个 id 时用 4 左右比较稳，别拿它当爬虫刷（pixiv 会 429）。',
+    '单个 id 失败不会拖垮整批：该项返回 `{illustId, error}`，其余照常。',
   ],
+  options: {
+    concurrency: {
+      type: 'string',
+      description: '多 id 时的并发请求数 1..6，默认 2（重叠 TLS 握手，不提高请求频率）',
+      valueName: 'n',
+    },
+  },
   minArgs: 1,
-  maxArgs: 1,
-  async run({ positionals }) {
-    const id = requireId(positionals[0], 'illustId')
-    const d = await illustDetail(id)
+  maxArgs: 200,
+  async run({ positionals, values }) {
+    const ids = positionals.map((raw, i) => requireId(raw, i === 0 ? 'illustId' : `第 ${i + 1} 个 illustId`))
+    const concurrency = num(values.concurrency, 2, 1, 6, '--concurrency')
+
+    if (ids.length === 1) {
+      return { data: await illustPayload(ids[0]!) }
+    }
+
+    const items = await mapLimit(ids, concurrency, async (id) => {
+      try {
+        return await illustPayload(id)
+      } catch (err) {
+        // 单件失败要能定位到是哪个 id，而不是整批报错
+        return { illustId: id, error: String((err as Error)?.message ?? err) }
+      }
+    })
+    const ok = items.filter((it) => !('error' in it))
     return {
-      data: {
-        illustId: Number(d.id),
-        title: d.title,
-        userId: Number(d.userId),
-        userName: d.userName,
-        pages: d.pageCount,
-        size: `${d.width}x${d.height}`,
-        xRestrict: d.xRestrict,
-        // sl 决定「能不能发到普通群」：>=4 就是敏感（4 轻度 / 6 有性表现）
-        sl: d.sl,
-        // aiType: 1 非 AI / 2 AI 生成（pixiv 端强制自报，普通榜不含 AI 作品）
-        aiType: d.aiType,
-        r18: d.xRestrict > 0,
-        bookmarks: (await illustStats(id)).bookmarkCount,
-        tags: d.tags,
-        original: d.urls.original,
+      data: { count: items.length, failed: items.length - ok.length, items },
+      table: {
+        headers: ['illustId', '标题', '画师', '页数', '♥收藏', 'sl', '错误'],
+        rows: items.map((it) => {
+          const row = it as Record<string, unknown>
+          return [
+            Number(row.illustId),
+            String(row.title ?? '').slice(0, 28),
+            String(row.userName ?? ''),
+            (row.pages as number | undefined) ?? null,
+            (row.bookmarks as number | undefined) ?? null,
+            (row.sl as number | undefined) ?? null,
+            row.error ? String(row.error).slice(0, 40) : '',
+          ]
+        }),
       },
     }
   },

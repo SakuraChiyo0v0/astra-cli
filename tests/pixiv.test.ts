@@ -96,10 +96,13 @@ test('命令都登记上了，且名字以 pixiv 开头', () => {
   }
 })
 
-test('参数个数按声明拦住（info 只收一个 id）', () => {
+test('参数个数按声明拦住（info 至少一个 id，多 id 上限 200）', () => {
   const info = pixivCommands.find((c) => c.name === 'pixiv info')!
   assert.throws(() => parseCommandArgs(info, []), /缺少参数/)
-  assert.throws(() => parseCommandArgs(info, ['1', '2']), /参数太多/)
+  // 0.48 起 info 收多个 id（批量核验用），超出上限才拦
+  assert.doesNotThrow(() => parseCommandArgs(info, ['1', '2']))
+  const tooMany = Array.from({ length: 201 }, (_, i) => String(i + 1))
+  assert.throws(() => parseCommandArgs(info, tooMany), /参数太多/)
 })
 
 test('pull 没配目录且没给 --out 时明确报错，不瞎写默认路径', async () => {
