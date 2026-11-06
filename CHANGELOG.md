@@ -1,3 +1,19 @@
+## 0.49.1
+
+- `schedule list` 的上次/下次时间按本机时区显示（原来直接截 ISO，看到的 UTC 会比实际早 8 小时）
+
+## 0.49.0
+
+离开宿主也能用：内置调度 + 多通道通知。
+
+- `astra schedule add|list|remove|enable|disable|run|tick`：间隔式调度，**无守护进程**，
+  `schedule tick` 跑所有到期任务，交给 crontab / Windows 任务计划 / 任意调度器每分钟调一次
+- 调度记录带 owner，受限主体只看得到自己建的；执行走分离进程，日志落 `<ASTRA_HOME>/logs/schedule-<名字>.log`
+- `--every` 支持 `30s/30m/6h/1d` 或纯分钟数；`--cmd` 不写 astra 前缀，支持引号包参数
+- 通知从「只支持飞书 webhook」扩到三通道：飞书（含签名）/ Telegram Bot / 通用 webhook，
+  配置了哪个发哪个，都没配就静默跳过；新增 `astra notify providers`
+- `notify test` 会回报各通道的配置状态
+
 ## 0.48.1
 
 可移植性：把「本机路径假设」参数化，换机器不再直接坏。

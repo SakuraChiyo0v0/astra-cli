@@ -169,6 +169,18 @@ const MIGRATIONS: string[] = [
   `alter table audit_log add column principal text`,
   // 可见性（M3）：任务归属主体，受限调用只看到自己起的。
   `alter table jobs add column owner text`,
+  // 内置调度（0.49.0）：无守护进程，靠 `schedule tick` 驱动。
+  `create table schedules (
+     name text primary key,
+     command text not null,
+     interval_min integer not null,
+     enabled integer not null default 1,
+     owner text,
+     last_run_at text,
+     next_run_at text,
+     last_status text,
+     created_at text not null
+   )`,
 ]
 
 export function db(): DatabaseSync {

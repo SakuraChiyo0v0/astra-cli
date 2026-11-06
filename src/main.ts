@@ -38,12 +38,13 @@ import { douyinCommands } from './douyin/commands.ts'
 import { lolCommands } from './lol/commands.ts'
 import { xCommands } from './x/commands.ts'
 import { authCommands } from './auth/commands.ts'
+import { scheduleCommands } from './schedule/commands.ts'
 import { allowedPatterns, authorize, openAuth, resolveToken, scopeOf } from './core/auth.ts'
 import { readToken, setIdentity, setToken } from './core/identity.ts'
 import { setCommandRegistry } from './core/registry.ts'
 import { record as recordAudit } from './core/audit.ts'
 import { listSources } from './lx/store.ts'
-import { notify } from './core/notify.ts'
+import { notify, notifyProviders } from './core/notify.ts'
 import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
 import { backup, listBackups, restore } from './core/backup.ts'
 import { listAudit, pruneAudit } from './core/audit.ts'
@@ -235,12 +236,30 @@ const doctor: Command = {
 
 const notifyTest: Command = {
   name: 'notify test',
-  summary: '往配置的飞书 webhook 发一条测试消息',
+  summary: '往所有已配置通道发一条测试消息',
   usage: 'astra notify test [文字]',
   async run({ positionals }) {
     const sent = await notify(positionals.join(' ') || 'astra 通知测试')
-    if (!sent) throw new AstraError('NOTIFY_FAILED', '发送失败或未配置 webhook', { exitCode: 3, hint: '`astra config set notify.feishu_webhook <地址>`' })
-    return { data: { sent } }
+    if (!sent) {
+      throw new AstraError('NOTIFY_FAILED', '发送失败，或没有任何通道被配置', {
+        exitCode: 3,
+        hint: '至少配一个：`notify.feishu_webhook` / `notify.telegram_chat` + `ASTRA_TELEGRAM_TOKEN` / `notify.webhook_url`',
+      })
+    }
+    return { data: { sent, providers: notifyProviders() } }
+  },
+}
+
+const notifyProvidersCmd: Command = {
+  name: 'notify providers',
+  summary: '看哪些通知通道可用',
+  usage: 'astra notify providers',
+  async run() {
+    const rows = notifyProviders()
+    return {
+      data: { providers: rows },
+      table: { headers: ['通道', '状态'], rows: rows.map((r) => [r.name, r.configured ? '可用' : '未配置']) },
+    }
   },
 }
 
@@ -379,10 +398,10 @@ const auditCmd: Command = {
 
 const commands: Command[] = [
 
-  help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest,
+  help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest, notifyProvidersCmd,
   ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands, ...modelCommands,
   ...dbCommands, ...libCommands, ...quarkCommands, ...cloudCommands,
-  ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands, ...llmCommands, ...deviceCommands, ...xCommands, ...authCommands,
+  ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands, ...llmCommands, ...deviceCommands, ...xCommands, ...authCommands, ...scheduleCommands,
 ]
 
 // 供 `astra auth doctor` 之类需要完整清单的命令读取（避免 import main 形成环）
