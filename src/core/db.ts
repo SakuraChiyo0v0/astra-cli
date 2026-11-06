@@ -165,6 +165,8 @@ const MIGRATIONS: string[] = [
   `alter table subscriptions add column max_min integer not null default 0`,
   `alter table subscriptions add column factor integer not null default 2`,
   `alter table subscriptions add column current_min integer not null default 0`,
+  // 账户机制（M1）：审计要能回答「谁做的」。没有计牌时记 owner。
+  `alter table audit_log add column principal text`,
 ]
 
 export function db(): DatabaseSync {

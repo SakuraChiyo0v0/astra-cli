@@ -37,6 +37,8 @@ import { cloudCommands } from './cloud/commands.ts'
 import { douyinCommands } from './douyin/commands.ts'
 import { lolCommands } from './lol/commands.ts'
 import { xCommands } from './x/commands.ts'
+import { authCommands, resolveIdentityFromToken } from './auth/commands.ts'
+import { readToken, setIdentity } from './core/identity.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
 import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
@@ -374,7 +376,7 @@ const commands: Command[] = [
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest,
   ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands, ...modelCommands,
   ...dbCommands, ...libCommands, ...quarkCommands, ...cloudCommands,
-  ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands, ...llmCommands, ...deviceCommands, ...xCommands,
+  ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands, ...llmCommands, ...deviceCommands, ...xCommands, ...authCommands,
 ]
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
@@ -467,6 +469,18 @@ async function main(): Promise<number> {
   process.once('SIGTERM', onSignal)
   try {
     const parsed = parseCommandArgs(routed.command, restoreCommandFlags(argv, routed.command, routed.rest))
+    // 身份解析（M1：只记录不拦截）。没有令牌就是本机 owner，连库都不开。
+    const bearer = readToken()
+    if (bearer) {
+      try {
+        const hit = await resolveIdentityFromToken(bearer.token)
+        if (hit) {
+          setIdentity({ id: hit.principal.id, kind: hit.principal.kind, name: hit.principal.name, source: bearer.source, tokenId: hit.tokenId })
+        }
+      } catch {
+        // 鉴权库不可用不能挡住命令本身：M1 阶段按 owner 继续
+      }
+    }
     const result = await routed.command.run({ ...parsed, signal: controller.signal })
     // `--table`：只影响**显示**，不改返回结构 —— 脚本拿到的 JSON 一模一样。
     // 命令没提供 table 视图时退回 JSON，不让这个开关变得危险。

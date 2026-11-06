@@ -1,3 +1,13 @@
+## 0.41.0
+
+账户机制 M1：身份、令牌、审计带主体。**这一版只记录，不做权限拦截**（M2 才开）。
+
+- 新增 `astra auth`：`whoami` / `status` / `principal add|list` / `token create|list|revoke`
+- 身份解析顺序：`ASTRA_TOKEN` → `<ASTRA_HOME>/token` → 本机 owner；没有令牌时行为与以前完全一致
+- 令牌只存 sha256（`astra_token.token_hash`），明文仅创建时返回一次；支持 `--days` 过期与吊销
+- `audit_log` 新增 `principal` 列，写操作能回答「谁做的」；老库按末尾迁移自动补列
+- 主体/令牌表走 `core/db` 抽象层：配了 PG 就落 PG（多 bot 共享），否则落本机 SQLite
+
 ## 0.40.0
 
 ### 新增：订阅支持「我的红心」+ 自适应退避间隔

@@ -16,6 +16,7 @@
  */
 import { db } from './db.ts'
 import { progress } from './output.ts'
+import { currentIdentity } from './identity.ts'
 
 export interface AuditEntry {
   action: string
@@ -31,6 +32,8 @@ export interface AuditEntry {
 export interface AuditRecord extends AuditEntry {
   id: number
   at: string
+  /** 谁做的：主体名（没有簪牌时是 owner）。 */
+  principal: string
   /** 动作属于哪个域：从 action 的第一段取。 */
   domain: string
 }
@@ -38,6 +41,7 @@ export interface AuditRecord extends AuditEntry {
 interface Row {
   id: number
   at: string
+  principal: string | null
   action: string
   summary: string
   ok: number
@@ -51,7 +55,7 @@ interface Row {
 export function record(entry: AuditEntry): void {
   try {
     db()
-      .prepare('insert into audit_log (at, action, summary, ok, error, detail) values (?, ?, ?, ?, ?, ?)')
+      .prepare('insert into audit_log (at, action, summary, ok, error, detail, principal) values (?, ?, ?, ?, ?, ?, ?)')
       .run(
         new Date().toISOString(),
         entry.action,
@@ -59,6 +63,7 @@ export function record(entry: AuditEntry): void {
         entry.ok ? 1 : 0,
         entry.error ? entry.error.slice(0, 500) : null,
         serializeDetail(entry.detail),
+        currentIdentity().name,
       )
   } catch (err) {
     // 写审计失败不能挡住正在做的事
@@ -82,6 +87,7 @@ function fromRow(row: Row): AuditRecord {
   return {
     id: row.id,
     at: row.at,
+    principal: row.principal ?? 'owner',
     action: row.action,
     domain: row.action.split('.')[0] ?? '',
     summary: row.summary,
