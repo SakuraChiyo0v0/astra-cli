@@ -963,17 +963,27 @@ export interface Stats {
 }
 
 export async function stats(db: Database): Promise<Stats> {
+  // 统计也必须走同一条可见性规则（M4）：否则受限主体能从总数/平台分布推断出私有资产存在
+  const scope = assetScope('a')
+  // 一律带别名 join：可见性片段引用 a.owner / a.visibility，不 join 就拼不出来
+  const assetFrom = 'assets a'
+  const fileFrom = 'files f join assets a on a.id = f.asset_id'
+  const where = ` where 1=1${scope.sql}`
+  const params = scope.params
+
   const n = async (sql: string): Promise<number> =>
-    Number((await db.conn.query<{ n: number | string }>(sql))[0]?.n ?? 0)
+    Number((await db.conn.query<{ n: number | string }>(sql, params))[0]?.n ?? 0)
+
   const platformRows = await db.conn.query<{ platform: string; n: number | string }>(
-    'select platform, count(*) as n from assets group by platform',
+    `select platform, count(*) as n from ${assetFrom}${where} group by platform`,
+    params,
   )
   return {
-    assets: await n('select count(*) as n from assets'),
-    files: await n('select count(*) as n from files'),
-    present: await n("select count(*) as n from files where state = 'present'"),
-    missing: await n("select count(*) as n from files where state = 'missing'"),
-    totalBytes: await n('select coalesce(sum(size), 0) as n from files'),
+    assets: await n(`select count(*) as n from ${assetFrom}${where}`),
+    files: await n(`select count(*) as n from ${fileFrom}${where}`),
+    present: await n(`select count(*) as n from ${fileFrom}${where} and f.state = 'present'`),
+    missing: await n(`select count(*) as n from ${fileFrom}${where} and f.state = 'missing'`),
+    totalBytes: await n(`select coalesce(sum(f.size), 0) as n from ${fileFrom}${where}`),
     byPlatform: Object.fromEntries(platformRows.map((r) => [r.platform, Number(r.n)])),
   }
 }

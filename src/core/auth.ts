@@ -36,11 +36,18 @@ export function scopeOf(commandName: string): string {
   return commandName.trim().toLowerCase().replace(/\s+/g, '.')
 }
 
-/** scope 模式匹配：`*` 全通，`bili.*` 前缀，否则精确。 */
+/**
+ * scope 模式匹配：`*` 全通，`bili.*` 只匹配**下一段**（`bili.get` 命中，`bili.a.b` 不命中），否则精确。
+ *
+ * 早先用 startsWith 实现前缀匹配，`bili.*` 会意外命中 `bili.x.y` 这类更深命令 ——
+ * 授权面会随命令层级变深而悄悄扩大，所以改成按段判断。
+ */
 export function matchScope(pattern: string, scope: string): boolean {
   if (pattern === '*' || pattern === scope) return true
-  if (pattern.endsWith('.*')) return scope.startsWith(pattern.slice(0, -1))
-  return false
+  if (!pattern.endsWith('.*')) return false
+  const prefix = pattern.slice(0, -2)
+  if (!scope.startsWith(`${prefix}.`)) return false
+  return !scope.slice(prefix.length + 1).includes('.')
 }
 
 export interface Role {
@@ -388,5 +395,35 @@ export async function allowedPatterns(db: Database, principal: Principal): Promi
     [principal.id],
   )
   return rows.map((r) => String(r.pattern))
+}
+
+/** 停用主体：令牌立刻失效（resolveToken 会看 status），但记录留着，便于审计回溯。 */
+export async function disablePrincipal(db: Database, name: string): Promise<Principal> {
+  const principal = await findPrincipal(db, name)
+  if (!principal) throw new AstraError('NOT_FOUND', `主体不存在：${name}`, { hint: '`astra auth principal list` 看现有主体' })
+  if (principal.kind === 'owner') throw invalidInput('owner 不能停用', 'owner 是本机唯一入口；要收紧请改它的令牌')
+  await db.conn.exec('update astra_principal set status = ? where id = ?', ['disabled', principal.id])
+  await db.conn.exec('update astra_token set revoked_at = ? where principal_id = ? and revoked_at is null', [
+    new Date().toISOString(),
+    principal.id,
+  ])
+  return { ...principal, status: 'disabled' }
+}
+
+/**
+ * 彻底清理主体：先撤销所有令牌，再删角色绑定与主体本身。
+ * 没有外键（SQLite/PG 共用表结构），所以清理必须显式做，不能指望级联。
+ */
+export async function purgePrincipal(
+  db: Database,
+  name: string,
+): Promise<{ tokens: number; roles: number }> {
+  const principal = await findPrincipal(db, name)
+  if (!principal) throw new AstraError('NOT_FOUND', `主体不存在：${name}`, { hint: '`astra auth principal list` 看现有主体' })
+  if (principal.kind === 'owner') throw invalidInput('owner 不能删', '这是本机唯一入口')
+  const tokens = await db.conn.exec('delete from astra_token where principal_id = ?', [principal.id])
+  const roles = await db.conn.exec('delete from astra_principal_role where principal_id = ?', [principal.id])
+  await db.conn.exec('delete from astra_principal where id = ?', [principal.id])
+  return { tokens, roles }
 }
 

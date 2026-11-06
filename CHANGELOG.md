@@ -1,3 +1,13 @@
+## 0.46.0
+
+账户机制批次 2：通配收紧、统计可见性、迁移命名空间、主体停用/清理。
+
+- `matchScope` 改为按段匹配：`bili.*` 只命中下一段，不再意外放行 `bili.job.cancel` 这类深层命令
+- `lib stats` 走与 find/where/events 相同的可见性规则（不 join assets 就拼不出条件，已统一加别名）
+- 迁移 id 加 `astra_` 命名空间；新增 `renamedFrom` 处理已应用的旧 id（只补记，不重跑 DDL）
+- 新增 `auth principal disable`（令牌立即失效、记录保留）与 `auth principal purge --yes`（显式清理，无外键靠它）
+- 补 scope 匹配与迁移改名的测试
+
 ## 0.45.2
 
 - `auth whoami` / `auth status` 的 `source` 如实反映令牌来源（file / env），不再一律写 env

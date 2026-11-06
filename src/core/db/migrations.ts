@@ -17,6 +17,11 @@ export interface Migration {
   id: string
   /** 这个迁移在干什么（给 `db status` 显示）。 */
   summary: string
+  /**
+   * 旧 id。改过名字的迁移靠它认领已应用的记录 —— 否则会被当成“未应用”重跑一遍 DDL。
+   * 多工具共用一个库时，新迁移一律用 `astra_` 前缀，避免编号相撞。
+   */
+  renamedFrom?: string
   up: Record<DialectName, string[]>
   /**
    * SQL 执行完之后的数据搬迁钩子（同一个事务里跑）。
@@ -250,7 +255,8 @@ const M0004: Migration = {
 
 /** 0005：资产归属与可见性（账户机制 M4）。 */
 const M0005: Migration = {
-  id: '0005_asset_visibility',
+  id: 'astra_0005_asset_visibility',
+  renamedFrom: '0005_asset_visibility',
   summary: 'assets 增加 owner / visibility（受限主体只看自己的或 public）',
   up: {
     sqlite: [
@@ -334,7 +340,10 @@ export async function migrate(
       }
     }
 
-    const pending = MIGRATIONS.filter((m) => !doneById.has(m.id))
+    // 改过名字的迁移：旧 id 已应用 → 只补记新 id，不重跑 DDL
+    const renamed = MIGRATIONS.filter((m) => !doneById.has(m.id) && m.renamedFrom && doneById.has(m.renamedFrom))
+    const renamedIds = new Set(renamed.map((m) => m.id))
+    const pending = MIGRATIONS.filter((m) => !doneById.has(m.id) && !renamedIds.has(m.id))
     const result: MigrateResult = {
       dialect,
       applied: [],
@@ -342,12 +351,20 @@ export async function migrate(
       current: done.length,
       total: MIGRATIONS.length,
     }
-    if (pending.length === 0 || options.dryRun) {
+    if ((pending.length === 0 && renamed.length === 0) || options.dryRun) {
       result.applied = pending.map((m) => m.id)
       return result
     }
 
     await db.conn.tx(async (tx) => {
+      // 先补记改名的迁移（不执行 DDL），再跑真正的新迁移
+      for (const m of renamed) {
+        await tx.exec(
+          `insert into schema_migrations (id, dialect, checksum, applied_at) values (?, ?, ?, ?)`,
+          [m.id, dialect, checksum(m), new Date().toISOString()],
+        )
+        result.skipped.push(m.id)
+      }
       for (const m of pending) {
         const sql = m.up[dialect]
         if (!sql || sql.length === 0) {
@@ -367,7 +384,8 @@ export async function migrate(
 
     // 进度只统计**本仓库定义**的迁移：共用同一个库时，schema_migrations 里还有别的工具的记录
     const known = new Set(MIGRATIONS.map((m) => m.id))
-    const doneOwn = done.filter((d) => known.has(d.id)).length
+    // 刚补记的改名迁移也算“已完成”
+    const doneOwn = done.filter((d) => known.has(d.id)).length + renamed.length
     result.current = doneOwn + pending.length
     return result
   }

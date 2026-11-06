@@ -22,11 +22,13 @@ import {
   findPrincipal,
   grantScope,
   listGrants,
+  disablePrincipal,
   listPrincipals,
   listRoles,
   listTokens,
   openAuth,
   principalRoles,
+  purgePrincipal,
   resolveToken,
   revokeScope,
   revokeToken,
@@ -397,6 +399,46 @@ const ownerToken: Command = {
   },
 }
 
+
+const principalDisable: Command = {
+  name: 'auth principal disable',
+  summary: '停用主体（令牌立刻失效，记录保留）',
+  usage: 'astra auth principal disable <主体>',
+  minArgs: 1,
+  maxArgs: 1,
+  async run(ctx) {
+    const db = await openAuth()
+    try {
+      const p = await disablePrincipal(db, ctx.positionals[0]!)
+      return okResult({ principal: p.name, status: p.status, tokensRevoked: true })
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
+const principalPurge: Command = {
+  name: 'auth principal purge',
+  summary: '彻底删除主体（连带令牌与角色绑定），需 --yes',
+  usage: 'astra auth principal purge <主体> --yes',
+  notes: ['没有外键级联，所以这是显式清理；日常建议用 disable 而不是 purge。'],
+  minArgs: 1,
+  maxArgs: 1,
+  options: { yes: { type: 'boolean', description: '确认删除' } },
+  async run(ctx) {
+    if (ctx.values.yes !== true) {
+      throw invalidInput('purge 会真删数据，需显式加 --yes', '只想让人失效请用 `astra auth principal disable <主体>`')
+    }
+    const db = await openAuth()
+    try {
+      const out = await purgePrincipal(db, ctx.positionals[0]!)
+      return okResult({ principal: ctx.positionals[0], ...out })
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
 const status: Command = {
   name: 'auth status',
   summary: '账户机制状态（存储后端、主体数、令牌数）',
@@ -466,6 +508,8 @@ export const authCommands: Command[] = [
   roleGrants,
   principalGrant,
   principalRolesCmd,
+  principalDisable,
+  principalPurge,
   principalAdd,
   principalList,
   tokenCreate,
