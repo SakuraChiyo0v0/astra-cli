@@ -9,7 +9,7 @@
  */
 import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { verifyImage } from '../core/imagecheck.ts'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { mirrorFile } from '../core/db/mirror.ts'
 import { getConfig } from '../core/config.ts'
@@ -184,11 +184,23 @@ async function pullWorks(ids: number[], opts: PullOptions): Promise<PullSummary>
     const pages = opts.pages ? allPages.slice(0, opts.pages) : allPages
     out.pages += pages.length
     const root = sensitiveDirFor(detail, opts.dir, opts.outExplicit === true)
-    const target = join(root, detail.userId)
+    // 落盘结构：`<root>/<userId>/<illustId>/<illustId>_pN.ext`（2026-11-06 起）。
+    // 多页作品和同画师其他作品平铺在一起时，肉眼分不清哪些页属于同一作品；
+    // 文件名里仍保留 illustId，旧脚本的 `*_pN.*` glob 照样能认，只是多了一层目录。
+    const target = join(root, detail.userId, detail.id)
     if (!opts.dry) await mkdir(target, { recursive: true })
 
     for (const page of pages) {
       const file = join(target, `${detail.id}_p${page.page}.${page.ext}`)
+      // 旧布局的同一个文件：存在就搬进新目录，当作已下载 —— 否则升级后会把整个库重下一遍。
+      const legacy = join(root, detail.userId, `${detail.id}_p${page.page}.${page.ext}`)
+      if (!opts.dry && !existsSync(file) && existsSync(legacy)) {
+        try {
+          await rename(legacy, file)
+        } catch {
+          /* 搬不动就当没下过，后面会重下 */
+        }
+      }
       if (existsSync(file) && statSync(file).size > 0) {
         out.skipped += 1
         continue

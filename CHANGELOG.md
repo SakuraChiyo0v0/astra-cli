@@ -1,3 +1,14 @@
+## 0.51.0
+
+pixiv 落盘改成「按作品分层」：`<root>/<userId>/<illustId>/<illustId>_pN.ext`。
+
+- 动机：同一画师几百个文件平铺，多页作品的 p0/p1/p2 和别的作品混在一起，肉眼分不清归属
+  （限制库 470 个作品里 185 个是多页，平均 3 页）
+- 文件名仍带 illustId，旧脚本的 `*_pN.*` glob 照样能匹配；多出来的只是一层目录
+- **兼容旧布局**：落盘前先查旧路径 `…/<userId>/<illustId>_pN.ext`，存在就搬进新目录并记为 skipped，
+  升级后不会把整个库重下一遍
+- 迁移动作不在 CLI 里做（一次性的事），用 `/opt/data/scripts/pixiv_migrate_work_dirs.py`
+
 ## 0.50.0
 
 订阅命令自带通知：`music subscribe run --notify` / `bili subscribe run --notify` / `pixiv sub run --notify`。
