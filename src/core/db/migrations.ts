@@ -8,6 +8,8 @@
  * - 不自动迁移：启动只提示，`astra db migrate` 显式执行
  */
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { progress } from '../output.ts'
 import { AstraError } from '../errors.ts'
 import type { Database } from './index.ts'
 import { PgConn } from './pg.ts'
@@ -173,6 +175,11 @@ const M0002: Migration = {
 
     const now = new Date().toISOString()
     const rootPath = '/host-root/volume1/音乐'
+    // 这台机器上没有 NAS 音乐目录就跳过回填：否则会在别的机器上插一条指向不存在路径的 root
+    if (!existsSync(rootPath)) {
+      progress('migrate.nas_music_missing', { path: rootPath })
+      return
+    }
     const roots = await db.conn.query<{ id: string }>('select id from roots where label = ?', ['nas-music'])
     const rootId = roots[0]?.id ?? 'root_nas'
     if (roots.length === 0) {

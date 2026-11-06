@@ -1,3 +1,15 @@
+## 0.48.1
+
+可移植性：把「本机路径假设」参数化，换机器不再直接坏。
+
+- `lol save` 不再写死 `/opt/data/scripts/lol_save_match.sh`：新增配置 `lol.saveScript`，
+  旧的默认位置只在存在时兜底，都没有就报 `CONFIG` 并给配置提示
+- X 工具目录默认改为 `<ASTRA_HOME>/bin`（`ASTRA_X_BIN` / `x.bin` 仍优先），
+  `/opt/data/venvs/x/bin` 降级为“存在才用”的兼容路径
+- `doctor` 回显的 CLI 入口不再写死 `/opt/astra/bin/astra`，改读 `process.argv[1]`
+- 迁移回填 NAS 音乐根前先检查 `/host-root/volume1/音乐` 是否存在，不存在就跳过并记警告，
+  避免在别的机器上插一条指向空路径的 root
+
 ## 0.48.0
 
 `pixiv info` 收多个 id，批量核验不再逐个起进程。

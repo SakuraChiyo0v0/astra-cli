@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 /**
  * `astra lol ...` — 英雄联盟战绩（数据源：PC 上客户端的 LCU）。
  *
@@ -18,7 +19,8 @@ import { fetchLcuSnapshot, fetchPlayerRank, fetchPlayerSnapshot, pcHost, myParti
 import { championNameMap, latestRanks, openLolDb, recentMatches, stats, storeSnapshot, tableName } from './db.ts'
 import { fetchChampions, storeChampions } from './champions.ts'
 
-const ASTRA = '/opt/astra/bin/astra'
+/** 本进程的入口（doctor 回显用），不写死安装路径。 */
+const SELF_ENTRY = process.argv[1] ?? 'astra'
 
 function limitOf(value: unknown, fallback: number, max = 200): number {
   if (value === undefined) return fallback
@@ -65,7 +67,14 @@ const save: Command = {
   async run({ positionals }) {
     const ids = positionals.map((x) => x.trim()).filter(Boolean)
     if (ids.length === 0) throw invalidInput('缺少 gameId', '例：astra lol save 11441752865')
-    const script = '/opt/data/scripts/lol_save_match.sh'
+    const legacy = '/opt/data/scripts/lol_save_match.sh'
+    const script = (getConfig('lol.saveScript') ?? '').trim() || (existsSync(legacy) ? legacy : '')
+    if (!script) {
+      throw new AstraError('CONFIG', '没有配置单局入库脚本', {
+        exitCode: 3,
+        hint: '`astra config set lol.saveScript /path/to/lol_save_match.sh`（脚本负责抓取→回传→入库）',
+      })
+    }
     const result = await new Promise<{ code: number; out: string }>((resolve) => {
       const child = spawn('sh', [script, ...ids], { stdio: ['ignore', 'pipe', 'pipe'] })
       let out = ''
@@ -419,7 +428,7 @@ export const lolCommands: Command[] = [
         await db.conn.close()
       }
 
-      return okResult({ host, clientRunning: clientOk, checks, astra: ASTRA }, [])
+      return okResult({ host, clientRunning: clientOk, checks, astra: SELF_ENTRY }, [])
     },
   },
 ]

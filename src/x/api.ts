@@ -12,18 +12,22 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { getConfig } from '../core/config.ts'
+import { homePath } from '../core/paths.ts'
 import { AstraError } from '../core/errors.ts'
 import { cookieTxtPath, writeCookieFile, type XCredential } from './auth.ts'
 
-/** 本机默认装在这里；`x.bin` 配置或 `ASTRA_X_BIN` 可改。 */
-const DEFAULT_TOOLS_DIR = '/opt/data/venvs/x/bin'
+/** 工具目录：`ASTRA_X_BIN` > `x.bin` > `<ASTRA_HOME>/bin`；旧的 /opt/data/venvs/x/bin 只在存在时兜底。 */
+const LEGACY_TOOLS_DIR = '/opt/data/venvs/x/bin'
 export const DEFAULT_PROXY = 'http://mihomo:7890'
 
 export function toolsDir(): string {
   const fromEnv = process.env.ASTRA_X_BIN?.trim()
   if (fromEnv) return fromEnv
   const configured = getConfig('x.bin')?.trim()
-  return configured || DEFAULT_TOOLS_DIR
+  if (configured) return configured
+  const local = homePath('bin')
+  if (existsSync(local)) return local
+  return existsSync(LEGACY_TOOLS_DIR) ? LEGACY_TOOLS_DIR : local
 }
 
 export function twitterBin(): string {

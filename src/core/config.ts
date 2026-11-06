@@ -108,6 +108,7 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   { key: 'x.bin', description: 'twitter-cli / gallery-dl 所在目录；留空 = /opt/data/venvs/x/bin', default: '' },
   // 国服没有公开战绩接口，只能借 PC 上客户端的 LCU：ssh 到 PC 跑脚本再把 JSON 拿回来
+  { key: 'lol.saveScript', description: '单局入库脚本（如 lol_save_match.sh）；留空则用内置默认位置，找不到会明确报未配置', default: '' },
   { key: 'lol.pc', description: '跑英雄联盟客户端的 PC 的 ssh 主机名（同 ~/.ssh/config）；留空用 "pc"', default: 'pc' },
   { key: 'lol.pc-dump-dir', description: 'PC 上存放采集脚本和 JSON 的目录（正斜杠写法，scp 用）', default: 'C:/LocalSpace/lol-dump' },
   { key: 'comic.dir', description: '漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先', default: '',
