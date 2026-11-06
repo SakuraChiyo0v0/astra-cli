@@ -15,13 +15,14 @@ import { db } from '../core/db.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
 import { getConfig } from '../core/config.ts'
-import { artistTopTracks, albumInfo, playlistTracks, type Track } from './netease.ts'
+import { artistTopTracks, albumInfo, playlistTracks, songDetails, type Track } from './netease.ts'
+import { likedIds, requireSession } from './account-api.ts'
 import { createJob, spawnWorker } from '../core/jobs.ts'
 import { jobItemsFor, MUSIC_DOMAIN } from './jobs.ts'
 import { findTrack } from './library.ts'
 import type { Quality } from './audio.ts'
 
-export type SubscribeKind = 'playlist' | 'album' | 'artist'
+export type SubscribeKind = 'playlist' | 'album' | 'artist' | 'liked'
 
 export interface Subscription {
   id: string
@@ -36,6 +37,11 @@ export interface Subscription {
   lastSeen: string[] | null
   lastJobId: string | null
   createdAt: string
+  /** 自适应间隔（0=关，沿用 everyHours）：基准分钟、封顶分钟、增长倍数、当前阶梯。 */
+  baseMin: number
+  maxMin: number
+  factor: number
+  currentMin: number
 }
 
 interface Row {
@@ -50,6 +56,10 @@ interface Row {
   last_seen: string | null
   last_job_id: string | null
   created_at: string
+  base_min: number
+  max_min: number
+  factor: number
+  current_min: number
 }
 
 function fromRow(row: Row): Subscription {
@@ -65,6 +75,10 @@ function fromRow(row: Row): Subscription {
     lastSeen: row.last_seen ? (JSON.parse(row.last_seen) as string[]) : null,
     lastJobId: row.last_job_id,
     createdAt: row.created_at,
+    baseMin: row.base_min ?? 0,
+    maxMin: row.max_min ?? 0,
+    factor: row.factor ?? 2,
+    currentMin: row.current_min ?? 0,
   }
 }
 
@@ -79,7 +93,35 @@ export function findSubscription(idOrPrefix: string): Subscription {
   return fromRow(rows[0]!)
 }
 
-export function addSubscription(input: { kind: SubscribeKind; targetId: string; title: string; everyHours: number; quality: Quality | null }): Subscription {
+/**
+ * 下一次检查间隔（分钟）。纯函数，测试钉住行为。
+ *
+ * - 有新歌 → 立刻复位到基准：用户正在活跃，5 分钟内就该跟上
+ * - 没新歌 → 乘倍数增长，封顶 maxMin：冷场时别拿请求去换空气
+ */
+export function nextInterval(input: { current: number; base: number; max: number; factor: number; changed: boolean }): number {
+  const base = Math.max(1, Math.trunc(input.base))
+  const max = Math.max(base, Math.trunc(input.max))
+  if (input.changed) return base
+  const factor = Math.min(10, Math.max(2, Math.trunc(input.factor)))
+  const current = Math.max(base, Math.trunc(input.current) || base)
+  return Math.min(current * factor, max)
+}
+
+/** 这条订阅距离下次检查还有多少分钟（自适应优先，否则按 everyHours）。 */
+export function intervalMinutesOf(sub: Pick<Subscription, 'everyHours' | 'baseMin' | 'currentMin'>): number {
+  if (sub.baseMin > 0) return Math.max(sub.baseMin, sub.currentMin || sub.baseMin)
+  return sub.everyHours * 60
+}
+
+export function addSubscription(input: {
+  kind: SubscribeKind
+  targetId: string
+  title: string
+  everyHours: number
+  quality: Quality | null
+  backoff?: { baseMin: number; maxMin: number; factor: number }
+}): Subscription {
   const existing = db().prepare('select * from subscriptions where kind = ? and target_id = ?').get(input.kind, input.targetId) as Row | undefined
   if (existing) throw new AstraError('ALREADY_SUBSCRIBED', `已经在订阅「${existing.title}」了`, {
     exitCode: 2,
@@ -88,10 +130,17 @@ export function addSubscription(input: { kind: SubscribeKind; targetId: string; 
   const id = randomUUID().slice(0, 8)
   db()
     .prepare(
-      `insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, created_at)
-       values (?, ?, ?, ?, ?, ?, 1, ?)`,
+      `insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, created_at,
+                                  base_min, max_min, factor, current_min)
+       values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
     )
-    .run(id, input.kind, input.targetId, input.title, input.quality, input.everyHours, new Date().toISOString())
+    .run(
+      id, input.kind, input.targetId, input.title, input.quality, input.everyHours, new Date().toISOString(),
+      input.backoff?.baseMin ?? 0,
+      input.backoff?.maxMin ?? 0,
+      input.backoff?.factor ?? 2,
+      input.backoff?.baseMin ?? 0,
+    )
   return findSubscription(id)
 }
 
@@ -100,7 +149,14 @@ export function removeSubscription(idOrPrefix: string): boolean {
   return db().prepare('delete from subscriptions where id = ?').run(sub.id).changes > 0
 }
 
-export function setSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean; quality?: Quality | null }): Subscription {
+export function setSubscription(idOrPrefix: string, patch: {
+  everyHours?: number
+  enabled?: boolean
+  quality?: Quality | null
+  baseMin?: number
+  maxMin?: number
+  factor?: number
+}): Subscription {
   const sub = findSubscription(idOrPrefix)
   const sets: string[] = []
   const values: (string | number | null)[] = []
@@ -116,7 +172,21 @@ export function setSubscription(idOrPrefix: string, patch: { everyHours?: number
     sets.push('quality = ?')
     values.push(patch.quality)
   }
-  if (sets.length === 0) throw invalidInput('没有要改的东西', '可用：--every <小时> / --enable / --disable / --quality <档位>')
+  if (patch.baseMin !== undefined) {
+    sets.push('base_min = ?', 'current_min = ?')
+    values.push(patch.baseMin, patch.baseMin)
+  }
+  if (patch.maxMin !== undefined) {
+    sets.push('max_min = ?')
+    values.push(patch.maxMin)
+  }
+  if (patch.factor !== undefined) {
+    sets.push('factor = ?')
+    values.push(patch.factor)
+  }
+  if (sets.length === 0) {
+    throw invalidInput('没有要改的东西', '可用：--every <小时> / --base <分钟> / --max <分钟> / --factor <倍数> / --enable / --disable / --quality <档位>')
+  }
   values.push(sub.id)
   db().prepare(`update subscriptions set ${sets.join(', ')} where id = ?`).run(...values)
   return findSubscription(sub.id)
@@ -126,6 +196,13 @@ export function setSubscription(idOrPrefix: string, patch: { everyHours?: number
 export async function fetchSubscriptionTracks(sub: Subscription, signal?: AbortSignal): Promise<Track[]> {
   if (sub.kind === 'playlist') return (await playlistTracks(sub.targetId, signal)).tracks
   if (sub.kind === 'album') return (await albumInfo(sub.targetId, signal)).tracks
+  if (sub.kind === 'liked') {
+    // targetId 存的就是账号 id，不用再查一次 account 接口
+    const { session } = requireSession(sub.targetId, signal)
+    const ids = await likedIds(session, sub.targetId, signal)
+    // 红心列表只给 id，标题/歌手要靠详情接口补；几百首一次请求就够（内部按 500 分批）
+    return ids.length === 0 ? [] : songDetails(ids, signal)
+  }
   return (await artistTopTracks(sub.targetId, signal)).tracks
 }
 
@@ -174,6 +251,20 @@ export async function runSubscription(sub: Subscription, options: { baselineOnly
   }
 
   const now = new Date().toISOString()
+  // 自适应订阅：按「这次有没有新歌」调整下一次的等待时间。
+  // 基线那次不算变化（否则第一次订阅就会把间隔复位，等于没退避）。
+  const nextMin = sub.baseMin > 0 && !baseline
+    ? nextInterval({
+      current: sub.currentMin || sub.baseMin,
+      base: sub.baseMin,
+      max: sub.maxMin || sub.baseMin,
+      factor: sub.factor,
+      changed: newTracks.length > 0,
+    })
+    : null
+  if (nextMin !== null) {
+    db().prepare('update subscriptions set current_min = ? where id = ?').run(nextMin, sub.id)
+  }
   db()
     .prepare('update subscriptions set last_checked_at = ?, last_seen = ?, last_job_id = coalesce(?, last_job_id) where id = ?')
     .run(now, JSON.stringify(currentIds), jobId, sub.id)
@@ -200,7 +291,7 @@ export function dueSubscriptions(now = Date.now()): Subscription[] {
   return listSubscriptions().filter((sub) => {
     if (!sub.enabled) return false
     if (sub.lastCheckedAt === null) return true
-    return now - Date.parse(sub.lastCheckedAt) >= sub.everyHours * 3600_000
+    return now - Date.parse(sub.lastCheckedAt) >= intervalMinutesOf(sub) * 60_000
   })
 }
 

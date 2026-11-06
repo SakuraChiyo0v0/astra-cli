@@ -1,3 +1,18 @@
+## 0.40.0
+
+### 新增：订阅支持「我的红心」+ 自适应退避间隔
+
+- `music subscribe add --liked [--base 5] [--max 640] [--factor 2]`：订阅红心歌单，不用给链接，
+  账号 id 从会话里取；第一次只记基线（清空后重新点红心也不会把空列表当"全删"）。
+- 退避：没新歌就按 `factor` 把下次检查拉长，封顶 `max` 分钟；一旦发现新增立刻回到 `base`。
+  状态存 `subscriptions.current_min`，`--base 0` 关掉退避回到 `every_hours`。
+- `music subscribe set <id> --base/--max/--factor` 可调参；`list` 里多一个 `adaptive` 字段。
+- `music subscribe run` 对红心走 `likedIds` + 歌单详情，其余订阅行为不变。
+
+为什么：红心是「听到喜欢就点」的即时动作，固定 24 小时轮询要么太慢要么太吵。
+指数退避让「活跃时 5 分钟内跟上、冷场时一两天才查一次」，代价是 cron 要 5 分钟一调
+（没到点的订阅在本地判断阶段就退出，不发网络请求）。
+
 ## 0.39.0
 
 ### 新增 `astra x`：把 X（Twitter）当数据源读

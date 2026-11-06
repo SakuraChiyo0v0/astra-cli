@@ -156,6 +156,15 @@ const MIGRATIONS: string[] = [
   // 专辑类型（录音室版 / 精选集…）。判"精选要不要让位给原专辑"必须要它 ——
   // 只看年份不够：同年出的重新混音版不该把原版挤走。
   `alter table tracks add column album_type text`,
+  // —— 新增迁移一律追加在末尾 ——
+  // MIGRATIONS 按 user_version 索引执行：插在中间会让老库把已跑过的 alter 再跑一遍，
+  // 实测报 `duplicate column name: album_id`，整个迁移事务回滚。
+  // 自适应间隔（0.40.0）：base_min 非 0 表示这条订阅按退避走，`every_hours` 不再参与调度。
+  // 阶梯状态存 current_min，每次跑完按「有没有新歌」增大或复位；上限 max_min 防冷场时无限拉长。
+  `alter table subscriptions add column base_min integer not null default 0`,
+  `alter table subscriptions add column max_min integer not null default 0`,
+  `alter table subscriptions add column factor integer not null default 2`,
+  `alter table subscriptions add column current_min integer not null default 0`,
 ]
 
 export function db(): DatabaseSync {

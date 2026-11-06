@@ -950,11 +950,27 @@ function subView(s: ReturnType<typeof listSubscriptions>[number]) {
     lastCheckedAt: s.lastCheckedAt,
     knownTracks: s.lastSeen?.length ?? null,
     lastJobId: s.lastJobId,
+    // 自适应间隔：baseMin=0 表示关着，按 everyHours 走。
+    adaptive: s.baseMin > 0
+      ? {
+        baseMin: s.baseMin,
+        maxMin: s.maxMin,
+        factor: s.factor,
+        currentMin: s.currentMin || s.baseMin,
+        // 人眼看的一句话；脚本要用数值请读上面几个字段
+        note: `没新歌就按 ×${s.factor} 拉长，封顶 ${s.maxMin} 分钟；有新增立刻回到 ${s.baseMin} 分钟`,
+      }
+      : null,
   }
 }
 
 /** 取订阅目标的真实名字与曲目数，确认它能读到。 */
 async function describeTarget(kind: SubscribeKind, id: string, signal?: AbortSignal): Promise<{ title: string; count: number }> {
+  if (kind === 'liked') {
+    const { session } = requireSession(id, signal)
+    const ids = await likedIds(session, id, signal)
+    return { title: '我喜欢的音乐（红心）', count: ids.length }
+  }
   if (kind === 'playlist') {
     const p = await playlistTracks(id, signal)
     return { title: `歌单《${p.name}》`, count: p.tracks.length }
@@ -969,29 +985,62 @@ async function describeTarget(kind: SubscribeKind, id: string, signal?: AbortSig
 
 const subscribeAdd: Command = {
   name: 'music subscribe add',
-  summary: '订阅歌单 / 专辑 / 歌手：定时检查，出新歌自动下',
-  usage: 'astra music subscribe add <链接|ref> [--every 24] [--quality flac] [--download-existing]',
+  summary: '订阅歌单 / 专辑 / 歌手 / 我的红心：定时检查，出新歌自动下',
+  usage: 'astra music subscribe add <链接|ref> [--every 24] [--quality flac] [--download-existing]'
+    + ' [--base 5] [--max 640] [--factor 2]',
   notes: [
     '第一次只记当前曲目作为基线，**不会**把已有的全下一遍；要连已有的也下就加 --download-existing',
     '之后每次检查只下"上次没见过的曲目"，已经在曲库里的跳过',
     '实际执行靠定时任务调 `astra music subscribe run`，本工具不常驻',
+    '`--liked` 订阅「我喜欢的音乐」（红心）：不用给链接，自动带自适应退避（5 分钟起步，没新歌翻倍，封顶 640 分钟）',
+    '自适应靠 cron 勤调：`*/5 * * * * astra music subscribe run`，没到点它自己会立刻退出，不发请求',
   ],
   options: {
-    every: { type: 'string', description: '检查间隔小时数，1..720，默认 24', valueName: 'h' },
+    every: { type: 'string', description: '检查间隔小时数，1..720，默认 24；开了 --base 之后不用它', valueName: 'h' },
     quality: { type: 'string', short: 'q', description: '新歌用哪个音质档位下载', valueName: 'q' },
     'download-existing': { type: 'boolean', description: '第一次就把现有曲目也下了' },
+    liked: { type: 'boolean', description: '订阅我的红心（我喜欢的音乐）' },
+    base: { type: 'string', description: '自适应基准间隔分钟，默认 5（仅 --liked 或搭配使用）', valueName: 'min' },
+    max: { type: 'string', description: '自适应封顶分钟，默认 640', valueName: 'min' },
+    factor: { type: 'string', description: '没新歌时的增长倍数，2..10，默认 2', valueName: 'n' },
   },
-  minArgs: 1,
+  minArgs: 0,
   maxArgs: 1,
   async run({ positionals, values, signal }) {
-    const target = await resolveTarget(positionals[0]!)
-    if (target.kind === 'song' || target.kind === 'keyword') throw invalidInput('订阅只能是歌单 / 专辑 / 歌手', '给它 playlist:/album:/artist: 的链接或 ref')
-    const kind = target.kind as SubscribeKind
+    const isLiked = values.liked === true
+    if (isLiked && positionals.length > 0) throw invalidInput('--liked 不需要目标参数', '写成 `astra music subscribe add --liked --base 5`')
+    if (!isLiked && positionals.length === 0) throw invalidInput('缺少订阅目标', '给歌单/专辑/歌手链接，或 `--liked`')
+
+    const backoff = {
+      baseMin: intOf(values.base, isLiked ? 5 : 0, 1, 24 * 60, 'base'),
+      maxMin: intOf(values.max, isLiked ? 640 : 0, 1, 7 * 24 * 60, 'max'),
+      factor: intOf(values.factor, 2, 2, 10, 'factor'),
+    }
+    const adaptive = backoff.baseMin > 0
+    if (!adaptive) backoff.maxMin = 0
+    if (adaptive && backoff.maxMin < backoff.baseMin) throw invalidInput('--max 不能小于 --base')
+
+    let kind: SubscribeKind
+    let targetId: string
+    if (isLiked) {
+      const status = await accountStatus(signal)
+      const { userId } = requireSession(status.userId, signal)
+      kind = 'liked'
+      targetId = userId
+    } else {
+      const target = await resolveTarget(positionals[0]!)
+      if (target.kind === 'song' || target.kind === 'keyword') throw invalidInput('订阅只能是歌单 / 专辑 / 歌手', '给它 playlist:/album:/artist: 的链接或 ref')
+      kind = target.kind as SubscribeKind
+      targetId = target.id
+    }
     const every = intOf(values.every, 24, 1, 720, 'every')
     const quality = values.quality === undefined ? null : qualityOf(values.quality)
     // 先读一次，确认目标存在并拿到它的真实名字（标题只用 id 的话列表里认不出是哪个）
-    const { title, count } = await describeTarget(kind, target.id, signal)
-    const sub = addSubscription({ kind, targetId: target.id, title, everyHours: every, quality })
+    const { title, count } = await describeTarget(kind, targetId, signal)
+    const sub = addSubscription({
+      kind, targetId, title, everyHours: every, quality,
+      ...(adaptive ? { backoff: backoff } : {}),
+    })
     const result = await runSubscription(sub, { baselineOnly: values['download-existing'] !== true, signal, force: true })
     // `job` 与其它会起后台任务的命令保持同一形状（P4#7），
     // `jobId` 是旧字段，留着不打断已有脚本
@@ -1033,12 +1082,16 @@ const subscribeList: Command = {
 const subscribeSet: Command = {
   name: 'music subscribe set',
   summary: '改订阅：间隔 / 启停 / 音质',
-  usage: 'astra music subscribe set <id> [--every 24] [--enable] [--disable] [--quality flac]',
+  usage: 'astra music subscribe set <id> [--every 24] [--enable] [--disable] [--quality flac]'
+    + ' [--base 5] [--max 640] [--factor 2]',
   options: {
     every: { type: 'string', description: '检查间隔小时数', valueName: 'h' },
     enable: { type: 'boolean', description: '启用' },
     disable: { type: 'boolean', description: '停用' },
     quality: { type: 'string', short: 'q', description: '音质档位', valueName: 'q' },
+    base: { type: 'string', description: '自适应基准分钟（>0 开启退避）', valueName: 'min' },
+    max: { type: 'string', description: '自适应封顶分钟', valueName: 'min' },
+    factor: { type: 'string', description: '增长倍数 2..10', valueName: 'n' },
   },
   minArgs: 1,
   maxArgs: 1,
@@ -1049,6 +1102,10 @@ const subscribeSet: Command = {
     if (values.enable === true) patch.enabled = true
     if (values.disable === true) patch.enabled = false
     if (values.quality !== undefined) patch.quality = qualityOf(values.quality)
+    // --base 0 = 关掉退避，回到 everyHours 调度
+    if (values.base !== undefined) patch.baseMin = intOf(values.base, 5, 0, 24 * 60, 'base')
+    if (values.max !== undefined) patch.maxMin = intOf(values.max, 640, 1, 7 * 24 * 60, 'max')
+    if (values.factor !== undefined) patch.factor = intOf(values.factor, 2, 2, 10, 'factor')
     return { data: subView(setSubscription(positionals[0]!, patch)) }
   },
 }
