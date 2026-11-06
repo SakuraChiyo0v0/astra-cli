@@ -427,3 +427,24 @@ export async function purgePrincipal(
   return { tokens, roles }
 }
 
+/**
+ * 授权体检：找出「没有任何角色允许的公开命令」与「匹配不到命令的授权模式」。
+ *
+ * 不是判权逻辑，是防止两份账漂移 —— 命令改名后旧 scope 会悄悄失效，
+ * 新加的命令也可能忘了进任何角色。
+ */
+export function auditGrants(
+  commands: Array<{ name: string; hidden?: boolean }>,
+  grants: Array<{ role: string; pattern: string }>,
+): {
+  uncovered: string[]
+  unknownGrants: Array<{ role: string; pattern: string }>
+  totalCommands: number
+  totalGrants: number
+} {
+  const visible = commands.filter((c) => !c.hidden).map((c) => scopeOf(c.name))
+  const uncovered = visible.filter((scope) => !grants.some((g) => matchScope(g.pattern, scope)))
+  const unknownGrants = grants.filter((g) => g.pattern !== '*' && !visible.some((scope) => matchScope(g.pattern, scope)))
+  return { uncovered, unknownGrants, totalCommands: visible.length, totalGrants: grants.length }
+}
+

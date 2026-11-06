@@ -40,6 +40,8 @@ import { xCommands } from './x/commands.ts'
 import { authCommands } from './auth/commands.ts'
 import { allowedPatterns, authorize, openAuth, resolveToken, scopeOf } from './core/auth.ts'
 import { readToken, setIdentity, setToken } from './core/identity.ts'
+import { setCommandRegistry } from './core/registry.ts'
+import { record as recordAudit } from './core/audit.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
 import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
@@ -47,6 +49,9 @@ import { backup, listBackups, restore } from './core/backup.ts'
 import { listAudit, pruneAudit } from './core/audit.ts'
 
 declare const ASTRA_VERSION: string | undefined
+
+/** 这些命令会读私有数据或落盘，读操作也要留痕（评审建议：不必每条 lib find 都记）。 */
+const SENSITIVE_AUDIT = new Set(['x.media', 'x.search', 'lib.where', 'lib.find', 'db.query', 'media.transcode'])
 
 function version(): string {
   if (typeof ASTRA_VERSION === 'string') return ASTRA_VERSION
@@ -380,6 +385,9 @@ const commands: Command[] = [
   ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands, ...llmCommands, ...deviceCommands, ...xCommands, ...authCommands,
 ]
 
+// 供 `astra auth doctor` 之类需要完整清单的命令读取（避免 import main 形成环）
+setCommandRegistry(commands)
+
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
 /**
  * 把入口剥掉的全局标志，在命令自己声明了同名选项时补回去。
@@ -502,6 +510,7 @@ async function main(): Promise<number> {
           const verdict = await authorize(auth, principal, scope)
           if (!verdict.allowed) {
             const patterns = await allowedPatterns(auth, principal)
+            recordAudit({ action: 'auth.denied', summary: `主体「${principal.name}」尝试 ${routed.command.name}`, ok: false })
             throw new AstraError('FORBIDDEN', `主体「${principal.name}」无权执行：${routed.command.name}`, {
               exitCode: 2,
               hint: `已授权 ${patterns.length} 条 scope；查看：astra auth principal roles ${principal.name}`,
@@ -513,6 +522,11 @@ async function main(): Promise<number> {
       }
     }
     const result = await routed.command.run({ ...parsed, signal: controller.signal })
+    // 敏感读与批量操作留痕：只记命令与参数摘要，不记凭据（令牌已从环境删除）
+    if (SENSITIVE_AUDIT.has(scopeOf(routed.command.name))) {
+      const args = routed.rest.join(' ').slice(0, 120)
+      recordAudit({ action: `${scopeOf(routed.command.name)}.read`, summary: args || '(无参数)', ok: true })
+    }
     // `--table`：只影响**显示**，不改返回结构 —— 脚本拿到的 JSON 一模一样。
     // 命令没提供 table 视图时退回 JSON，不让这个开关变得危险。
     if (wantTable) {

@@ -12,6 +12,7 @@
 import type { Command } from '../core/command.ts'
 import { okResult, progress } from '../core/output.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
+import { getCommandRegistry } from '../core/registry.ts'
 import { currentIdentity, currentToken, readToken, saveLocalToken, type PrincipalKind } from '../core/identity.ts'
 import {
   addPrincipal,
@@ -27,6 +28,7 @@ import {
   listRoles,
   listTokens,
   openAuth,
+  auditGrants,
   principalRoles,
   purgePrincipal,
   resolveToken,
@@ -439,6 +441,42 @@ const principalPurge: Command = {
   },
 }
 
+
+const doctorCmd: Command = {
+  name: 'auth doctor',
+  summary: '授权体检：未被任何角色覆盖的命令、匹配不到命令的授权模式',
+  usage: 'astra auth doctor',
+  notes: [
+    '“未被覆盖”不等于出错：owner 本身不需要授权；这里列的是公开命令里没人授权的部分。',
+    '“未知授权”通常是命令改名后留下的旧 scope，会让授权面悄悄失效。',
+  ],
+  async run() {
+    const db = await openAuth()
+    try {
+      const roles = await listRoles(db)
+      const grants: Array<{ role: string; pattern: string }> = []
+      for (const r of roles) {
+        for (const pattern of await listGrants(db, r.name)) grants.push({ role: r.name, pattern })
+      }
+      const report = auditGrants(getCommandRegistry(), grants)
+      return {
+        ...okResult(report),
+        table: {
+          headers: ['项', '值'],
+          rows: [
+            ['公开命令', String(report.totalCommands)],
+            ['授权模式', String(report.totalGrants)],
+            ['未被角色覆盖', String(report.uncovered.length)],
+            ['匹配不到命令', String(report.unknownGrants.length)],
+          ],
+        },
+      }
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
 const status: Command = {
   name: 'auth status',
   summary: '账户机制状态（存储后端、主体数、令牌数）',
@@ -510,6 +548,7 @@ export const authCommands: Command[] = [
   principalRolesCmd,
   principalDisable,
   principalPurge,
+  doctorCmd,
   principalAdd,
   principalList,
   tokenCreate,
