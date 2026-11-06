@@ -1,3 +1,13 @@
+## 0.44.1
+
+修音乐订阅串到 B 站订阅：`subscriptions` 是三域共用的表，音乐侧没按 kind 过滤。
+
+- `music subscribe list/run/find` 只认 `playlist` / `album` / `artist` / `liked`
+- 之前 `bili-season` 订阅到点会被当成歌手 id 丢给网易云，每轮到点就报 `music.163.com 返回 HTTP 404`，
+  还会用空快照覆盖 bili 那边的 `last_seen`
+- `fetchSubscriptionTracks` 遇到未知 kind 直接报错并提示改用 `astra bili subscribe`
+- 回归测试：塞一条 `bili-season` 进表，断言音乐列表/到点判断/查找都不含它
+
 ## 0.44.0
 
 账户机制 M4（资产可见性）：库里每条资产带归属与可见性。

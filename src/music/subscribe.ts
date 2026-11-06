@@ -24,6 +24,14 @@ import type { Quality } from './audio.ts'
 
 export type SubscribeKind = 'playlist' | 'album' | 'artist' | 'liked'
 
+/**
+ * 这张 `subscriptions` 表是三域共用的（bili 用 `bili-` 前缀，见 src/bili/subscribe.ts），
+ * 所以音乐这边**必须按 kind 过滤**：否则 `music subscribe run` 会把 B 站合集当成歌手 id
+ * 丢给网易云，每次都报 `music.163.com 返回 HTTP 404`，还会顺手覆盖掉 bili 那边的 last_seen。
+ */
+const MUSIC_KINDS: readonly string[] = ['playlist', 'album', 'artist', 'liked']
+const MUSIC_KIND_SQL = MUSIC_KINDS.map((k) => `'${k}'`).join(', ')
+
 export interface Subscription {
   id: string
   kind: SubscribeKind
@@ -83,11 +91,15 @@ function fromRow(row: Row): Subscription {
 }
 
 export function listSubscriptions(): Subscription[] {
-  return (db().prepare('select * from subscriptions order by created_at').all() as unknown as Row[]).map(fromRow)
+  return (db()
+    .prepare(`select * from subscriptions where kind in (${MUSIC_KIND_SQL}) order by created_at`)
+    .all() as unknown as Row[]).map(fromRow)
 }
 
 export function findSubscription(idOrPrefix: string): Subscription {
-  const rows = db().prepare('select * from subscriptions where id = ? or id like ?').all(idOrPrefix, `${idOrPrefix}%`) as unknown as Row[]
+  const rows = db()
+    .prepare(`select * from subscriptions where (id = ? or id like ?) and kind in (${MUSIC_KIND_SQL})`)
+    .all(idOrPrefix, `${idOrPrefix}%`) as unknown as Row[]
   if (rows.length === 0) throw new AstraError('NOT_FOUND', `没有订阅 ${idOrPrefix}`, { exitCode: 4, hint: '用 `astra music subscribe list` 看已有的' })
   if (rows.length > 1) throw new AstraError('AMBIGUOUS_ID', `订阅 id 前缀 ${idOrPrefix} 对多个订阅`, { exitCode: 2, hint: '多写几位' })
   return fromRow(rows[0]!)
@@ -203,7 +215,8 @@ export async function fetchSubscriptionTracks(sub: Subscription, signal?: AbortS
     // 红心列表只给 id，标题/歌手要靠详情接口补；几百首一次请求就够（内部按 500 分批）
     return ids.length === 0 ? [] : songDetails(ids, signal)
   }
-  return (await artistTopTracks(sub.targetId, signal)).tracks
+  if (sub.kind === 'artist') return (await artistTopTracks(sub.targetId, signal)).tracks
+  throw invalidInput(`不认识的订阅类型 ${sub.kind}`, '音乐订阅只支持 playlist / album / artist / liked；B 站合集请用 `astra bili subscribe`')
 }
 
 export interface RunResult {

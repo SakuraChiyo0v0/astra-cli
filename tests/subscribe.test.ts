@@ -82,3 +82,13 @@ test('统计：按真实规格分组，而不是只看档位名', () => {
   // 两个路径都不存在
   assert.equal(stats.missing, 2)
 })
+
+test('订阅列表不混入 B 站订阅（共用 subscriptions 表）', async () => {
+  const { db } = await import('../src/core/db.ts')
+  db()
+    .prepare("insert into subscriptions (id, kind, target_id, title, every_hours, enabled, last_seen, created_at) values ('bltest01','bili-season','season:1/2','合集测试',24,1,'[]',?)")
+    .run(new Date().toISOString())
+  assert.ok(!sub.listSubscriptions().some((s) => s.id === 'bltest01'), 'music 列表不该出现 bili 订阅')
+  assert.ok(!sub.dueSubscriptions().some((s) => s.id === 'bltest01'), 'music 到点判断不该收 bili 订阅')
+  assert.throws(() => sub.findSubscription('bltest01'), /没有订阅/, 'music 命令不该能操作 bili 订阅')
+})
