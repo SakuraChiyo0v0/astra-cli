@@ -11,7 +11,20 @@ import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
+import { currentIdentity } from '../identity.ts'
 import type { Database } from './index.ts'
+
+/**
+ * 资产可见性（M4）。
+ *
+ * owner（本机 / 不带令牌）看全部；受限主体只看 `owner=自己` 或 `visibility='public'` 的资产。
+ * 返回空 SQL 片段表示不限制，调用方直接拼进 where。
+ */
+function assetScope(alias = 'a'): { sql: string; params: unknown[] } {
+  const identity = currentIdentity()
+  if (identity.kind === 'owner') return { sql: '', params: [] }
+  return { sql: ` and (${alias}.owner = ? or ${alias}.visibility = 'public')`, params: [identity.name] }
+}
 
 /** 读文件前 1MB 算 sha1。比全量 sha256 快两个数量级，用于「这俩是不是同一个文件」。 */
 export async function quickHash(file: string): Promise<string> {
@@ -119,8 +132,8 @@ export async function upsertAsset(db: Database, input: AssetInput): Promise<stri
     return id
   }
   await db.conn.exec(
-    `insert into assets (id, platform, native_id, kind, title, artists, album, duration_ms, meta, created_at)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `insert into assets (id, platform, native_id, kind, title, artists, album, duration_ms, meta, created_at, owner)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.platform,
@@ -132,6 +145,7 @@ export async function upsertAsset(db: Database, input: AssetInput): Promise<stri
       input.durationMs ?? null,
       input.meta === undefined ? null : JSON.stringify(input.meta),
       now,
+      currentIdentity().name,
     ],
   )
   return id
@@ -867,19 +881,20 @@ export async function findAssets(db: Database, keyword: string, limit = 20): Pro
   // 也搜 rel_path：认领来的文件标题常常只是 `01`、`138993133_p0` 这种文件名，
   // 光搜 assets 会一个都搜不到。路径是「它在哪」，标题是「它是什么」，两个都要能搜，
   // 但**不要把路径塞进 title** —— 那就成了同一事实存两份，早晚不一致。
+  const scope = assetScope('a')
   return db.conn.query<AssetRow>(
     `select a.id, a.platform, a.native_id, a.kind, a.title, a.artists, a.album,
             (select f.rel_path from files f where f.asset_id = a.id
               order by case f.state when 'present' then 0 else 1 end, f.rel_path limit 1) as rel_path
      from assets a
-     where a.title like ? or a.artists like ? or a.album like ? or a.native_id like ?
+     where (a.title like ? or a.artists like ? or a.album like ? or a.native_id like ?
         or exists (
           select 1 from files f join roots r on r.id = f.root_id
            where f.asset_id = a.id
              and (f.rel_path like ? or r.label like ? or r.abs_path like ?)
-        )
+        ))${scope.sql}
      order by a.title limit ?`,
-    [like, like, like, like, like, like, like, limit],
+    [like, like, like, like, like, like, like, ...scope.params, limit],
   )
 }
 
@@ -899,11 +914,12 @@ export async function whereAsset(
   id: string,
   options: { repair?: boolean } = {},
 ): Promise<FileRow[]> {
+  const scope = assetScope('a')
   const rows = await db.conn.query<Omit<FileRow, 'abs_path'>>(
     `select f.id, f.rel_path, f.size, f.state, f.last_seen, r.label as root_label, r.abs_path as root_path
-     from files f join roots r on r.id = f.root_id
-     where f.asset_id = ? order by f.state, f.rel_path`,
-    [id],
+     from files f join roots r on r.id = f.root_id join assets a on a.id = f.asset_id
+     where f.asset_id = ?${scope.sql} order by f.state, f.rel_path`,
+    [id, ...scope.params],
   )
   const withAbs = rows.map((r) => ({ ...r, abs_path: path.join(r.root_path, r.rel_path) }))
   if (options.repair !== true) return withAbs
@@ -928,6 +944,9 @@ export async function whereAsset(
 }
 
 export async function assetEvents(db: Database, id: string, limit = 30): Promise<Record<string, unknown>[]> {
+  const scope = assetScope('a')
+  const visible = await db.conn.query(`select a.id from assets a where a.id = ?${scope.sql}`, [id, ...scope.params])
+  if (visible.length === 0) return []
   return db.conn.query(
     `select at, kind, detail from events where asset_id = ? order by at desc limit ?`,
     [id, limit],

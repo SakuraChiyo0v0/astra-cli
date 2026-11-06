@@ -1,3 +1,12 @@
+## 0.44.0
+
+账户机制 M4（资产可见性）：库里每条资产带归属与可见性。
+
+- 迁移 `0005_asset_visibility`：`assets` 增加 `owner`、`visibility`（默认 `private`）
+- 新建资产写入当前主体；owner 看全部，受限主体只看 `owner=自己` 或 `visibility='public'`
+- `lib find` / `lib where` / `lib events` 已按此过滤；别人的资产既不出现也不报「无权限」
+- 存量资产 owner 为空，只有 owner 视角可见
+
 ## 0.43.0
 
 账户机制 M3（任务可见性）：任务带归属，受限主体只看到自己起的。

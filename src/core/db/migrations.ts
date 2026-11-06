@@ -247,7 +247,25 @@ const M0004: Migration = {
   },
 }
 
-export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004]
+
+/** 0005：资产归属与可见性（账户机制 M4）。 */
+const M0005: Migration = {
+  id: '0005_asset_visibility',
+  summary: 'assets 增加 owner / visibility（受限主体只看自己的或 public）',
+  up: {
+    sqlite: [
+      `alter table assets add column owner text`,
+      `alter table assets add column visibility text not null default 'private'`,
+    ],
+    postgres: [
+      `alter table assets add column if not exists owner text`,
+      `alter table assets add column if not exists visibility text not null default 'private'`,
+    ],
+    mysql: [],
+  },
+}
+
+export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004, M0005]
 
 function checksum(m: Migration): string {
   return createHash('sha256').update(JSON.stringify(m.up)).digest('hex').slice(0, 16)
