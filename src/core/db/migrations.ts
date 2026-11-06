@@ -365,7 +365,10 @@ export async function migrate(
       }
     })
 
-    result.current = done.length + pending.length
+    // 进度只统计**本仓库定义**的迁移：共用同一个库时，schema_migrations 里还有别的工具的记录
+    const known = new Set(MIGRATIONS.map((m) => m.id))
+    const doneOwn = done.filter((d) => known.has(d.id)).length
+    result.current = doneOwn + pending.length
     return result
   }
 

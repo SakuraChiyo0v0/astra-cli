@@ -20,7 +20,7 @@ import { db } from './db.ts'
 import { AstraError } from './errors.ts'
 import { homePath } from './paths.ts'
 import { notify } from './notify.ts'
-import { currentIdentity } from './identity.ts'
+import { currentIdentity, currentToken } from './identity.ts'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'partial' | 'failed' | 'cancelled' | 'interrupted'
 // 任务项状态。`downloaded` 与单曲 `data.status` 同词，调用方可以用一套过滤；
@@ -283,7 +283,12 @@ export function spawnWorker(domain: string, jobId: string): number {
     detached: true,
     stdio: ['ignore', log, log],
     windowsHide: true,
-    env: { ...process.env, ASTRA_QUIET: '0' },
+    env: {
+      ...process.env,
+      ASTRA_QUIET: '0',
+      // 父进程已把 ASTRA_TOKEN 从环境删掉；worker 必须显式拿到同一身份，否则会 AUTH_REQUIRED
+      ...(currentToken() ? { ASTRA_TOKEN: currentToken()! } : {}),
+    },
   })
   child.unref()
   const pid = child.pid ?? 0
@@ -418,7 +423,9 @@ export function statusLabel(status: JobStatus): string {
 export function cancelJob(id: string, domain?: string): JobView {
   const row = jobRow(id, domain)
   if (['done', 'partial', 'failed', 'cancelled'].includes(row.status)) return toView(row)
-  db().prepare("update jobs set status = 'cancelled', updated_at = ? where id = ?").run(now(), row.id)
+  db()
+    .prepare(`update jobs set status = 'cancelled', updated_at = ? where id = ?${ownerScope() ? ' and owner = ?' : ''}`)
+    .run(...(ownerScope() ? [now(), row.id, ownerScope()!] : [now(), row.id]))
   if (alive(row.pid) && row.pid !== process.pid) {
     try {
       process.kill(row.pid!)
@@ -438,7 +445,9 @@ export function resumeJob(id: string, domain?: string): JobView {
   }
   const retryable = (db().prepare("select count(*) n from job_items where job_id = ? and status in ('queued', 'failed', 'running')").get(row.id) as { n: number }).n
   if (retryable === 0) throw new AstraError('NOTHING_TO_RESUME', `任务 ${row.id} 没有需要重试的项`, { exitCode: 2 })
-  db().prepare("update jobs set status = 'queued', error = null, updated_at = ? where id = ?").run(now(), row.id)
+  db()
+    .prepare(`update jobs set status = 'queued', error = null, updated_at = ? where id = ?${ownerScope() ? ' and owner = ?' : ''}`)
+    .run(...(ownerScope() ? [now(), row.id, ownerScope()!] : [now(), row.id]))
   spawnWorker(view.domain, row.id)
   return getJob(row.id, false, domain).job
 }

@@ -39,7 +39,7 @@ import { lolCommands } from './lol/commands.ts'
 import { xCommands } from './x/commands.ts'
 import { authCommands } from './auth/commands.ts'
 import { allowedPatterns, authorize, openAuth, resolveToken, scopeOf } from './core/auth.ts'
-import { readToken, setIdentity } from './core/identity.ts'
+import { readToken, setIdentity, setToken } from './core/identity.ts'
 import { listSources } from './lx/store.ts'
 import { notify } from './core/notify.ts'
 import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
@@ -470,8 +470,15 @@ async function main(): Promise<number> {
   process.once('SIGTERM', onSignal)
   try {
     const parsed = parseCommandArgs(routed.command, restoreCommandFlags(argv, routed.command, routed.rest))
-    // 身份 + 判权。没有令牌就是本机 owner（行为与以前一致）；带了令牌就必须有效且有权。
+    // 身份 + 判权。**没有令牌不等于 owner**：身份只能来自令牌，缺就拒绝。
+    const bootstrap = new Set(['auth.owner-token', 'help', 'version'])
     const bearer = readToken()
+    if (!bearer && !bootstrap.has(scopeOf(routed.command.name))) {
+      throw new AstraError('AUTH_REQUIRED', '缺少令牌：无法确认身份', {
+        exitCode: 3,
+        hint: '本机首次使用：`astra auth owner-token` 生成 owner 令牌（写入 <ASTRA_HOME>/token，600）；其他调用方设置 ASTRA_TOKEN',
+      })
+    }
     if (bearer) {
       const auth = await openAuth()
       try {
@@ -479,14 +486,19 @@ async function main(): Promise<number> {
         if (!hit) {
           throw new AstraError('AUTH_INVALID_TOKEN', '令牌无效（已吊销 / 过期 / 主体停用）', {
             exitCode: 3,
-            hint: '换一个有效令牌；不带 ASTRA_TOKEN 时按本机 owner 运行',
+            hint: '换一个有效令牌；本机可用 `astra auth owner-token --rotate` 重发 owner 令牌',
           })
         }
         const principal = hit.principal
         setIdentity({ id: principal.id, kind: principal.kind, name: principal.name, source: bearer.source, tokenId: hit.tokenId })
+        // 令牌只留在内存里：从环境删掉，子进程不会通过 /proc 继承到。
+        setToken(bearer.token)
+        delete process.env.ASTRA_TOKEN
         const scope = scopeOf(routed.command.name)
         const alwaysOpen = new Set(['help', 'version', 'auth.whoami', 'auth.status'])
-        if (!alwaysOpen.has(scope)) {
+        // 内部 worker：只能由 spawnWorker 拉起，且 runWorker 内部会按 owner 再校验一次任务归属
+        const internal = scope.endsWith('._worker')
+        if (!alwaysOpen.has(scope) && !internal) {
           const verdict = await authorize(auth, principal, scope)
           if (!verdict.allowed) {
             const patterns = await allowedPatterns(auth, principal)

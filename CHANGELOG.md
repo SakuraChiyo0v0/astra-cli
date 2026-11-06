@@ -1,3 +1,25 @@
+## 0.45.2
+
+- `auth whoami` / `auth status` 的 `source` 如实反映令牌来源（file / env），不再一律写 env
+
+## 0.45.1
+
+- 修 `auth whoami` / `auth status` 在令牌已从环境删除后误报 owner：改为读主流程解析出的令牌
+- （0.45.0 起的语义保持：无令牌 = `AUTH_REQUIRED`，不再是 owner）
+
+## 0.45.0
+
+账户机制 P0 加固：失败策略改为「默认拒绝」。
+
+- **没有令牌不再等于 owner**：缺少/空/读不到令牌一律 `AUTH_REQUIRED`（退出码 3）；owner 必须用
+  `astra auth owner-token` 显式签发到 `<ASTRA_HOME>/token`（600）
+- 令牌解析后立刻从环境变量删除，普通子进程无法通过 `/proc/<pid>/environ` 继承；
+  只有后台 worker 由父进程显式传回（worker 内部还会按任务 owner 再校验一次）
+- 内部 `*_worker` 命令不参与角色判权（它只能由 `spawnWorker` 拉起），但 `runWorker` 里
+  `jobRow()` 已带 owner 过滤，跨主体仍拿不到任务
+- `cancelJob` / `resumeJob` 的 UPDATE 语句补 `owner` 条件，不再只靠读时过滤（防 IDOR）
+- `db migrate` 的进度只统计本仓库定义的迁移，避免与同库其他工具的迁移互相干扰
+
 ## 0.44.1
 
 修音乐订阅串到 B 站订阅：`subscriptions` 是三域共用的表，音乐侧没按 kind 过滤。

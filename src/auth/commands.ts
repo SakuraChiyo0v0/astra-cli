@@ -11,8 +11,8 @@
  */
 import type { Command } from '../core/command.ts'
 import { okResult, progress } from '../core/output.ts'
-import { invalidInput } from '../core/errors.ts'
-import { readToken, type PrincipalKind } from '../core/identity.ts'
+import { AstraError, invalidInput } from '../core/errors.ts'
+import { currentIdentity, currentToken, readToken, saveLocalToken, type PrincipalKind } from '../core/identity.ts'
 import {
   addPrincipal,
   allowedPatterns,
@@ -47,7 +47,9 @@ const whoami: Command = {
   summary: '当前身份（有令牌按令牌，没有则是本机 owner）',
   usage: 'astra auth whoami',
   async run() {
-    const token = readToken()
+    const ident = currentIdentity()
+    const resolved = currentToken()
+    const token = resolved ? { token: resolved, source: ident.source } : readToken()
     if (!token) {
       return okResult({
         identity: { id: 'owner', name: 'owner', kind: 'owner', source: 'local' },
@@ -366,6 +368,35 @@ const principalRolesCmd: Command = {
   },
 }
 
+
+const ownerToken: Command = {
+  name: 'auth owner-token',
+  summary: '给本机 owner 发令牌并写到 <ASTRA_HOME>/token（600）',
+  usage: 'astra auth owner-token [--rotate]',
+  notes: [
+    '这是唯一的免令牌入口：没有它，本机就再也拿不到 owner 身份。',
+    '写入后本机所有脚本、cron 通过文件自动认成 owner，不需要改调用方。',
+  ],
+  options: { rotate: { type: 'boolean', description: '吊销已有 owner 令牌后重发' } },
+  async run(ctx) {
+    const db = await openAuth()
+    try {
+      const owner = await findPrincipal(db, 'owner')
+      if (!owner) throw new AstraError('NOT_FOUND', '库里没有 owner 主体', { hint: '先跑一次 `astra auth status` 建表' })
+      if (ctx.values.rotate === true) {
+        const rows = await listTokens(db, 'owner')
+        for (const row of rows) if (!row.revokedAt) await revokeToken(db, row.id)
+      }
+      const made = await createToken(db, { principal: 'owner', label: 'local-owner', days: 0 })
+      const file = saveLocalToken(made.token)
+      progress('auth.owner_token', { id: made.row.id, file })
+      return okResult({ id: made.row.id, file, note: '本机后续调用自动使用它；不要外传' })
+    } finally {
+      await db.conn.close()
+    }
+  },
+}
+
 const status: Command = {
   name: 'auth status',
   summary: '账户机制状态（存储后端、主体数、令牌数）',
@@ -375,7 +406,8 @@ const status: Command = {
     try {
       const principals = await listPrincipals(db)
       const tokens = await listTokens(db)
-      const token = readToken()
+      const resolved = currentToken()
+      const token = resolved ? { token: resolved, source: currentIdentity().source } : readToken()
       const hit = token ? await resolveToken(db, token.token) : null
       return {
         ...okResult({
@@ -425,6 +457,7 @@ export async function principalByName(name: string) {
 
 export const authCommands: Command[] = [
   whoami,
+  ownerToken,
   status,
   roleAdd,
   roleList,

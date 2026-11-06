@@ -29,10 +29,20 @@ export interface Identity {
 export const LOCAL_OWNER_ID = 'owner'
 
 let cached: Identity | null = null
+let cachedToken: string | null = null
 
 /** 主流程解析完身份后写进来，审计等同步路径直接读。 */
 export function setIdentity(identity: Identity): void {
   cached = identity
+}
+
+/** 主流程解析完把明文令牌存内存（不进环境变量），worker 启动时显式传给它。 */
+export function setToken(token: string | null): void {
+  cachedToken = token
+}
+
+export function currentToken(): string | null {
+  return cachedToken
 }
 
 export function currentIdentity(): Identity {
