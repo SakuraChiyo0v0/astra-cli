@@ -6,6 +6,7 @@
  */
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { getConfig } from '../core/config.ts'
+import { notify } from '../core/notify.ts'
 import type { Command } from '../core/command.ts'
 import { homePath } from '../core/paths.ts'
 import { renderQrText, writeQrPng } from '../core/qr.ts'
@@ -1478,6 +1479,7 @@ const subRun: Command = {
   ],
   options: {
     id: { type: 'string', description: '只跑这一个订阅', valueName: 'id' },
+    notify: { type: 'boolean', description: '有新视频时发通知' },
     force: { type: 'boolean', description: '忽略间隔，立刻检查' },
     'rescan-pages': { type: 'boolean', description: '只读核对：按磁盘实际文件判断哪些分 P 没下，只补缺的' },
   },
@@ -1499,6 +1501,10 @@ const subRun: Command = {
       } catch (err) {
         results.push({ subscription: sub, newCount: 0, jobId: null, note: `失败：${(err as Error).message.slice(0, 150)}`, baseline: false })
       }
+    }
+    if (values.notify === true) {
+      const gained = results.reduce((n, r) => n + (r.newCount ?? 0), 0)
+      if (gained > 0) await notify(`【订阅更新】📺 B站新增 ${gained} 个视频（${results.filter((r) => (r.newCount ?? 0) > 0).length} 个订阅）`)
     }
     return {
       data: {

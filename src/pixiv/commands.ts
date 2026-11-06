@@ -13,6 +13,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { mirrorFile } from '../core/db/mirror.ts'
 import { getConfig } from '../core/config.ts'
+import { notify } from '../core/notify.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import type { Command } from '../core/command.ts'
 import { ensureDir, homePath } from '../core/paths.ts'
@@ -562,6 +563,7 @@ const subRun: Command = {
     'per-user': { type: 'string', description: '每个画师最多处理多少个新作品，默认 10', valueName: 'n' },
     r18: { type: 'boolean', description: '允许下载 R-18 作品（默认跳过）' },
     dry: { type: 'boolean', description: '只打印会写哪些文件' },
+    notify: { type: 'boolean', description: '有新作品时发通知' },
   },
   maxArgs: 0,
   async run({ values }) {
@@ -602,6 +604,10 @@ const subRun: Command = {
       if (!values.dry && ids[0]) entry.lastSeenId = Math.max(entry.lastSeenId, ids[0])
     }
     if (!values.dry) saveSubs(list)
+
+    if (values.notify === true && newWorks > 0) {
+      await notify(`【订阅更新】🖼 Pixiv 新增 ${newWorks} 张（下载 ${downloaded}）`)
+    }
 
     return {
       data: {

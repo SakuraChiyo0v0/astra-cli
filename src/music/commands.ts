@@ -5,6 +5,7 @@
  * 拿得准就直接下完返回结果，拿不准就返回候选让 AI 回去问用户。
  */
 import { AstraError, invalidInput } from '../core/errors.ts'
+import { notify } from '../core/notify.ts'
 import { getConfig, setConfig, musicRoot } from '../core/config.ts'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -1133,6 +1134,7 @@ const subscribeRun: Command = {
   options: {
     all: { type: 'boolean', description: '忽略间隔，全部检查一遍' },
     id: { type: 'string', description: '只跑指定订阅', valueName: 'id' },
+    notify: { type: 'boolean', description: '有新歌时发通知（走 notify 配置的通道）' },
   },
   maxArgs: 0,
   async run({ values, signal }) {
@@ -1150,6 +1152,10 @@ const subscribeRun: Command = {
       }
     }
     const jobs = results.filter((r) => 'jobId' in r && r.jobId).length
+    if (values.notify === true) {
+      const gained = results.reduce((n, r) => n + Number((r as { newTracks?: number }).newTracks ?? 0), 0)
+      if (gained > 0) await notify(`【订阅更新】🎵 音乐新增 ${gained} 首（${results.filter((r) => Number((r as { newTracks?: number }).newTracks ?? 0) > 0).length} 个订阅）`)
+    }
     return { data: { checked: subs.length, jobsStarted: jobs, results } }
   },
 }

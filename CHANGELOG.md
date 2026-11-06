@@ -1,3 +1,11 @@
+## 0.50.0
+
+订阅命令自带通知：`music subscribe run --notify` / `bili subscribe run --notify` / `pixiv sub run --notify`。
+
+- 只在**有新内容**时发一条摘要（音乐 +N 首 / B站 +N 个 / Pixiv +N 张），无新增不打扰
+- 走 `core/notify.ts` 的多通道（飞书 / Telegram / 通用 webhook），不绑定宿主
+- 目的：把「订阅追更」从 Hermes cron 脚本搬到 `astra schedule` 后仍然能通知
+
 ## 0.49.1
 
 - `schedule list` 的上次/下次时间按本机时区显示（原来直接截 ISO，看到的 UTC 会比实际早 8 小时）
