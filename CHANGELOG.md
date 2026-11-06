@@ -1,3 +1,19 @@
+## 0.39.0
+
+### 新增 `astra x`：把 X（Twitter）当数据源读
+
+- `x login`（吃 Netscape cookies.txt 或 `auth_token=…; ct0=…`，也支持 stdin 管道）、`x logout`、`x status`、`x doctor [--install]`。
+- 读：`x posts <账号>` / `x tweet <id|链接>` / `x feed [--type]` / `x bookmarks` / `x search "词" [--from/--since/--until/--min-likes/--has/--exclude]` / `x user <账号>`。
+- 媒体：`x media <账号|推文链接|搜索链接>`，原图带 `name=orig`，落 `<素材根>/twitter/<账号>/<推文id>_<序号>.<ext>`，archive 记账重跑不重复。
+- 刹车：`x pause` / `x resume`（写 `<ASTRA_HOME>/x-stop`）。
+
+为什么是 spawn 而不是自研 GraphQL：X 的 queryId / feature flags 每次改版都变，twitter-cli 0.8.5 的
+`search` 已经因此全 404，而 gallery-dl 还跟得上。所以时间线/单条/首页/书签走 twitter-cli，搜索与媒体走 gallery-dl，
+astra 只做参数拼装、统一 JSON、限速与落库。工具在 `venvs/x`，`x doctor --install` 一句话补装。
+
+踩到的坑：推文 id 是 19 位，超过 JS 的安全整数（2^53），`JSON.parse` 会把尾数抹平
+（2118552452572348566 → …700），所以 gallery-dl 的输出先经 `quoteBigInts()` 再解析。
+
 ## 0.38.0
 
 ### 新增 `astra device`：设备清单 + 探活基准

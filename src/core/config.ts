@@ -102,6 +102,11 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (/^[1-4]$/.test(v) ? null : '只能是 1..4') },
   { key: 'douyin.dir', description: '抖音下载根目录（绝对路径）；留空则必须给 --out', default: '',
     validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
+  // X 的媒体与抓取工具。工具默认在容器里的 /opt/data/venvs/x（python venv），
+  // 容器重建后 `astra x doctor --install` 会补回来；这里只给需要换位置时用。
+  { key: 'x.dir', description: 'X 媒体根目录（绝对路径）；留空 = /host-root/volume1/素材/twitter，没有 NAS 时落 <ASTRA_HOME>/x-media', default: '',
+    validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
+  { key: 'x.bin', description: 'twitter-cli / gallery-dl 所在目录；留空 = /opt/data/venvs/x/bin', default: '' },
   // 国服没有公开战绩接口，只能借 PC 上客户端的 LCU：ssh 到 PC 跑脚本再把 JSON 拿回来
   { key: 'lol.pc', description: '跑英雄联盟客户端的 PC 的 ssh 主机名（同 ~/.ssh/config）；留空用 "pc"', default: 'pc' },
   { key: 'lol.pc-dump-dir', description: 'PC 上存放采集脚本和 JSON 的目录（正斜杠写法，scp 用）', default: 'C:/LocalSpace/lol-dump' },
