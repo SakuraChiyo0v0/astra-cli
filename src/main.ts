@@ -17,14 +17,17 @@ import { renderTable } from './core/output.ts'
 import { CONFIG_KEYS, getConfig, listConfig, musicRoot, setConfig, unsetConfig } from './core/config.ts'
 import { astraHome } from './core/paths.ts'
 import { closeState } from './core/state.ts'
+import { setPinnedEntry } from './core/entry.ts'
 import { runDoctor } from './core/doctor.ts'
-import { allSessions, clearSessions, type Domain } from './core/sessions.ts'
+import { clearSessions } from './core/sessions.ts'
 import { dbCommands } from './core/db/commands.ts'
 import { libCommands } from './core/db/lib-commands.ts'
 import { allowedPatterns, authorize, openAuth, resolveToken, scopeOf } from './core/auth.ts'
 import { readToken, setIdentity, setToken } from './core/identity.ts'
 import { setCommandRegistry } from './core/registry.ts'
 import { DOMAINS } from './domains.ts'
+import { domainNames, hasDomain, loadAllDomains, loadDomain, setDomainEntries } from './core/domains-runtime.ts'
+import type { DomainModule } from './core/domain.ts'
 import { record as recordAudit } from './core/audit.ts'
 import { notify, notifyProviders } from './core/notify.ts'
 import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
@@ -51,7 +54,10 @@ const help: Command = {
   usage: 'astra help [命令前缀]',
   async run({ positionals }) {
     const prefix = positionals.join(' ')
-    const visible = commands.filter((c) => !c.hidden && c.name.startsWith(prefix))
+    // `help lol` / `astra lol --help` 只看一个领域，不必把 20 个都加载一遍
+    const head = positionals[0]
+    const pool = head && (hasDomain(head) || head === 'db' || head === 'lib') ? await commandsFor(head) : await allCommands()
+    const visible = pool.filter((c) => !c.hidden && c.name.startsWith(prefix))
     if (visible.length === 0) throw new AstraError('NOT_FOUND', `没有以「${prefix}」开头的命令`, { exitCode: 4 })
     return {
       data: {
@@ -266,19 +272,20 @@ const loginCmd: Command = {
   ],
   maxArgs: 2,
   async run({ positionals }) {
+    const providers = (await loadAllDomains()).flatMap((d) => d.sessions ?? [])
     if (positionals[0] === 'clear') {
       const name = positionals[1]
-      const known: Domain[] = ['netease', 'bili', 'vrchat']
-      if (name !== undefined && !known.includes(name as Domain)) {
+      const known = providers.map((p) => p.domain)
+      if (name !== undefined && !known.includes(name)) {
         throw new AstraError('INVALID_INPUT', `未知的域「${name}」`, { exitCode: 2, hint: `可选：${known.join(' / ')}` })
       }
-      const result = clearSessions(name === undefined ? undefined : [name as Domain])
+      const result = clearSessions(providers, name === undefined ? undefined : [name])
       return {
         data: { ...result, note: '只删了本地会话文件，没有调上游登出；要正常登出请用各域的 logout' },
         warnings: result.failed.map((f) => `${f.domain} 清理失败：${f.error}`),
       }
     }
-    const sessions = allSessions()
+    const sessions = providers.map((p) => p.view())
     const warnings: string[] = []
     for (const s of sessions) {
       // 只有"文件坏了"才值得警告：未登录是正常状态，不需要每次都提醒
@@ -380,15 +387,37 @@ const auditCmd: Command = {
   },
 }
 
-const commands: Command[] = [
-
+/** core 自带的顶层命令：不属于任何领域，总是在。 */
+const CORE_COMMANDS: Command[] = [
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest, notifyProvidersCmd,
-  // db / lib 是 core 自带的命令组，历史上排在 model 之后 —— 保持 help 输出顺序不变
-  ...DOMAINS.flatMap((d) => (d.name === 'model' ? [...d.commands, ...dbCommands, ...libCommands] : d.commands)),
 ]
 
+setDomainEntries(DOMAINS)
+setPinnedEntry(import.meta.url)
+
+/** 领域的命令。db / lib 是 core 自带的命令组，历史上排在 model 之后 —— 保持 help 输出顺序不变。 */
+function domainCommands(d: DomainModule): Command[] {
+  return d.name === 'model' ? [...d.commands, ...dbCommands, ...libCommands] : d.commands
+}
+
+/** 全部命令（help、auth doctor 这种要看全量的场合；会加载所有领域）。 */
+async function allCommands(): Promise<Command[]> {
+  return [...CORE_COMMANDS, ...(await loadAllDomains()).flatMap(domainCommands)]
+}
+
+/**
+ * 某个首词下能用的命令：首词是领域名就只加载那一个领域；是 db / lib 就不用加载任何领域；
+ * 其它（`help` / `jobs` 这些 core 命令）也不加载领域。
+ */
+async function commandsFor(head: string | undefined): Promise<Command[]> {
+  if (head === 'db') return dbCommands
+  if (head === 'lib') return libCommands
+  if (head && hasDomain(head)) return (await loadDomain(head)).commands
+  return CORE_COMMANDS
+}
+
 // 供 `astra auth doctor` 之类需要完整清单的命令读取（避免 import main 形成环）
-setCommandRegistry(commands)
+setCommandRegistry(allCommands)
 
 /** 最长前缀匹配：`music job cancel x` 先匹配 `music job cancel`，再退到 `music job`。 */
 /**
@@ -408,8 +437,9 @@ export function restoreCommandFlags(rawArgv: string[], command: Command, rest: s
   return userPassed && commandDeclares ? [...rest, '--json'] : rest
 }
 
-export function route(argv: string[]): { command: Command; rest: string[] } | null {
+export async function route(argv: string[]): Promise<{ command: Command; rest: string[] } | null> {
   const words = argv.filter((a) => !a.startsWith('-'))
+  const commands = await commandsFor(argv[0])
   for (let n = Math.min(3, words.length); n > 0; n -= 1) {
     const head = argv.slice(0, n)
     if (head.some((a) => a.startsWith('-'))) continue
@@ -426,13 +456,13 @@ export function route(argv: string[]): { command: Command; rest: string[] } | nu
  * 而不是报 UNKNOWN_COMMAND。之前只有 `astra help bili` 能用，
  * 每次新会话都要重新想起这个写法 —— 是使用者真正卡住的地方。
  */
-export function commandGroup(arg: string): boolean {
-  return commands.some((c) => !c.hidden && c.name.startsWith(`${arg} `))
+export async function commandGroup(arg: string): Promise<boolean> {
+  return (await commandsFor(arg)).some((c) => !c.hidden && c.name.startsWith(`${arg} `))
 }
 
 /** 某组下所有子命令名（给提示用）。 */
-export function groupCommands(arg: string): string[] {
-  return commands.filter((c) => !c.hidden && c.name.startsWith(`${arg} `)).map((c) => c.name)
+export async function groupCommands(arg: string): Promise<string[]> {
+  return (await commandsFor(arg)).filter((c) => !c.hidden && c.name.startsWith(`${arg} `)).map((c) => c.name)
 }
 
 async function main(): Promise<number> {
@@ -453,19 +483,24 @@ async function main(): Promise<number> {
   // 注意要**在这一步之后不再走"展示 help 命令自己"的分支**：
   // 重写完 args 就变成 `help bili`，那个分支会把 `help` 命令的说明吐出来，
   // 而不是 bili 的子命令清单。
-  const isGroupHelp = bare.length === 1 && commandGroup(bare[0]!)
+  const isGroupHelp = bare.length === 1 && (await commandGroup(bare[0]!))
   if (isGroupHelp) {
     args.splice(0, args.length, 'help', bare[0]!)
   }
 
-  const routed = route(args.filter((a) => a !== '--help' && a !== '-h'))
+  const routed = await route(args.filter((a) => a !== '--help' && a !== '-h'))
   if (!routed) {
     // 未知子命令（`astra bili foo`）时，提示该组的子命令，而不是全局顶层清单 ——
     // 顶层清单在 `bili foo` 这个上下文里没有任何帮助
-    const group = bare[0] && commandGroup(bare[0]) ? bare[0] : null
+    const group = bare[0] && (await commandGroup(bare[0])) ? bare[0] : null
+    // 顶层清单只要名字，不必为了它把所有领域加载一遍；顺序与 help 一致（db / lib 跟在 model 后面）
+    const topLevel = [...new Set([
+      ...CORE_COMMANDS.filter((c) => !c.hidden).map((c) => c.name.split(' ')[0]!),
+      ...domainNames().flatMap((n) => (n === 'model' ? [n, 'db', 'lib'] : [n])),
+    ])]
     const hint = group
-      ? `\`${group}\` 的子命令：${groupCommands(group).map((c) => c.replace(`${group} `, '')).join(', ')}`
-      : `运行 \`astra help\` 查看命令。顶层命令：${[...new Set(commands.filter((c) => !c.hidden).map((c) => c.name.split(' ')[0]))].join(', ')}`
+      ? `\`${group}\` 的子命令：${(await groupCommands(group)).map((c) => c.replace(`${group} `, '')).join(', ')}`
+      : `运行 \`astra help\` 查看命令。顶层命令：${topLevel.join(', ')}`
     writeJson(failResult(new AstraError('UNKNOWN_COMMAND', `未知命令：${args.join(' ')}`, { exitCode: 2, hint })), pretty)
     return 2
   }
@@ -576,8 +611,12 @@ function normalizePath(value: string): string {
 
 const entryPath = process.argv[1] ? normalizePath(process.argv[1]) : ''
 const selfPath = normalizePath(fileURLToPath(import.meta.url))
+// 0.56.0 起打包产物是「入口桩 dist/astra.mjs → releases/<版本>/astra.mjs」：
+// 经桩启动时 argv[1] 是桩，桩把自己的 URL 放在 globalThis.__astraEntry 里，对上它也算入口。
+const stub = (globalThis as { __astraEntry?: string }).__astraEntry
+const stubPath = typeof stub === 'string' ? normalizePath(fileURLToPath(stub)) : ''
 // 打包产物里 import.meta.url 指向产物本身；开发态指向 src/main.ts。两者都应能对上 argv[1]。
-const isEntry = entryPath !== '' && entryPath === selfPath
+const isEntry = entryPath !== '' && (entryPath === selfPath || entryPath === stubPath)
 if (isEntry) {
   main().then(
     (code) => {

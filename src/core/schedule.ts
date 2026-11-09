@@ -18,6 +18,7 @@ import { AstraError, invalidInput } from './errors.ts'
 import { homePath } from './paths.ts'
 import { currentIdentity, currentToken } from './identity.ts'
 import { record as recordAudit } from './audit.ts'
+import { launcherEntry } from './entry.ts'
 
 export interface Schedule {
   name: string
@@ -160,8 +161,8 @@ export function splitCommand(command: string): string[] {
 
 /** 起一个分离进程跑这次调度，日志落 `<ASTRA_HOME>/logs/schedule-<name>.log`。 */
 export async function spawnSchedule(schedule: Schedule): Promise<number> {
-  const entry = process.argv[1]
-  if (!entry) throw new AstraError('INTERNAL', '无法确定 CLI 入口文件', { exitCode: 1 })
+  // 调度每次触发都跑最新版本：用桩，不钉版本
+  const entry = launcherEntry()
   const logDir = homePath('logs')
   mkdirSync(logDir, { recursive: true })
   const log = openSync(path.join(logDir, `schedule-${schedule.name}.log`), 'a')

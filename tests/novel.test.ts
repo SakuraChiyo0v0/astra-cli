@@ -27,12 +27,12 @@ import { commandGroup, groupCommands } from '../src/main.ts'
 
 const fx = (name: string): string => readFileSync(new URL(`./fixtures/novel/${name}`, import.meta.url), 'utf8')
 
-test('novel 是命令组，scope 跟着命令名走', () => {
-  assert.equal(commandGroup('novel'), true)
+test('novel 是命令组，scope 跟着命令名走', async () => {
+  assert.equal((await commandGroup('novel')), true)
   for (const c of ['novel search', 'novel get', 'novel job', 'novel subscribe add', 'novel index', 'novel doctor']) {
-    assert.ok(groupCommands('novel').includes(c), c)
+    assert.ok((await groupCommands('novel')).includes(c), c)
   }
-  assert.ok(!groupCommands('novel').includes('novel _worker'), '内部命令不该出现在清单里')
+  assert.ok(!(await groupCommands('novel')).includes('novel _worker'), '内部命令不该出现在清单里')
 })
 
 // ---------- 8novel ----------

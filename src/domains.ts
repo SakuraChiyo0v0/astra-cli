@@ -1,31 +1,32 @@
 /**
  * 领域登记表：加 / 删一个领域只改这里一行（外加它自己的目录）。
  *
- * 顺序就是 `astra help` 里的顺序。目前还是静态 import；
- * 下一步（P2）换成 `() => import(...)` 按命令首词懒加载。
+ * 顺序就是 `astra help` 里的顺序。
+ *
+ * 0.56.0 起是**懒加载**：只写名字和 `load`，跑 `astra music get` 时只 import music。
+ * `load` 必须是字面量的 `import('./x/manifest.ts')` —— 打包器靠它切块，写成变量拼接就切不开了。
  */
-import type { DomainModule } from './core/domain.ts'
-import { domain as music } from './music/manifest.ts'
-import { domain as bili } from './bili/manifest.ts'
-import { domain as media } from './media/manifest.ts'
-import { domain as steam } from './steam/manifest.ts'
-import { domain as vr } from './vr/manifest.ts'
-import { domain as model } from './model/manifest.ts'
-import { domain as quark } from './quark/manifest.ts'
-import { domain as cloud } from './cloud/manifest.ts'
-import { domain as pixiv } from './pixiv/manifest.ts'
-import { domain as comic } from './comic/manifest.ts'
-import { domain as douyin } from './douyin/manifest.ts'
-import { domain as lol } from './lol/manifest.ts'
-import { domain as heybox } from './heybox/manifest.ts'
-import { domain as llm } from './llm/manifest.ts'
-import { domain as device } from './device/manifest.ts'
-import { domain as x } from './x/manifest.ts'
-import { domain as auth } from './auth/manifest.ts'
-import { domain as schedule } from './schedule/manifest.ts'
-import { domain as novel } from './novel/manifest.ts'
-import { domain as archive } from './archive/manifest.ts'
+import type { DomainEntry } from './core/domain.ts'
 
-export const DOMAINS: DomainModule[] = [
-  music, bili, media, steam, vr, model, quark, cloud, pixiv, comic, douyin, lol, heybox, llm, device, x, auth, schedule, novel, archive,
+export const DOMAINS: DomainEntry[] = [
+  { name: 'music', load: async () => (await import('./music/manifest.ts')).domain },
+  { name: 'bili', load: async () => (await import('./bili/manifest.ts')).domain },
+  { name: 'media', load: async () => (await import('./media/manifest.ts')).domain },
+  { name: 'steam', load: async () => (await import('./steam/manifest.ts')).domain },
+  { name: 'vr', load: async () => (await import('./vr/manifest.ts')).domain },
+  { name: 'model', load: async () => (await import('./model/manifest.ts')).domain },
+  { name: 'quark', load: async () => (await import('./quark/manifest.ts')).domain },
+  { name: 'cloud', load: async () => (await import('./cloud/manifest.ts')).domain },
+  { name: 'pixiv', load: async () => (await import('./pixiv/manifest.ts')).domain },
+  { name: 'comic', load: async () => (await import('./comic/manifest.ts')).domain },
+  { name: 'douyin', load: async () => (await import('./douyin/manifest.ts')).domain },
+  { name: 'lol', load: async () => (await import('./lol/manifest.ts')).domain },
+  { name: 'heybox', load: async () => (await import('./heybox/manifest.ts')).domain },
+  { name: 'llm', load: async () => (await import('./llm/manifest.ts')).domain },
+  { name: 'device', load: async () => (await import('./device/manifest.ts')).domain },
+  { name: 'x', load: async () => (await import('./x/manifest.ts')).domain },
+  { name: 'auth', load: async () => (await import('./auth/manifest.ts')).domain },
+  { name: 'schedule', load: async () => (await import('./schedule/manifest.ts')).domain },
+  { name: 'novel', load: async () => (await import('./novel/manifest.ts')).domain },
+  { name: 'archive', load: async () => (await import('./archive/manifest.ts')).domain },
 ]

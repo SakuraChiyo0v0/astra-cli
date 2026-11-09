@@ -1,7 +1,7 @@
 ---
 name: astra-music
 description: Download songs, albums and playlists to the NAS.
-version: 0.11.0
+version: 0.11.1
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -187,7 +187,7 @@ PY
 
 用户纠结"按歌单下载还是按歌手下载"时，答案是**歌手/专辑**（`{albumartist}/{album}/`，astra 默认模板），并给出理由：
 
-- 曲库追踪跟目录无关。`ASTRA_HOME/astra.db` 的 `tracks` 表按 `platform + native_id`（如 `wy:233933`）记一条，
+- 曲库追踪跟目录无关。astra 库（0.56.0 起和资产库是同一个，线上是 PG）的 `tracks` 表按 `platform + native_id`（如 `wy:233933`）记一条，
   同时存 `file_path` / `format` / `quality`。核对"歌单缺哪几首"是拿歌单的 native_id 对 `tracks` 表，不是扫目录。
 - 同一首歌会同时出现在多个歌单里，按歌单建目录就会变成多份副本，去重逻辑失效。
 - 歌单是"视图"不是"归属"：歌今天在这个歌单、明天被移走，目录就烂了。
@@ -222,9 +222,9 @@ PY
 # 1. 改目录名（同卷瞬时；运行中的 astra 会立刻失效，所以下一步要跟上）
 mv /host-root/volume1/音乐/旧名 /host-root/volume1/音乐/新名
 # 2. 改容器环境变量（compose 里的 ASTRA_MUSIC_DIR）并重建容器
-# 3. 批量改数据库路径
-python3 -c "import sqlite3;c=sqlite3.connect('/opt/astra/home/astra.db');\
-c.execute(\"update tracks set file_path=replace(file_path,'/音乐/旧名/','/音乐/新名/')\");c.commit()"
+# 3. 批量改数据库路径（0.56.0 起曲库在 PG 里，别再直接开 astra.db —— 那个文件已经不是现行的库了）
+astra db query "update tracks set file_path = replace(file_path, ?, ?)" \
+  --param '/音乐/旧名/' --param '/音乐/新名/' --write
 # 4. 验证
 /opt/astra/bin/astra music have | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['stats'])"
 ```

@@ -13,6 +13,7 @@ import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import path from 'node:path'
 import { homePath } from '../core/paths.ts'
 import { AstraError } from '../core/errors.ts'
+import { pinnedEntry } from '../core/entry.ts'
 
 export type IdleStatus = 'starting' | 'online' | 'failed' | 'stopped'
 export type LoginStatus = 'starting' | 'waiting_scan' | 'done' | 'failed' | 'cancelled'
@@ -119,8 +120,8 @@ export function spawnDetached(args: string[], logName: string, extraEnv: Record<
   const logDir = homePath('logs')
   mkdirSync(logDir, { recursive: true })
   const log = openSync(path.join(logDir, `${logName}.log`), 'a')
-  const entry = process.argv[1]
-  if (!entry) throw new AstraError('INTERNAL', '无法确定 CLI 入口文件', { exitCode: 1 })
+  // 挂机进程可能跑好几天：钉在当前版本，部署换桩不影响它
+  const entry = pinnedEntry()
   const child = spawn(process.execPath, [...process.execArgv, entry, ...args], {
     detached: true,
     stdio: ['ignore', log, log],

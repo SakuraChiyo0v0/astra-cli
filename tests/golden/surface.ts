@@ -25,15 +25,15 @@ const PROBES = [
 ]
 
 export async function surface(): Promise<unknown> {
-  const help = route(['help'])
+  const help = await route(['help'])
   if (!help) throw new Error('help 命令不见了')
   const ctrl = new AbortController()
   const result = (await help.command.run({ positionals: [], values: {}, signal: ctrl.signal })) as {
     data: { commands: unknown[]; conventions: unknown[] }
   }
   // hidden 命令不进 help，但也是表面的一部分（_worker 之类会被 spawn 调用）
-  const hidden = getCommandRegistry().filter((c) => c.hidden).map((c) => c.name).sort()
-  const config = route(['config'])
+  const hidden = (await getCommandRegistry()).filter((c) => c.hidden).map((c) => c.name).sort()
+  const config = await route(['config'])
   return {
     conventions: result.data.conventions,
     commands: result.data.commands,

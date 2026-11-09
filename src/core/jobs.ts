@@ -23,6 +23,7 @@ import { AstraError } from './errors.ts'
 import { homePath } from './paths.ts'
 import { notify } from './notify.ts'
 import { currentIdentity, currentToken } from './identity.ts'
+import { pinnedEntry } from './entry.ts'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'partial' | 'failed' | 'cancelled' | 'interrupted'
 // 任务项状态。`downloaded` 与单曲 `data.status` 同词，调用方可以用一套过滤；
@@ -319,8 +320,8 @@ export async function spawnWorker(domain: string, jobId: string): Promise<number
   const logDir = homePath('logs')
   mkdirSync(logDir, { recursive: true })
   const log = openSync(path.join(logDir, `job-${domain}-${jobId}.log`), 'a')
-  const entry = process.argv[1]
-  if (!entry) throw new AstraError('INTERNAL', '无法确定 CLI 入口文件', { exitCode: 1 })
+  // 钉在当前版本：任务可能跑几小时，期间部署换了桩，worker 也不该懒加载到新版本的块
+  const entry = pinnedEntry()
   const child = spawn(process.execPath, [...process.execArgv, entry, domain, '_worker', jobId], {
     detached: true,
     stdio: ['ignore', log, log],

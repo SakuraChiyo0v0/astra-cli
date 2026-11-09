@@ -16,13 +16,13 @@ import { tmpdir } from 'node:os'
 
 process.env.ASTRA_HOME = mkdtempSync(path.join(tmpdir(), 'astra-ux-home-'))
 
-test('4a：组名能被认出来，并有子命令', () => {
-  assert.equal(commandGroup('bili'), true)
-  assert.equal(commandGroup('music'), true)
-  assert.ok(groupCommands('bili').length > 20, 'bili 该有二十几个子命令')
+test('4a：组名能被认出来，并有子命令', async () => {
+  assert.equal((await commandGroup('bili')), true)
+  assert.equal((await commandGroup('music')), true)
+  assert.ok((await groupCommands('bili')).length > 20, 'bili 该有二十几个子命令')
   // 单个命令名不是"组"（`astra get` 不该被当成 `get` 组的 help）
-  assert.equal(commandGroup('get'), false)
-  assert.equal(commandGroup('不存在的组'), false)
+  assert.equal((await commandGroup('get')), false)
+  assert.equal((await commandGroup('不存在的组')), false)
 })
 
 test('4b：bili.template 与 bili.video-template 读写互通', () => {

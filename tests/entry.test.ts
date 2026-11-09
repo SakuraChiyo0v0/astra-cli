@@ -11,7 +11,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -36,12 +36,21 @@ after(async () => {
   if (buildRoot) rmSync(buildRoot, { recursive: true, force: true })
 })
 
-/** 跑一份产物副本，返回 stdout 里的 data。 */
-async function runCopy(dirName: string, fileName: string): Promise<{ version: string }> {
-  const dir = path.join(buildRoot, dirName)
+/**
+ * 摆一份产物副本：0.56.0 起 dist/astra.mjs 是入口桩，旁边要有 releases/<版本>/ 才跑得起来。
+ * 桩可以改名（astra-bili.mjs），目录结构不能变。
+ */
+function place(dir: string, fileName: string): string {
   mkdirSync(dir, { recursive: true })
+  cpSync(path.resolve('dist/releases'), path.join(dir, 'releases'), { recursive: true })
   const target = path.join(dir, fileName)
   copyFileSync(dist, target)
+  return target
+}
+
+/** 跑一份产物副本，返回 stdout 里的 data。 */
+async function runCopy(dirName: string, fileName: string): Promise<{ version: string }> {
+  const target = place(path.join(buildRoot, dirName), fileName)
   const { stdout } = await run(process.execPath, [target, 'version'], { timeout: 30_000 })
   assert.notEqual(stdout.trim(), '', '零输出 = 入口没被认出来，这是最糟的失败方式')
   const parsed = JSON.parse(stdout) as { ok: boolean; data?: { version?: string } }
@@ -77,13 +86,20 @@ test('路径里有中文和空格能执行', async () => {
 test('被 import 时不执行 main（不产生 stdout）', async () => {
   // 用一个包装脚本 import 产物：argv[1] 是包装脚本，不是产物
   const dir = path.join(buildRoot, 'imported')
-  mkdirSync(dir, { recursive: true })
-  const entry = path.join(dir, 'astra.mjs')
-  copyFileSync(dist, entry)
+  const entry = place(dir, 'astra.mjs')
   const wrapper = path.join(dir, 'wrapper.mjs')
   const { writeFileSync } = await import('node:fs')
   // Windows 下 import 绝对路径必须写成 file:// URL，否则盘符会被当成协议
   writeFileSync(wrapper, `await import(${JSON.stringify(pathToFileURL(entry).href)})\nconsole.log('WRAPPER-DONE')\n`, 'utf8')
   const { stdout } = await run(process.execPath, [wrapper], { timeout: 30_000 })
   assert.equal(stdout.trim(), 'WRAPPER-DONE', '被 import 时不该自己跑起来')
+})
+
+test('直接跑版本目录里的真入口也能执行（后台 worker 就是这么被拉起的）', async () => {
+  const dir = path.join(buildRoot, 'pinned')
+  place(dir, 'astra.mjs')
+  const { readdirSync } = await import('node:fs')
+  const [version] = readdirSync(path.join(dir, 'releases'))
+  const { stdout } = await run(process.execPath, [path.join(dir, 'releases', version!, 'astra.mjs'), 'version'], { timeout: 30_000 })
+  assert.equal((JSON.parse(stdout) as { data: { version: string } }).data.version, version)
 })

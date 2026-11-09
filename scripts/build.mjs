@@ -1,6 +1,20 @@
-// 打成单文件 dist/astra.mjs：进容器只要一个 Node 24 和这个文件，没有 node_modules。
+// 打包到 dist/：
+//
+//   dist/astra.mjs                     入口桩：几行，只负责 import 当前版本
+//   dist/releases/<版本>/astra.mjs      真正的入口
+//   dist/releases/<版本>/chunks/*.mjs   按领域切出来的块
+//
+// 进容器只要一个 Node 24 和 dist 整个目录，没有 node_modules。
+//
+// 0.56.0 起切块（splitting）：domains.ts 里每个 `import('./x/manifest.ts')` 都是一个切点，
+// 跑 `astra music get` 只加载入口 + music 那几块，不再把 20 个领域、9.8 MB 全部解析一遍。
+//
+// 为什么要桩 + 版本目录：产物从一个文件变成一个目录后，「原地覆盖」不再是原子的 ——
+// 后台任务的 worker 正在跑时换掉一半 chunk，它下一次懒加载就会拿到新旧混杂的代码。
+// 现在部署 = 先把新版本目录整个放好，再原子地换掉几行的桩；旧版本目录留着，回滚就是把桩写回去。
+// 调用方式不变：`node /opt/astra/bin/astra.mjs …`
 import { build } from 'esbuild'
-import { readFileSync, chmodSync } from 'node:fs'
+import { readFileSync, chmodSync, rmSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -64,9 +78,17 @@ const banner = {
   ].join('\n'),
 }
 
+// 旧产物里的 chunk 文件名带哈希，不清掉会越积越多
+rmSync('dist', { recursive: true, force: true })
+const outdir = `dist/releases/${version}`
+
 await build({
-  entryPoints: ['src/main.ts'],
-  outfile: 'dist/astra.mjs',
+  entryPoints: { astra: 'src/main.ts' },
+  outdir,
+  entryNames: '[name]',
+  chunkNames: 'chunks/[name]-[hash]',
+  outExtension: { '.js': '.mjs' },
+  splitting: true,
   bundle: true,
   platform: 'node',
   target: 'node24',
@@ -80,5 +102,22 @@ await build({
   legalComments: 'none',
   logLevel: 'warning',
 })
+
+// 入口桩。`__astraEntry` 告诉 main.ts「我是被桩当入口启动的」—— main 靠比对 argv[1]
+// 和自己的路径判断要不要执行，经桩启动时两者不同（见 src/main.ts 的 isEntry）。
+writeFileSync(
+  'dist/astra.mjs',
+  [
+    '#!/usr/bin/env node',
+    `// astra ${version} 的入口桩（scripts/build.mjs 生成）。换版本 = 换这个文件；版本目录在 releases/ 下`,
+    'globalThis.__astraEntry = import.meta.url',
+    `await import('./releases/${version}/astra.mjs')`,
+    '',
+  ].join('\n'),
+)
 chmodSync('dist/astra.mjs', 0o755)
-console.log(`dist/astra.mjs ${version}`)
+chmodSync(`${outdir}/astra.mjs`, 0o755)
+const chunks = readdirSync(`${outdir}/chunks`)
+const entryBytes = statSync(`${outdir}/astra.mjs`).size
+const total = chunks.reduce((n, f) => n + statSync(`${outdir}/chunks/${f}`).size, entryBytes)
+console.log(`dist/astra.mjs ${version}（入口 ${(entryBytes / 1024).toFixed(0)} KB + ${chunks.length} 块，共 ${(total / 1024 / 1024).toFixed(1)} MB → ${outdir}）`)

@@ -1,7 +1,7 @@
 ---
 name: astra-deploy
 description: Deploy astra CLI updates to the NAS (Hermes container) and verify them.
-version: 0.2.0
+version: 0.3.0
 author: SakuraChiyo0v0
 license: MIT
 platforms: [linux, macos, windows]
@@ -24,10 +24,19 @@ metadata:
 > `astra-cli-dev` 的「部署」一节，核心就一条：
 >
 > ```bash
+> V=$(node -p "require('./package.json').version")
 > docker run --rm -v /volume1/docker/astra/bin:/b \
 >   -v /volume1/docker/hermes/data/astra-src/dist:/d \
->   alpine sh -c 'cp /d/astra.mjs /b/astra.mjs && chmod 755 /b/astra.mjs && md5sum /b/astra.mjs'
+>   alpine sh -c "mkdir -p /b/releases && rm -rf /b/releases/$V.tmp && cp -r /d/releases/$V /b/releases/$V.tmp \
+>     && rm -rf /b/releases/$V && mv /b/releases/$V.tmp /b/releases/$V && chmod -R a+rX /b/releases \
+>     && (cp /b/astra.mjs /b/astra.mjs.prev 2>/dev/null || true) \
+>     && cp /d/astra.mjs /b/astra.mjs.new && chmod 755 /b/astra.mjs.new && mv /b/astra.mjs.new /b/astra.mjs \
+>     && md5sum /b/astra.mjs /b/releases/$V/astra.mjs"
 > ```
+>
+> **0.56.0 起产物是一个目录**：`dist/astra.mjs` 只是几行的入口桩，真东西在 `dist/releases/<版本>/`
+> （入口 + `chunks/`）。顺序必须是**先放好版本目录，再换桩**：桩一换，下一次调用就去找新目录。
+> 只拷桩不拷目录 = 所有命令 `Cannot find module`。
 
 - 发版之后要把新 `astra.mjs` 推到 NAS
 - **要自己改 astra 源码**（需求清单里的条目）→ 看「在容器内改源码」一节：代理、密钥、bin 权限都在那里
@@ -36,16 +45,30 @@ metadata:
 
 ## 关键事实
 
-astra 是**单文件产物** `dist/astra.mjs`，版本号在打包时写死进去
-（`scripts/build.mjs` 的 `define: ASTRA_VERSION`，取自 `package.json`）。
-**文件不换，版本号就不变** —— 仓库发了新版，NAS 不会自己变。
+astra 的产物是 `dist/` 整个目录（0.56.0 起）：
+
+```
+dist/astra.mjs                      入口桩，几行：import ./releases/<版本>/astra.mjs
+dist/releases/<版本>/astra.mjs       真入口（约 85 KB）
+dist/releases/<版本>/chunks/*.mjs    按领域切的块（steam 那块 6.6 MB，只有 steam 命令会加载）
+```
+
+版本号在打包时写死进去（`scripts/build.mjs` 的 `define: ASTRA_VERSION`，取自 `package.json`）。
+**桩不换，版本号就不变** —— 仓库发了新版，NAS 不会自己变。
+
+**回滚**：旧版本目录还在 `bin/releases/` 下，把 `astra.mjs.prev` 拷回 `astra.mjs` 即可。
+（从 0.55 及以前的单文件回滚：`astra.mjs.prev` 就是那个单文件，同样拷回去。）
+
+**正在跑的后台任务不受部署影响**：worker 进程钉在它启动时的版本目录上（`src/core/entry.ts`），
+所以**别在任务还在跑的时候删它的版本目录**。删旧目录之前先 `astra jobs --active` 看一眼。
 
 部署根目录（本机实测）：`/volume1/docker`，所以产物落在
 `/volume1/docker/astra/bin/astra.mjs`。
 
 | 宿主路径 | 容器里 | 读写 |
 |-|-|-|
-| `astra/bin/astra.mjs` | `/opt/astra/bin/astra.mjs` | 只读挂载 |
+| `astra/bin/astra.mjs` | `/opt/astra/bin/astra.mjs` | 只读挂载（入口桩） |
+| `astra/bin/releases/` | `/opt/astra/bin/releases/` | 只读挂载（各版本目录） |
 | `astra/bin/astra` | `/opt/data/.local/bin/astra` | 只读挂载 |
 | `astra/skills/` | `/opt/astra/skills` | 可写 |
 | `astra/home/` | `ASTRA_HOME=/opt/astra/home` | 可写 |
@@ -63,6 +86,9 @@ node dist/astra.mjs version    # 期望 {"ok":true,"data":{"version":"x.y.z",...
 版本号必须是你要发的那个。忘了升就先改 `package.json` 再打包。
 
 ### 2. 传到 NAS
+
+> 以下 WebDAV 步骤写于单文件时代。0.56.0 起要传的是 `dist/releases/<版本>/` 整个目录 + 入口桩，
+> 用 WebDAV 得逐个文件 PUT；能用 docker 就用开头那条命令。
 
 本机 SSH 到 NAS 是不通的（22 端口超时），走 **Kura 的本地 WebDAV**。
 端口用 `kura_dav_status` 现查，**别记死** —— 实测是 `18006`：
@@ -169,9 +195,12 @@ docker exec hermes astra bili get BV1xxx --audio-only
 
 ## Pitfalls
 
-- **单文件产物只内联「静态」require，动态依赖要自己放到 `bin/node_modules/`**。
-  esbuild 把依赖打成一个 `astra.mjs`，但 `require('lzma')` 这类**动态**调用会原样留在产物里，
-  运行时按 `astra.mjs` 所在目录往上找 `node_modules`。`bin/` 是只读挂载、又没有 `node_modules`，
+- **0.56.0 升级要搬一次数据**：部署完跑 `astra db import-state`（先 `--dry-run` 看行数）。
+  不跑的话 `music have` 是空的、`astra jobs` 没有历史、订阅全没了 —— 数据都还在老的
+  `home/astra.db` 里，`astra doctor` 的 `state-import` 会提示。搬完源文件改名成 `astra.db.migrated-*` 留底。
+- **产物只内联「静态」require，动态依赖要自己放到 `bin/node_modules/`**。
+  esbuild 把依赖打进产物，但 `require('lzma')` 这类**动态**调用会原样留在产物里，
+  运行时按产物所在目录往上找 `node_modules`（0.56.0 起是 `bin/releases/<版本>/chunks/`，往上一样能找到 `bin/node_modules`）。`bin/` 是只读挂载、又没有 `node_modules`，
   于是某些命令直接 `INTERNAL: Cannot find module 'lzma'`（典型：`steam idle start` 这类要起会话的），
   而 `version` / `status` 照常 —— 极容易误判成上游掉线。
   装法（docker 看不见容器内 `/opt/data`，要先落到 NAS 路径）：
@@ -266,22 +295,17 @@ ssh github.com:22 直连       → 通（返回 Permission denied (publickey) �
 ### 部署：bin 目录是 root 属主，hermes 写不进去
 
 `/opt/astra/bin` 与宿主 `/volume1/docker/astra/bin` 都是 `root:root 755`，
-`touch` 直接失败。产物落地要用 docker 以 root 身份写（sock 可用）：
-
-```bash
-docker run --rm -v /volume1/docker/astra/bin:/b \
-  -v /volume1/docker/hermes/data/astra-src/dist:/d alpine \
-  sh -c 'cp /b/astra.mjs /b/astra.mjs.bak-<旧版本> 2>/dev/null; cp /d/astra.mjs /b/astra.mjs && chmod 755 /b/astra.mjs && md5sum /b/astra.mjs'
-```
+`touch` 直接失败。产物落地要用 docker 以 root 身份写（sock 可用），命令就是本文开头那条
+（先放版本目录、再换桩，旧桩留成 `astra.mjs.prev`）。
 
 **挂载源必须写宿主路径 `/volume1/docker/hermes/data/...`，不能写容器内的 `/opt/data/...`。**
 docker 守护进程跑在宿主上，容器里的路径它看不见 —— 写成 `/opt/data/astra-src/dist` 会报
-`cp: can't stat '/d/astra.mjs': No such file or directory`，看起来像打包没产物。
+`cp: can't stat '/d/releases/...': No such file or directory`，看起来像打包没产物。
 
-写前先备份成 `astra.mjs.bak-<版本>`（目录里已有这个惯例），出问题能立刻换回去。
+旧桩留成 `astra.mjs.prev`、旧版本目录留在 `releases/` 下，出问题能立刻换回去。
 `bin/` 是只读挂载，换完文件下次调用就是新版本，**不用重启容器**。
 
-验证：`md5sum dist/astra.mjs` 与上面 docker 里输出的 MD5 必须一致；
+验证：`md5sum dist/astra.mjs dist/releases/<版本>/astra.mjs` 与上面 docker 里输出的 MD5 必须一致；
 `astra` 不在 PATH 上，用全路径 `/opt/data/.local/bin/astra version` 查（它是只读挂载的 wrapper，
 指向 `/opt/astra/bin/astra.mjs`）。
 

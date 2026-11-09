@@ -9,9 +9,9 @@ import { decodeRespData, md5hex, tokenAndParam } from '../src/comic/crypto.ts'
 import { filenameStemOf, scrambleSliceCount, slicePlan } from '../src/comic/scramble.ts'
 import { commandGroup, groupCommands } from '../src/main.ts'
 
-test('comic 是命令组', () => {
-  assert.equal(commandGroup('comic'), true)
-  assert.ok(groupCommands('comic').some((c) => c === 'comic get'))
+test('comic 是命令组', async () => {
+  assert.equal((await commandGroup('comic')), true)
+  assert.ok((await groupCommands('comic')).some((c) => c === 'comic get'))
 })
 
 test('searchMainTag：范围对应上游 main_tag', () => {

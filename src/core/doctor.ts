@@ -14,17 +14,12 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { getConfig, mediaRoot, musicRoot } from './config.ts'
-import { comicRoot } from '../comic/paths.ts'
-import { targetPathFor } from '../bili/download.ts'
-import { renderTemplate } from './template.ts'
+import { getConfig } from './config.ts'
 import { astraHome } from './paths.ts'
-import { listSources } from '../music/lx/store.ts'
-import { loadSession } from '../music/auth.ts'
-import { loadBiliSession } from '../bili/auth.ts'
 import { runBinary, ffmpegPath } from './ffmpeg.ts'
 import { maybeProxiedRequest, proxyConfig } from './proxy.ts'
 import { dirUsage } from './disk.ts'
+import { loadAllDomains } from './domains-runtime.ts'
 import { stateDb } from './state.ts'
 import { redact } from './db/index.ts'
 import { legacyStatePath, legacyStatePending } from './db/import-state.ts'
@@ -92,144 +87,22 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
     add({ name: 'ffmpeg', kind: 'domain', ok: false, detail: (err as Error).message.slice(0, 120), hint: '装 ffmpeg，或 `astra config set music.ffmpeg <绝对路径>`' })
   }
 
-  // —— 音乐域 ——
-  const music = musicRoot()
-  try {
-    ensureExists(music)
-    const write = checkWritable(music)
-    add({ name: 'music_dir', kind: 'domain', ok: write.ok, detail: write.detail, ...(write.ok ? {} : { hint: '检查音乐目录的属主与权限（WebDAV 上传后常见 000）' }) })
-  } catch (err) {
-    add({ name: 'music_dir', kind: 'domain', ok: false, detail: `建不出目录：${(err as Error).message.slice(0, 100)}` })
-  }
-
-  const sources = listSources()
-  const enabled = sources.filter((s) => s.enabled)
-  add({
-    name: 'lx_sources',
-    kind: 'domain',
-    ok: enabled.length > 0,
-    detail: sources.length === 0 ? '未导入音源' : enabled.map((s) => s.id).join(', ') || '全部停用',
-    ...(enabled.length > 0 ? {} : { hint: '`astra music source add <文件>` 导入洛雪音源；登录官方账号也能下载' }),
-  })
-
-  try {
-    const response = await fetch('https://music.163.com/api/v3/song/detail?c=' + encodeURIComponent('[{"id":1472480890}]'), {
-      headers: { Referer: 'https://music.163.com/' },
-      signal: AbortSignal.timeout(8000),
-    })
-    add({ name: 'netease', kind: 'domain', ok: response.ok, detail: `网易云接口 HTTP ${response.status}` })
-  } catch (err) {
-    add({ name: 'netease', kind: 'domain', ok: false, detail: (err as Error).message.slice(0, 120), hint: '检查网络或代理' })
-  }
-
-  const neteaseSession = loadSession()
-  add({
-    name: 'netease_login',
-    kind: 'optional',
-    ok: neteaseSession !== null,
-    detail: neteaseSession ? `已登录（${neteaseSession.nickname ?? neteaseSession.userId ?? '会话存在'}）` : '未登录',
-    ...(neteaseSession ? {} : { hint: '登录后能用官方通道取更高音质、看私人歌单（`astra music login start`）' }),
-  })
-
-  // —— B 站域 ——
-  const video = mediaRoot()
-  try {
-    ensureExists(video)
-    const write = checkWritable(video)
-    add({ name: 'video_dir', kind: 'domain', ok: write.ok, detail: write.detail, ...(write.ok ? {} : { hint: '检查视频目录的属主与权限' }) })
-  } catch (err) {
-    add({ name: 'video_dir', kind: 'domain', ok: false, detail: `建不出目录：${(err as Error).message.slice(0, 100)}` })
-  }
-
-  // 生效路径：把模板**展开成示例路径**。
-  //
-  // 为什么需要：`bili.template` / `bili.audio-template` / `bili.audio-dir` 三个配置
-  // 决定文件落哪儿，但改完只能真下一个文件才知道对不对。实测踩过一次：
-  // `--to bili` 用错了模板、落成 `<标题>/01.mp3`，看 doctor 完全发现不了。
-  //
-  // 示例用一个固定的假数据，不依赖网络也不依赖曲库 —— 目的是让"配置 → 落点"一眼可见。
-  {
-    const sampleInfo = {
-      bvid: 'BV1xx411c7mD',
-      // 带《》：音频模板的 `{title}` 走 `songTitleOf`，取《》里的歌名。
-      // 写"示例视频标题"的话它会退回分 P 名，展开出"示例分P" ——
-      // 那会让人以为音频模板里也有 `{part}`（清单 P3#4f）
-      title: '示例视频标题《示例歌名》',
-      owner: { mid: 0, name: '示例UP主' },
-      pubdate: 0,
-      // 示例数据要让两条模板都展示得清楚：
-      // - 视频模板用 `{part}`，所以分 P 名要有个可辨认的值
-      // - 音频模板的 `{title}` 走 `songTitleOf`：标题里有《》就取歌名，
-      //   没有才退回分 P 名。这里故意给一个带《》的标题 ——
-      //   否则音频示例会显示"示例分P"，让人以为音频模板里也有 `{part}`
-      // 两个分 P：视频模板里的 `{part}` 才会展开出内容（单 P 时它是空的），
-      // 示例才看得出"分 P 名会进文件名"这件事
-      pages: [
-        { cid: 1, page: 1, part: '示例分P', duration: 0 },
-        { cid: 2, page: 2, part: '第二P', duration: 0 },
-      ],
-    } as never
-    const samplePage = { cid: 1, page: 1, part: '示例分P', duration: 0 }
-    const audioDir = getConfig('bili.audio-dir')
-    const expand = (kind: 'video' | 'audio'): string => {
-      try {
-        const { root, template, vars } = targetPathFor(
-          sampleInfo,
-          samplePage,
-          kind === 'audio' ? { audioOnly: true } : {},
-          1080,
-        )
-        return `${root}/${renderTemplate(template, vars)}`
-      } catch (err) {
-        return `（模板展开失败：${(err as Error).message.slice(0, 80)}）`
-      }
+  // —— 各领域自己的检查（音乐 / B 站 / 漫画 …）——
+  // 0.56.0 起由领域在 manifest 里声明 `doctor`，core 不再 import 领域代码
+  const disks: Array<[string, string]> = []
+  const ctx = { add, checkWritable, ensureExists, watchDisk: (name: string, dir: string) => { disks.push([name, dir]) } }
+  for (const d of await loadAllDomains()) {
+    if (!d.doctor) continue
+    try {
+      await d.doctor(ctx)
+    } catch (err) {
+      add({ name: `${d.name}_doctor`, kind: 'domain', ok: false, detail: `检查本身出错：${(err as Error).message.slice(0, 120)}` })
     }
-    add({
-      name: 'bili.paths',
-      kind: 'domain',
-      ok: true,
-      detail: [
-        `bili.dir            ${video}`,
-        `bili.audio-dir      ${audioDir ? audioDir : `跟随 music.dir（${music}）`}`,
-        `  video-template    → ${expand('video')}`,
-        `  audio-template    → ${expand('audio')}`,
-      ].join('\n'),
-    })
-  }
-
-  try {
-    const response = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=BV17x411w7KC', {
-      headers: { 'user-agent': 'Mozilla/5.0', referer: 'https://www.bilibili.com/' },
-      signal: AbortSignal.timeout(8000),
-    })
-    const body = (await response.json()) as { code?: number }
-    add({ name: 'bili_api', kind: 'domain', ok: body.code === 0, detail: `B 站接口 code=${String(body.code)}` })
-  } catch (err) {
-    add({ name: 'bili_api', kind: 'domain', ok: false, detail: (err as Error).message.slice(0, 120) })
-  }
-
-  const biliSession = loadBiliSession()
-  add({
-    name: 'bili_login',
-    kind: 'optional',
-    ok: biliSession !== null,
-    detail: biliSession ? `已登录（${biliSession.nickname ?? biliSession.uid ?? '会话存在'}${biliSession.vip ? '，大会员' : ''}）` : '未登录',
-    ...(biliSession ? {} : { hint: '登录后才能拿到 1080P 以上画质（`astra bili login start`）' }),
-  })
-
-  // —— 漫画域 ——
-  const comic = comicRoot()
-  try {
-    ensureExists(comic)
-    const write = checkWritable(comic)
-    add({ name: 'comic_dir', kind: 'domain', ok: write.ok, detail: write.detail, ...(write.ok ? {} : { hint: '检查 comic.dir / ASTRA_COMIC_DIR 权限' }) })
-  } catch (err) {
-    add({ name: 'comic_dir', kind: 'domain', ok: false, detail: `建不出目录：${(err as Error).message.slice(0, 100)}` })
   }
 
   // —— 磁盘用量 ——
   // 目录会持续增长，没人会主动上 NAS 看还剩多少。这里顺带报一下，低于警戒线才标红。
-  for (const [name, dir] of [['music_disk', music], ['video_disk', video], ['comic_disk', comic]] as const) {
+  for (const [name, dir] of disks) {
     try {
       const usage = dirUsage(dir, { minFreeGb: 10 })
       add({

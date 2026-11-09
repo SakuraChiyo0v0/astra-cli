@@ -1,3 +1,41 @@
+## 0.56.0 — 2026-11-10
+
+**运行状态并进同一个库；按领域懒加载**
+
+### 一个库
+
+- 曲库（`tracks`）、后台任务（`jobs` / `job_items`）、订阅（`subscriptions` / `subscription_runs`）、
+  审计（`audit_log`）、调度（`schedules`）以前单独落在 `<ASTRA_HOME>/astra.db`，资产库在 `db-url` 指的 PG。
+  现在都在 `openDatabase()` 那个库里：配了 PG 就是 PG，没配就是本机 `astra.db`（和以前一样）
+- 迁移 `astra_0007_state_tables`：PG 上建七张表；状态表是 CLI 能跑的前提，**第一次打开时自动建**，
+  不用等 `astra db migrate`（其它资产库迁移仍然要显式跑）
+- 新命令 `astra db import-state [--from <astra.db>] [--dry-run] [--keep-source]`：把老 `astra.db` 的七张表搬进当前库。
+  幂等（按主键跳过已有行），成功后源改名 `astra.db.migrated-<时间>` 留底。源里早期资产库的残留
+  （assets / files / roots / events）不搬，结果的 `leftBehind` 报行数
+- `astra doctor` 新增 `state`（必需：状态库连得上、表齐）与 `state-import`（老库还没搬时提示）
+- `astra backup`：本机 SQLite 时照旧 VACUUM INTO；PG 时只备会话文件（结果里 `database: "postgres"`），
+  库请用 `astra db backup`
+- **升级要做的事**：部署后跑一次 `astra db import-state`。不跑的话新库是空的：曲库、任务历史、订阅都看不到
+  （老文件原样在，跑了就回来）
+
+### 懒加载
+
+- `src/domains.ts` 只登记 `{ name, load: () => import(...) }`。跑 `astra music get` 只加载 music；
+  `help <领域>` / `<领域> --help` 也只加载那一个。实测（NAS）：`version` 260→155 ms，`music have` 281→193 ms，
+  `lol --help` 264→160 ms
+- core 不再 import 任何领域（边界测试里的老账清零）：doctor 的分域检查、`astra login` 的登录状态、
+  `lib adopt` 认漫画页的钩子，都改由领域在 manifest 里声明（`doctor` / `sessions` / `adoptIdentity`）；
+  B 站画质名表下沉到 `core/video-quality.ts`
+- 构建产物从单文件变成目录：`dist/astra.mjs` 是几行的入口桩，真入口和块在 `dist/releases/<版本>/`。
+  **部署要拷整个 `dist/`**，然后换桩；调用方式不变（`node /opt/astra/bin/astra.mjs …`）
+- 后台任务 worker 和 steam 挂机进程钉在启动时的版本目录上：部署中途换了桩，正在跑的任务也不会懒加载到新版本的块。
+  调度（`schedule tick`）每次都走桩，跑最新版本
+
+### 修
+
+- `upsertAsset`：查完到插入之间另一个进程刚插了同一个 id 时（后台下载的 mirror 和 `lib scan --adopt` 同时跑）
+  不再报 `duplicate key`、整批回滚
+
 ## 0.55.0 — 2026-11-09
 
 **新增 `astra archive`：把 Hermes 会话写进 astra 自己的库**

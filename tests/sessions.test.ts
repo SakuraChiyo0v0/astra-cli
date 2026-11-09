@@ -11,11 +11,17 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 let sessions: typeof import('../src/core/sessions.ts')
+let providers: import('../src/core/domain.ts').SessionProvider[] = []
+
+/** 0.56.0 起各域的登录视图登记在自己的 manifest 里；这里按 `astra login` 的顺序收集。 */
+const view = (domain: string) => providers.find((p) => p.domain === domain)!.view()
 
 before(async () => {
   process.env.ASTRA_HOME = mkdtempSync(path.join(tmpdir(), 'astra-sess-'))
   process.env.ASTRA_MUSIC_DIR = path.join(process.env.ASTRA_HOME!, 'music')
   sessions = await import('../src/core/sessions.ts')
+  const { DOMAINS } = await import('../src/domains.ts')
+  for (const d of DOMAINS) providers.push(...((await d.load()).sessions ?? []))
 })
 
 beforeEach(async () => {
@@ -29,7 +35,7 @@ beforeEach(async () => {
 const home = (f: string) => path.join(process.env.ASTRA_HOME!, f)
 
 test('三个域都会出现在统一视图里', async () => {
-  const list = sessions.allSessions()
+  const list = providers.map((p) => p.view())
   assert.deepEqual(list.map((s) => s.domain), ['netease', 'bili', 'vrchat'])
   assert.ok(list.every((s) => s.state === 'not_logged_in'))
   assert.ok(list.every((s) => s.howToLogin.length > 0), '每个域都要告诉用户怎么登录')
@@ -37,31 +43,31 @@ test('三个域都会出现在统一视图里', async () => {
 
 test('空文件被识别成 stale_file，而不是"未登录"', async () => {
   writeFileSync(home('bili-session.json'), '')
-  const view = sessions.biliSessionView()
-  assert.equal(view.state, 'stale_file')
-  assert.match(view.fileIssue ?? '', /空的/)
+  const v = view('bili')
+  assert.equal(v.state, 'stale_file')
+  assert.match(v.fileIssue ?? '', /空的/)
 })
 
 test('权限过宽被识别出来', { skip: process.platform === 'win32' ? 'Windows 没有 POSIX 权限位' : false }, async () => {
   writeFileSync(home('netease-session.json'), '{}')
   chmodSync(home('netease-session.json'), 0o644)
-  const view = sessions.neteaseSessionView()
-  assert.equal(view.state, 'stale_file')
-  assert.match(view.fileIssue ?? '', /权限过于宽松/)
+  const v = view('netease')
+  assert.equal(v.state, 'stale_file')
+  assert.match(v.fileIssue ?? '', /权限过于宽松/)
 })
 
 test('VRChat 有会话文件时能读出账号', async () => {
   writeFileSync(home('vr-session.json'), JSON.stringify({ cookie: 'auth=abc', userId: 'usr_1', displayName: 'Ame', savedAt: '2026-01-01' }))
-  const view = sessions.vrSessionView()
-  assert.equal(view.state, 'logged_in')
-  assert.equal(view.account, 'Ame')
-  assert.match(view.digest ?? '', /^[0-9a-f]{10}$/, '指纹是 10 位，不泄露内容')
+  const v = view('vrchat')
+  assert.equal(v.state, 'logged_in')
+  assert.equal(v.account, 'Ame')
+  assert.match(v.digest ?? '', /^[0-9a-f]{10}$/, '指纹是 10 位，不泄露内容')
 })
 
 test('清理指定域只删那一个', async () => {
   writeFileSync(home('netease-session.json'), JSON.stringify({ cookie: 'MUSIC_U=x', userId: '1', nickname: 'n', savedAt: '' }))
   writeFileSync(home('vr-session.json'), JSON.stringify({ cookie: 'auth=abc', userId: 'u', displayName: 'd', savedAt: '' }))
-  const result = sessions.clearSessions(['netease'])
+  const result = sessions.clearSessions(providers, ['netease'])
   assert.deepEqual(result.cleared, ['netease'])
   assert.equal(existsSync(home('netease-session.json')), false)
   assert.equal(existsSync(home('vr-session.json')), true, '没点名的域不能被删')
@@ -69,7 +75,7 @@ test('清理指定域只删那一个', async () => {
 
 test('清理全部三个域', async () => {
   for (const f of ['netease-session.json', 'bili-session.json', 'vr-session.json']) writeFileSync(home(f), '{}')
-  const result = sessions.clearSessions()
+  const result = sessions.clearSessions(providers)
   assert.deepEqual(result.cleared.sort(), ['bili', 'netease', 'vrchat'])
   for (const f of ['netease-session.json', 'bili-session.json', 'vr-session.json']) {
     assert.equal(existsSync(home(f)), false, `${f} 应该被删掉`)

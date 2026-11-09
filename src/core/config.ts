@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs'
 import path from 'node:path'
 import { homePath } from './paths.ts'
 import { AstraError, invalidInput } from './errors.ts'
-import { QUALITY_NAMES } from '../bili/sign.ts'
+import { QUALITY_NAMES } from './video-quality.ts'
 
 export interface ConfigKey {
   key: string

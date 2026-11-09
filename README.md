@@ -130,7 +130,7 @@ stdout 只有一个 JSON，进度和诊断走 stderr：
 
 | | 默认 | 覆盖 |
 |-|-|-|
-| 状态（配置、曲库 `astra.db`、会话、音源、任务日志） | `~/.astra` | `ASTRA_HOME` |
+| 状态（配置、会话、音源、任务日志；没配 `db-url` 时曲库与任务也在这里的 `astra.db`） | `~/.astra` | `ASTRA_HOME` |
 | 音乐 | `<ASTRA_HOME>/music` | `ASTRA_MUSIC_DIR` 或 `astra config set music.dir` |
 | 视频 | `<ASTRA_HOME>/video` | `ASTRA_VIDEO_DIR` 或 `astra config set bili.dir` |
 

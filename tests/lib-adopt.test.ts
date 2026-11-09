@@ -14,8 +14,11 @@ import { SqliteConn, sqliteDialect } from '../src/core/db/sqlite.ts'
 import { migrate } from '../src/core/db/migrations.ts'
 import { addRoot, adopt, scan, stats } from '../src/core/db/library.ts'
 import type { Database } from '../src/core/db/index.ts'
-// 漫画身份是 comic 领域登记进来的钩子（core 不 import 领域），这里按生产时的样子加载一次
-import '../src/comic/manifest.ts'
+// 漫画身份是 comic 领域在 manifest 里声明的钩子（core 不 import 领域）。
+// 生产时 main 把领域登记表交给 domains-runtime，认领前由 library 收集；这里照做一遍
+import { DOMAINS } from '../src/domains.ts'
+import { setDomainEntries } from '../src/core/domains-runtime.ts'
+setDomainEntries(DOMAINS)
 
 function setup() {
   const dir = mkdtempSync(path.join(tmpdir(), 'astra-adopt-'))

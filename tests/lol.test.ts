@@ -39,8 +39,8 @@ function game(overrides: Partial<LcuGame> = {}, stats: Record<string, number | b
 }
 
 test('lol 是命令组，且命令齐全', async () => {
-  assert.equal(commandGroup('lol'), true)
-  const names = groupCommands('lol')
+  assert.equal((await commandGroup('lol')), true)
+  const names = (await groupCommands('lol'))
   for (const expected of ['lol sync', 'lol history', 'lol stats', 'lol rank', 'lol champions', 'lol doctor']) {
     assert.ok(names.includes(expected), `缺 ${expected}`)
   }

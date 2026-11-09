@@ -13,6 +13,7 @@ import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { currentIdentity } from '../identity.ts'
 import type { Database } from './index.ts'
+import { loadAllDomains } from '../domains-runtime.ts'
 
 /**
  * 资产可见性（M4）。
@@ -131,9 +132,12 @@ export async function upsertAsset(db: Database, input: AssetInput): Promise<stri
     )
     return id
   }
+  // 查完到插入之间另一个进程可能刚插了同一个 id（后台下载的 mirror 和 `lib scan --adopt`
+  // 同时跑时实测撞过）。`on conflict do nothing` 不报错，事务不会被置为 aborted；
+  // 撞上时就当它已经存在，元数据交给先写的那一方
   await db.conn.exec(
     `insert into assets (id, platform, native_id, kind, title, artists, album, duration_ms, meta, created_at, owner)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict (id) do nothing`,
     [
       id,
       input.platform,
@@ -627,31 +631,27 @@ export interface AdoptOne {
   via: string
 }
 
-/** 领域给的身份：有了它就不走指纹。 */
-export interface AdoptIdentity {
-  platform: string
-  nativeId: string
-  title: string
-  artists: string | null
-  album: string | null
-  meta: Record<string, unknown>
-  /** 记进 adopted 事件的来源，如 `comic-sidecar`。 */
-  via: string
-}
-
-/**
- * 按领域认文件身份的钩子。
- *
- * 为什么是钩子：漫画页的身份写在章节目录的 `.astra-comic.json` 里，读法是 comic 领域的事；
- * core 不能 import 领域（`tests/boundaries.test.ts`）。所以由领域在 manifest 里登记，
- * `adopt` / `scan --adopt` 按登记顺序问一遍，谁认出来就用谁的。
- */
-export type AdoptIdentityResolver = (file: { abs: string; base: string; ext: string; kind: string }) => AdoptIdentity | null
+/** 领域给的身份与识别器：类型在 core/domain.ts（领域清单要用），这里再导出。 */
+export type { AdoptIdentity, AdoptIdentityResolver } from '../domain.ts'
+import type { AdoptIdentity, AdoptIdentityResolver } from '../domain.ts'
 
 const identityResolvers: AdoptIdentityResolver[] = []
+let domainResolversLoaded = false
 
 export function registerAdoptIdentity(resolver: AdoptIdentityResolver): void {
   if (!identityResolvers.includes(resolver)) identityResolvers.push(resolver)
+}
+
+/**
+ * 领域在 manifest 里声明的 `adoptIdentity` —— 0.56.0 起领域是懒加载的，跑 `lib adopt` 时
+ * comic 根本没被 import，所以这里第一次认领前把全部领域的钩子收一遍。
+ */
+async function ensureDomainResolvers(): Promise<void> {
+  if (domainResolversLoaded) return
+  domainResolversLoaded = true
+  for (const d of await loadAllDomains()) {
+    if (d.adoptIdentity) registerAdoptIdentity(d.adoptIdentity)
+  }
 }
 
 /**
@@ -664,6 +664,7 @@ async function adoptEntry(
   entry: WalkEntry,
   dryRun: boolean,
 ): Promise<AdoptOne | null> {
+  await ensureDomainResolvers()
   const abs = entry.abs
   const base = path.basename(abs)
   if (base.startsWith('.')) return null

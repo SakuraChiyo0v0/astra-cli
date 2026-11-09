@@ -12,9 +12,9 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-test('douyin 是命令组，且命令齐全', () => {
-  assert.equal(commandGroup('douyin'), true)
-  const names = groupCommands('douyin')
+test('douyin 是命令组，且命令齐全', async () => {
+  assert.equal((await commandGroup('douyin')), true)
+  const names = (await groupCommands('douyin'))
   for (const expected of ['douyin get', 'douyin info', 'douyin hot', 'douyin related', 'douyin likes', 'douyin collects', 'douyin comments', 'douyin login', 'douyin whoami', 'douyin logout', 'douyin doctor']) {
     assert.ok(names.includes(expected), `缺 ${expected}`)
   }

@@ -458,7 +458,7 @@ const doctorCmd: Command = {
       for (const r of roles) {
         for (const pattern of await listGrants(db, r.name)) grants.push({ role: r.name, pattern })
       }
-      const report = auditGrants(getCommandRegistry(), grants)
+      const report = auditGrants(await getCommandRegistry(), grants)
       return {
         ...okResult(report),
         table: {

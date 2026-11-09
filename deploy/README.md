@@ -9,17 +9,18 @@
               └── OpenAI 兼容 ──▶ workbuddy2api:7863（同机容器，按容器名直连）
 ```
 
-astra 是单文件 `dist/astra.mjs`，Hermes 官方镜像自带 Node（≥ 24，2026-10 lock 里是 v26.7），
+astra 是 `dist/` 目录（入口桩 `astra.mjs` + `releases/<版本>/`），Hermes 官方镜像自带 Node（≥ 24，2026-10 lock 里是 v26.7），
 所以 astra 跑在 Hermes 容器里，不另起服务，也不依赖 NAS 上别的服务（模型除外）。
 
 ## 目录
 
 ```
 <部署根>/astra/
-├── bin/astra.mjs            # npm run build 的产物
+├── bin/astra.mjs            # npm run build 的入口桩
+├── bin/releases/<版本>/     # 真入口与按领域切的块
 ├── bin/astra                # 包装脚本：exec node /opt/astra/bin/astra.mjs "$@"
 ├── skills/astra-music/SKILL.md
-└── home/                    # ASTRA_HOME：配置、曲库 astra.db、音源脚本、任务日志
+└── home/                    # ASTRA_HOME：配置、会话、音源脚本、任务日志（没配 db-url 时曲库也在这里的 astra.db）
 <部署根>/hermes/
 ├── docker-compose.yml       # deploy/hermes/docker-compose.yml
 ├── .env                     # compose 变量（deploy/hermes/compose.env.example），无密钥
