@@ -37,7 +37,7 @@ after(async () => {
 })
 
 /**
- * 摆一份产物副本：0.56.0 起 dist/astra.mjs 是入口桩，旁边要有 releases/<版本>/ 才跑得起来。
+ * 摆一份产物副本：0.58.0 起 dist/astra.mjs 是入口桩，旁边要有 releases/<版本>/ 才跑得起来。
  * 桩可以改名（astra-bili.mjs），目录结构不能变。
  */
 function place(dir: string, fileName: string): string {

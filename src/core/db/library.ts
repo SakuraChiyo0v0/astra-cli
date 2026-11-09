@@ -586,7 +586,7 @@ export interface AdoptResult {
   dryRun: boolean
   adopted: number
   withBvid: number
-  /** 同目录 `.astra-comic.json` 认出的漫画页。 */
+  /** 同目录 `.astra-jm.json` 认出的本子页（字段名沿用 0.56 之前的叫法，调用方在读）。 */
   withComic: number
   local: number
   skipped: number
@@ -627,7 +627,7 @@ export interface AdoptOne {
   assetId: string
   kind: string
   withBvid: boolean
-  /** 身份从哪来：nfo-bvid / fingerprint / 领域登记的识别器名（如 comic-sidecar）。 */
+  /** 身份从哪来：nfo-bvid / fingerprint / 领域登记的识别器名（如 jm-sidecar）。 */
   via: string
 }
 
@@ -643,8 +643,8 @@ export function registerAdoptIdentity(resolver: AdoptIdentityResolver): void {
 }
 
 /**
- * 领域在 manifest 里声明的 `adoptIdentity` —— 0.56.0 起领域是懒加载的，跑 `lib adopt` 时
- * comic 根本没被 import，所以这里第一次认领前把全部领域的钩子收一遍。
+ * 领域在 manifest 里声明的 `adoptIdentity` —— 0.58.0 起领域是懒加载的，跑 `lib adopt` 时
+ * jm 根本没被 import，所以这里第一次认领前把全部领域的钩子收一遍。
  */
 async function ensureDomainResolvers(): Promise<void> {
   if (domainResolversLoaded) return
@@ -733,7 +733,7 @@ async function adoptEntry(
  *
  * 身份怎么定（重要）：
  * - 有同名 `.nfo` 且里面带 BV 号 → `bili:<BV>_p<分P>`，这是最可靠的
- * - 同目录有 `.astra-comic.json` → `comic:<本子>_c<话数>_p<页码>`，和下载时的 mirror 同一套 id
+ * - 同目录有 `.astra-jm.json` → `jm:<本子>_c<话数>_p<页码>`，和下载时的 mirror 同一套 id
  * - 没有平台 id → `local:<指纹>`。**用内容指纹当 id**，文件挪了也不会变成两条
  *   （代价：重新压制的同一部片子会被当成新资产，这比用路径当 id 好）
  */

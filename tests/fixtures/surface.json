@@ -99,12 +99,13 @@
         "lol.saveScript：单局入库脚本（如 lol_save_match.sh）；留空则用内置默认位置，找不到会明确报未配置",
         "lol.pc：跑英雄联盟客户端的 PC 的 ssh 主机名（同 ~/.ssh/config）；留空用 \"pc\"",
         "lol.pc-dump-dir：PC 上存放采集脚本和 JSON 的目录（正斜杠写法，scp 用）",
-        "comic.dir：漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先",
-        "comic.template：漫画落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}",
-        "comic.concurrency：单话内图片下载并发 1..6",
+        "jm.dir：JM 本子根目录（绝对路径）；环境变量 ASTRA_JM_DIR 优先",
+        "jm.template：JM 本子落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}",
+        "jm.concurrency：JM 单话内图片下载并发 1..6",
         "novel.dir：小说（EPUB）根目录（绝对路径）；环境变量 ASTRA_NOVEL_DIR 优先；留空 = <ASTRA_HOME>/novel/books",
         "novel.template：EPUB 落盘模板，变量 {title} {author} {source}",
         "novel.concurrency：抓章并发 1..6",
+        "comic.dir：漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先；留空 = <ASTRA_HOME>/comic/library",
         "notify.telegram_chat：Telegram 通知目标 chat_id（如 -1001234567890）；令牌放 ASTRA_TELEGRAM_TOKEN 或 notify.telegram_token",
         "notify.telegram_token：Telegram bot 令牌（建议改用环境变量 ASTRA_TELEGRAM_TOKEN）",
         "notify.webhook_url：通用 webhook：POST JSON {\"text\": \"...\"}；可用于 Slack/钉钉/自建服务",
@@ -1788,7 +1789,7 @@
     },
     {
       "command": "db import-state",
-      "summary": "把老的 astra.db（0.55 及以前的独立状态库）搬进当前库",
+      "summary": "把老的 astra.db（0.57 及以前的独立状态库）搬进当前库",
       "usage": "astra db import-state [--from <astra.db>] [--dry-run] [--keep-source]",
       "options": {
         "--from <文件>": "默认 <ASTRA_HOME>/astra.db",
@@ -1796,7 +1797,7 @@
         "--keep-source": "搬完不改名源文件"
       },
       "notes": [
-        "0.56.0 起曲库 / 任务 / 订阅 / 调度 / 审计和资产库在同一个库里；升级后跑一次，把老数据搬过来",
+        "0.58.0 起曲库 / 任务 / 订阅 / 调度 / 审计和资产库在同一个库里；升级后跑一次，把老数据搬过来",
         "幂等：按主键跳过已存在的行，跑两次结果一样",
         "成功后源文件改名为 astra.db.migrated-<时间> 留底（--keep-source 不改名）",
         "源里早期资产库的残留（assets / files / roots / events）不搬，会在 leftBehind 里报行数"
@@ -1948,7 +1949,7 @@
         "--dry-run": "只统计不写库"
       },
       "notes": [
-        "身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；同目录 .astra-comic.json → comic:<本子>_c<话>_p<页>；否则 local:<内容指纹>",
+        "身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；同目录 .astra-jm.json → jm:<本子>_c<话>_p<页>；否则 local:<内容指纹>",
         "用内容指纹当 id 而不是路径：文件挪了不会变成两条",
         "只建记录，不动任何文件"
       ]
@@ -2499,36 +2500,36 @@
       "options": {}
     },
     {
-      "command": "comic get",
+      "command": "jm get",
       "summary": "下载一本漫画：车号、JM 号或链接都行",
-      "usage": "astra comic get <车号|链接> [--chapter <n>] [--background | --wait] [--force] [--concurrency 3]",
+      "usage": "astra jm get <车号|链接> [--chapter <n>] [--background | --wait] [--force] [--concurrency 3]",
       "options": {
         "--chapter <n>": "只下一话（从 1 开始的 sort）",
         "--background": "开后台任务，立刻返回 job id",
         "--wait": "当场下完再返回（多话本也不开任务）",
         "--force": "已有也重新下（只在当场下载时生效）",
-        "--concurrency <n>": "单话内图片并发 1..6，默认取 comic.concurrency"
+        "--concurrency <n>": "单话内图片并发 1..6，默认取 jm.concurrency"
       },
       "notes": [
         "data.status：downloaded / already_have / job_started",
         "**多话本默认开后台任务**（job_started，看 data.job.id）；单话本或给了 --chapter 时当场下完。`--background` 强制后台，`--wait` 强制当场下",
-        "后台任务用 `astra comic job <id>` 查进度；每一项是一话，items[].status 是 downloaded / skipped（已有）/ failed",
+        "后台任务用 `astra jm job <id>` 查进度；每一项是一话，items[].status 是 downloaded / skipped（已有）/ failed",
         "截断的图不算已有，会重下；仍不完整就不留文件",
-        "落盘后登记资产库，id 是 comic:<本子>_c<话数>_p<页码>。chapters[].registered 小于 pages 说明漫画目录还不是 lib root",
-        "落盘目录看 `comic.dir` / `ASTRA_COMIC_DIR`，模板看 `comic.template`",
+        "落盘后登记资产库，id 是 jm:<本子>_c<话数>_p<页码>。chapters[].registered 小于 pages 说明漫画目录还不是 lib root",
+        "落盘目录看 `jm.dir` / `ASTRA_JM_DIR`，模板看 `jm.template`",
         "解混淆需要 ffmpeg（和 B 站共用 `music.ffmpeg`）"
       ]
     },
     {
-      "command": "comic info",
+      "command": "jm info",
       "summary": "看漫画信息与章节列表，不下载",
-      "usage": "astra comic info <车号|链接>",
+      "usage": "astra jm info <车号|链接>",
       "options": {}
     },
     {
-      "command": "comic search",
+      "command": "jm search",
       "summary": "按关键词搜漫画",
-      "usage": "astra comic search <关键词> [--scope site|work|author|tag|actor] [--page 1] [--limit 20]",
+      "usage": "astra jm search <关键词> [--scope site|work|author|tag|actor] [--page 1] [--limit 20]",
       "options": {
         "--scope <scope>": "搜索范围：site（默认）/ work / author / tag / actor",
         "--page <n>": "页码，从 1 开始",
@@ -2538,20 +2539,20 @@
         "默认 --scope site：站内全文，对标题和正文",
         "--scope tag 按站内标签；author 作者；work 作品；actor 登场角色",
         "搜到车号会直接 redirect 到那一本",
-        "data.status：exact（上游跳转或全站只有一条，data.pick 可直接 `comic get`）/ ambiguous（多条）/ empty（没搜到）",
-        "ambiguous 时**不要替用户挑**：把 candidates 的 id / title / author 列给用户，选定后再 `comic get <id>`"
+        "data.status：exact（上游跳转或全站只有一条，data.pick 可直接 `jm get`）/ ambiguous（多条）/ empty（没搜到）",
+        "ambiguous 时**不要替用户挑**：把 candidates 的 id / title / author 列给用户，选定后再 `jm get <id>`"
       ]
     },
     {
-      "command": "comic doctor",
+      "command": "jm doctor",
       "summary": "漫画能力自检：目录、ffmpeg、上游连通",
-      "usage": "astra comic doctor",
+      "usage": "astra jm doctor",
       "options": {}
     },
     {
-      "command": "comic job",
+      "command": "jm job",
       "summary": "看漫画后台任务进度（一项 = 一话）",
-      "usage": "astra comic job <id> [--items] [--failed] [--wait 60]",
+      "usage": "astra jm job <id> [--items] [--failed] [--wait 60]",
       "options": {
         "--items": "列出每一话",
         "--failed": "只列失败的",
@@ -2559,56 +2560,56 @@
       },
       "notes": [
         "status：queued / running / done / partial / failed / cancelled / interrupted",
-        "interrupted = worker 进程没了（重启、被杀），用 `astra comic job resume <id>` 接着下",
+        "interrupted = worker 进程没了（重启、被杀），用 `astra jm job resume <id>` 接着下",
         "--wait 最多阻塞这么多秒等它结束（≤600）"
       ]
     },
     {
-      "command": "comic jobs",
+      "command": "jm jobs",
       "summary": "最近的漫画后台任务",
-      "usage": "astra comic jobs [--active] [--limit 10]",
+      "usage": "astra jm jobs [--active] [--limit 10]",
       "options": {
         "--active": "只看进行中的",
         "--limit <n>": "默认 10，最多 100"
       }
     },
     {
-      "command": "comic job cancel",
+      "command": "jm job cancel",
       "summary": "取消漫画后台任务（已下好的话不删）",
-      "usage": "astra comic job cancel <id>",
+      "usage": "astra jm job cancel <id>",
       "options": {}
     },
     {
-      "command": "comic job resume",
+      "command": "jm job resume",
       "summary": "继续 / 重试漫画后台任务（只重跑没完成的话）",
-      "usage": "astra comic job resume <id>",
+      "usage": "astra jm job resume <id>",
       "options": {}
     },
     {
-      "command": "comic subscribe add",
+      "command": "jm subscribe add",
       "summary": "订阅一本连载：定时检查，出新话自动下",
-      "usage": "astra comic subscribe add <车号|链接> [--every 24] [--backfill]",
+      "usage": "astra jm subscribe add <车号|链接> [--every 24] [--backfill]",
       "options": {
         "--every <h>": "每隔几小时检查一次，默认 24",
         "--backfill": "不记基线：第一次检查就把还没下过的话全补上"
       },
       "notes": [
-        "建订阅时把**当前已有的话记为基线**，订阅只管之后出的新话；要补旧话用 `comic get`，或建订阅时加 --backfill",
+        "建订阅时把**当前已有的话记为基线**，订阅只管之后出的新话；要补旧话用 `jm get`，或建订阅时加 --backfill",
         "新话按章节 id 求差判断，不靠更新时间",
-        "定时检查：在 Hermes 里配一条 cron 定时调 `astra comic subscribe run`（比如每 6 小时）。它只跑到点的订阅，到点间隔由 --every 决定",
+        "定时检查：在 Hermes 里配一条 cron 定时调 `astra jm subscribe run`（比如每 6 小时）。它只跑到点的订阅，到点间隔由 --every 决定",
         "同一本重复订阅不会建第二条，会返回已有那条（data.status: already_subscribed）"
       ]
     },
     {
-      "command": "comic subscribe list",
+      "command": "jm subscribe list",
       "summary": "列出漫画订阅及状态",
-      "usage": "astra comic subscribe list",
+      "usage": "astra jm subscribe list",
       "options": {}
     },
     {
-      "command": "comic subscribe set",
+      "command": "jm subscribe set",
       "summary": "改漫画订阅：间隔 / 启停",
-      "usage": "astra comic subscribe set <订阅id|车号> [--every 12] [--enable|--disable]",
+      "usage": "astra jm subscribe set <订阅id|车号> [--every 12] [--enable|--disable]",
       "options": {
         "--every <h>": "每隔几小时",
         "--enable": "启用",
@@ -2616,22 +2617,22 @@
       }
     },
     {
-      "command": "comic subscribe remove",
+      "command": "jm subscribe remove",
       "summary": "删除漫画订阅（已下载的文件不动）",
-      "usage": "astra comic subscribe remove <订阅id|车号>",
+      "usage": "astra jm subscribe remove <订阅id|车号>",
       "options": {}
     },
     {
-      "command": "comic subscribe run",
+      "command": "jm subscribe run",
       "summary": "检查到点的漫画订阅，有新话就开后台任务（给 cron 调）",
-      "usage": "astra comic subscribe run [--id <订阅id|车号>] [--force]",
+      "usage": "astra jm subscribe run [--id <订阅id|车号>] [--force]",
       "options": {
         "--id <id>": "只跑这一个订阅",
         "--force": "忽略间隔，立刻检查全部启用的订阅"
       },
       "notes": [
-        "cron 里配 `astra comic subscribe run` 即可；不带参数只跑到点的，--force 不管间隔全跑一遍",
-        "有新话时 results[].job.id 是后台任务，用 `astra comic job <id>` 看",
+        "cron 里配 `astra jm subscribe run` 即可；不带参数只跑到点的，--force 不管间隔全跑一遍",
+        "有新话时 results[].job.id 是后台任务，用 `astra jm job <id>` 看",
         "只有下成功（downloaded / skipped）的话才记为已下；失败的下一轮自动重试",
         "上一轮任务还没跑完的订阅这次跳过，不会重复下"
       ]
@@ -3582,6 +3583,88 @@
       "options": {}
     },
     {
+      "command": "comic search",
+      "summary": "按作品名搜漫画（各源一起搜）",
+      "usage": "astra comic search <作品名> [--source komiic / copymanga] [--limit 20]",
+      "options": {
+        "--source <name>": "只搜一个源：komiic / copymanga",
+        "--limit <n>": "最多返回几条，默认 20"
+      },
+      "notes": [
+        "排序：完全同名 > 以关键词开头 > 包含；繁简体互通",
+        "把 items 列给用户选，再 `astra comic get <作品名> --pick <n>` 或直接给链接",
+        "本子类（JM 车号）在 `astra jm`，不在这里"
+      ]
+    },
+    {
+      "command": "comic info",
+      "summary": "看一部漫画的分组（单行本 / 单话 / 连载…）与章节，不下载",
+      "usage": "astra comic info <作品名|链接> [--pick n] [--source s]",
+      "options": {
+        "--pick <n>": "有多个候选时选第几个",
+        "--source <name>": "只在一个源里找：komiic / copymanga"
+      }
+    },
+    {
+      "command": "comic get",
+      "summary": "下载漫画（后台任务）：一话 / 一卷一个目录，可选打 CBZ",
+      "usage": "astra comic get <作品名|链接> [--group 单行本] [--range 1-3,5] [--pick n] [--source s] [--cbz] [--wait 300]",
+      "options": {
+        "--group <name>": "分组名：单行本 / 单话 / 连载 …",
+        "--range <spec>": "第几话 / 卷，从 1 开始：1-3,5",
+        "--pick <n>": "有多个候选时选第几个",
+        "--source <name>": "只在一个源里找：komiic / copymanga",
+        "--cbz": "每话 / 卷下完再打一个 CBZ（原图目录保留）",
+        "--wait <s>": "等任务结束的最长秒数（≤600）"
+      },
+      "notes": [
+        "作品名只在「完全同名」时自动选（多个源都有就取 komiic 优先）；否则报 AMBIGUOUS，details.candidates 是候选",
+        "--group 不给就取第一个分组（拷贝漫画是单行本优先）；分组名看 `astra comic info`",
+        "落盘 comic.dir / ASTRA_COMIC_DIR：<作品>/<分组>/<第01卷>/001.jpg；已下完整的页会跳过",
+        "Komiic 匿名每天约 300 张；拷贝漫画请求太密会被限流约 1 小时。遇到时该项记失败、错误里写何时可以 resume",
+        "立刻返回任务 id；`--wait 300` 等它跑完（最多 600 秒）"
+      ]
+    },
+    {
+      "command": "comic job",
+      "summary": "看漫画任务进度",
+      "usage": "astra comic job <id> [--failed] [--wait 60]",
+      "options": {
+        "--failed": "列出失败的话 / 卷",
+        "--wait <s>": "最多等待秒数（≤600）"
+      }
+    },
+    {
+      "command": "comic jobs",
+      "summary": "最近的漫画任务",
+      "usage": "astra comic jobs [--active] [--limit 20]",
+      "options": {
+        "--active": "只看还在跑的",
+        "--limit <n>": "条数，默认 20"
+      }
+    },
+    {
+      "command": "comic job cancel",
+      "summary": "取消漫画任务（已下的页不动）",
+      "usage": "astra comic job cancel <id>",
+      "options": {}
+    },
+    {
+      "command": "comic job resume",
+      "summary": "重试漫画任务里失败 / 没跑完的话，只补缺的页",
+      "usage": "astra comic job resume <id>",
+      "options": {},
+      "notes": [
+        "额度 / 限流失败时，错误里写了大约几点可以 resume；早了会再失败一次，不会重下已有的页"
+      ]
+    },
+    {
+      "command": "comic doctor",
+      "summary": "漫画能力自检：目录、各源连通与额度",
+      "usage": "astra comic doctor",
+      "options": {}
+    },
+    {
       "command": "archive sync",
       "summary": "把 Hermes 会话增量写入当前数据库",
       "usage": "astra archive sync [--state <state.db>] [--docs <目录>]",
@@ -3600,6 +3683,7 @@
     "bili _worker",
     "comic _worker",
     "douyin fav",
+    "jm _worker",
     "music _worker",
     "novel _worker",
     "steam _idle-worker",
@@ -3646,12 +3730,13 @@
       "lol.saveScript：单局入库脚本（如 lol_save_match.sh）；留空则用内置默认位置，找不到会明确报未配置",
       "lol.pc：跑英雄联盟客户端的 PC 的 ssh 主机名（同 ~/.ssh/config）；留空用 \"pc\"",
       "lol.pc-dump-dir：PC 上存放采集脚本和 JSON 的目录（正斜杠写法，scp 用）",
-      "comic.dir：漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先",
-      "comic.template：漫画落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}",
-      "comic.concurrency：单话内图片下载并发 1..6",
+      "jm.dir：JM 本子根目录（绝对路径）；环境变量 ASTRA_JM_DIR 优先",
+      "jm.template：JM 本子落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}",
+      "jm.concurrency：JM 单话内图片下载并发 1..6",
       "novel.dir：小说（EPUB）根目录（绝对路径）；环境变量 ASTRA_NOVEL_DIR 优先；留空 = <ASTRA_HOME>/novel/books",
       "novel.template：EPUB 落盘模板，变量 {title} {author} {source}",
       "novel.concurrency：抓章并发 1..6",
+      "comic.dir：漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先；留空 = <ASTRA_HOME>/comic/library",
       "notify.telegram_chat：Telegram 通知目标 chat_id（如 -1001234567890）；令牌放 ASTRA_TELEGRAM_TOKEN 或 notify.telegram_token",
       "notify.telegram_token：Telegram bot 令牌（建议改用环境变量 ASTRA_TELEGRAM_TOKEN）",
       "notify.webhook_url：通用 webhook：POST JSON {\"text\": \"...\"}；可用于 Slack/钉钉/自建服务",
@@ -4055,8 +4140,8 @@
       "accepts": "any"
     },
     {
-      "key": "comic.dir",
-      "description": "漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先",
+      "key": "jm.dir",
+      "description": "JM 本子根目录（绝对路径）；环境变量 ASTRA_JM_DIR 优先",
       "default": "",
       "secret": false,
       "accepts": [
@@ -4065,15 +4150,15 @@
       ]
     },
     {
-      "key": "comic.template",
-      "description": "漫画落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}",
+      "key": "jm.template",
+      "description": "JM 本子落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}",
       "default": "{id} {title}/{chapter:02}/{page:03}.{ext}",
       "secret": false,
       "accepts": "any"
     },
     {
-      "key": "comic.concurrency",
-      "description": "单话内图片下载并发 1..6",
+      "key": "jm.concurrency",
+      "description": "JM 单话内图片下载并发 1..6",
       "default": "3",
       "secret": false,
       "accepts": [
@@ -4116,6 +4201,16 @@
         "4",
         "5",
         "6"
+      ]
+    },
+    {
+      "key": "comic.dir",
+      "description": "漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先；留空 = <ASTRA_HOME>/comic/library",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
       ]
     },
     {

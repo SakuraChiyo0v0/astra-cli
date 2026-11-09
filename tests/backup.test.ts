@@ -34,7 +34,7 @@ beforeEach(async () => {
 })
 
 test('本机 SQLite 时库和会话一起备份，database=sqlite', async () => {
-  // 0.56.0 起状态表在第一次打开时就建好（不再「第一次写数据才建库」），
+  // 0.58.0 起状态表在第一次打开时就建好（不再「第一次写数据才建库」），
   // 所以本机 SQLite 下备份总能拿到库；PG 时 database=postgres、hasDatabase=false
   writeFileSync(path.join(process.env.ASTRA_HOME!, 'netease-session.json'), JSON.stringify({ cookie: 'MUSIC_U=x', userId: '1', nickname: 'n', savedAt: '' }))
   const r = await backupMod.backup()

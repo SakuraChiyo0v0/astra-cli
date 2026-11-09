@@ -4,7 +4,7 @@
  * 为什么要测：边界一旦只靠自觉，下一次「顺手 import 一下」就又缠起来了 ——
  * 0.53.0 之前 media ↔ bili 就是这么成环的。靠扫源码 import 判定，不起进程。
  *
- * KNOWN_CORE_TO_DOMAIN 是还没拆完的老账。0.56.0 已经清零：doctor / login 的分域内容
+ * KNOWN_CORE_TO_DOMAIN 是还没拆完的老账。0.58.0 已经清零：doctor / login 的分域内容
  * 由领域在 manifest 里提供，B 站画质表下沉到 core。**只许删、不许加**。
  *
  * 懒加载另外一条约束：只有 `src/domains.ts` 能 import 领域的 manifest，而且必须是动态 `import()`

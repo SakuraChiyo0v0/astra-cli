@@ -1,51 +1,38 @@
 /**
- * 漫画落盘路径。
+ * 漫画落盘：`<comic.dir>/<作品名>/<分组>/<章节名>/001.jpg`，可选同级 `<章节名>.cbz`。
  */
 import path from 'node:path'
 import { getConfig } from '../core/config.ts'
 import { homePath } from '../core/paths.ts'
-import { renderTemplate, resolveInside } from '../core/template.ts'
-import type { AlbumDetail, ChapterDetail } from './client.ts'
+import { resolveInside, sanitizeSegment } from '../core/template.ts'
+import type { ChapterRef, Group } from './sources/types.ts'
 
 export function comicRoot(): string {
   const fromEnv = process.env.ASTRA_COMIC_DIR
   if (fromEnv && fromEnv.trim()) return path.resolve(fromEnv)
   const configured = getConfig('comic.dir')
   if (configured) return configured
-  return homePath('comic')
+  return homePath('comic', 'library')
 }
 
-export function comicTemplate(): string {
-  return getConfig('comic.template') || '{id} {title}/{chapter:02}/{page:03}.{ext}'
+/**
+ * 目录名：单行本统一成「第01卷」；站上只给纯编号（Komiic 的 `01`）的单话补成「第01话」；
+ * 其它（`第01话` / `第09话试看` / `番外`）用站上原名。
+ */
+export function chapterDirName(group: Pick<Group, 'volumes'>, chapter: Pick<ChapterRef, 'name'>): string {
+  if (group.volumes) {
+    const m = /(\d+)/.exec(chapter.name)
+    if (m) return `第${m[1]!.padStart(2, '0')}卷`
+  }
+  const bare = /^(\d+(?:\.\d+)?)$/.exec(chapter.name.trim())
+  if (bare) return `第${bare[1]!.padStart(2, '0')}话`
+  return chapter.name
 }
 
-export function chapterDir(album: AlbumDetail, chapter: ChapterDetail): string {
-  const firstImage = chapter.images[0] ?? '00001.jpg'
-  const ext = path.extname(firstImage).replace(/^\./, '') || 'jpg'
-  const relative = renderTemplate(comicTemplate(), {
-    id: album.id,
-    title: album.title,
-    author: album.authors[0] ?? 'unknown',
-    chapter: String(chapter.sort),
-    chapter_title: chapter.title,
-    page: '1',
-    ext,
-  })
-  // 模板指向文件；章节目录是它的父目录
-  const filePath = resolveInside(comicRoot(), relative)
-  return path.dirname(filePath)
+export function chapterDir(title: string, groupName: string, dirName: string): string {
+  return resolveInside(comicRoot(), path.join(sanitizeSegment(title), sanitizeSegment(groupName), sanitizeSegment(dirName)))
 }
 
-export function pageFile(album: AlbumDetail, chapter: ChapterDetail, pageIndex: number, imgName: string): string {
-  const ext = (path.extname(imgName).split('?')[0] || '.jpg').replace(/^\./, '')
-  const relative = renderTemplate(comicTemplate(), {
-    id: album.id,
-    title: album.title,
-    author: album.authors[0] ?? 'unknown',
-    chapter: String(chapter.sort),
-    chapter_title: chapter.title,
-    page: String(pageIndex + 1),
-    ext,
-  })
-  return resolveInside(comicRoot(), relative)
+export function comicDir(title: string): string {
+  return resolveInside(comicRoot(), sanitizeSegment(title))
 }

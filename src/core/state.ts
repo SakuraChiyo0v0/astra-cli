@@ -1,7 +1,7 @@
 /**
  * 运行状态库：曲库（tracks）、后台任务、订阅、调度、审计。
  *
- * 0.56.0 起和资产库是**同一个库**（`openDatabase()`：`db-url` 指向 PG 时就是 PG，
+ * 0.58.0 起和资产库是**同一个库**（`openDatabase()`：`db-url` 指向 PG 时就是 PG，
  * 没配时是 `<ASTRA_HOME>/astra.db`）。之前状态单独落在 SQLite 里，资产库靠
  * `mirrorFile` 双写过去，两边一直对不上 —— 要一份真相就只能有一个库。
  *

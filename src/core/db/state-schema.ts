@@ -2,7 +2,7 @@
  * 运行状态表（tracks / jobs / job_items / subscriptions / subscription_runs / audit_log / schedules）的建表。
  *
  * 两种方言两条路：
- * - **SQLite**：沿用 0.55 之前 `core/db.ts` 那一套按 `user_version` 递增的阶梯，一字不改。
+ * - **SQLite**：沿用 0.58 之前 `core/db.ts` 那一套按 `user_version` 递增的阶梯，一字不改。
  *   本机已有的 `astra.db` 可能停在任意一级（老版本建的），只能按原样一级级补上去；
  *   新库从 0 走到底，结果和以前完全一样。
  * - **PostgreSQL**：直接建最终形状（`astra_0007_state_tables`）。PG 上从来没有过这些表，
@@ -166,7 +166,20 @@ export const SQLITE_LADDER: string[] = [
    )`,
   // 每条订阅自己的选项（0.52.0），存 JSON。
   `alter table subscriptions add column options text`,
+  // 0.57.0：JM 本子域从 comic 改名 jm，comic 让给普通漫画。存量的 JM 订阅和任务改标签，
+  // 否则 `jm subscribe list` / `jm jobs` 看不到它们，`comic` 域又会把它们当成自己的。
+  // 这一步之前 comic 域只有 JM 一家（普通漫画 0.56.0 才出现，那时叫 manga），所以按 domain=comic 改全部是对的。
+  // 拆成三条：阶梯按条执行（prepare 只认一条语句），一条一个 user_version。
+  `update subscriptions set kind = 'jm-album' where kind = 'comic-album'`,
+  `update jobs set meta = json_set(meta, '$.domain', 'jm') where json_extract(meta, '$.domain') = 'comic'`,
+  `update jobs set meta = json_set(meta, '$.domain', 'comic') where json_extract(meta, '$.domain') = 'manga'`,
 ]
+
+/**
+ * 阶梯上 0.57.0 JM 改名第一条的下标。user_version = N 表示前 N 条跑过，
+ * 所以老库 `user_version <= JM_RENAME_LEVEL` 就说明改名还没跑、数据里的 JM 还叫 comic。
+ */
+export const JM_RENAME_LEVEL = SQLITE_LADDER.findIndex((stmt) => stmt.includes("'jm-album'"))
 
 /** PG 上的最终形状。和 SQLite 阶梯走到底的结果逐列对齐（`tests/state-schema.test.ts` 比对）。 */
 export const POSTGRES_STATE: string[] = [

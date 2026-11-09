@@ -16,7 +16,7 @@
  * `astra.db` 是 WAL 模式，直接复制 `.db` 可能拿到不含最新事务的旧数据（WAL 还没 checkpoint）。
  * `VACUUM INTO` 由 SQLite 自己保证快照一致。
  *
- * ## 0.56.0：状态库可能是 PG
+ * ## 0.58.0：状态库可能是 PG
  *
  * 状态表并进了资产库那个库。配了 `db-url`（PG）时本机已经没有 `astra.db` 需要快照，
  * 这里只备会话文件，数据库请用 `astra db backup`（pg_dump）—— 结果里 `database` 字段说明走了哪条路。

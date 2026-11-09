@@ -1,5 +1,5 @@
 /**
- * 一次性搬迁：把老的 `<ASTRA_HOME>/astra.db`（0.55 及以前的独立状态库）里的七张状态表
+ * 一次性搬迁：把老的 `<ASTRA_HOME>/astra.db`（0.57 及以前的独立状态库）里的七张状态表
  * 导进当前库（`openDatabase()`，线上是 PG）。
  *
  * 规则：
@@ -18,7 +18,7 @@ import { AstraError } from '../errors.ts'
 import { homePath } from '../paths.ts'
 import type { Database } from './index.ts'
 import { SqliteConn } from './sqlite.ts'
-import { STATE_KEYS, STATE_TABLES } from './state-schema.ts'
+import { JM_RENAME_LEVEL, STATE_KEYS, STATE_TABLES } from './state-schema.ts'
 import { ensureStateTables } from './migrations.ts'
 
 export interface ImportStateResult {
@@ -82,6 +82,7 @@ export async function importLegacyState(
 
   await ensureStateTables(db)
   const src = new DatabaseSync(source, { readOnly: true })
+  const sourceVersion = Number((src.prepare('pragma user_version').get() as { user_version: number }).user_version)
   const result: ImportStateResult = { source, tables: {}, leftBehind: {}, renamedTo: null, dryRun: options.dryRun === true }
   try {
     for (const name of ['assets', 'files', 'roots', 'events', 'schema_migrations']) {
@@ -116,6 +117,23 @@ export async function importLegacyState(
           }
         }
         result.tables[table] = { source: rows.length, inserted }
+      }
+      // 源停在 0.57 之前（JM 还叫 comic）时，搬过来的订阅 / 任务要补上 0.57 的改名，
+      // 否则 `jm jobs` 看不到它们、`comic` 域又把它们当自己的。源已经爬过那一级就没有匹配行，无害。
+      // 只改源里带过来的主键，目标库里新版本自己写的行不碰
+      if (!result.dryRun && sourceVersion <= JM_RENAME_LEVEL) {
+        const jobIds = (src.prepare('select id from jobs').all() as { id: string }[]).map((r) => r.id)
+        const subIds = tableExists(src, 'subscriptions') ? (src.prepare('select id from subscriptions').all() as { id: string }[]).map((r) => r.id) : []
+        for (const id of subIds) await tx.exec("update subscriptions set kind = 'jm-album' where id = ? and kind = 'comic-album'", [id])
+        const domainOf = db.dialect.name === 'postgres' ? "(meta::jsonb ->> 'domain')" : "json_extract(meta, '$.domain')"
+        const setDomain = (to: string) => (db.dialect.name === 'postgres'
+          ? `jsonb_set(meta::jsonb, '{domain}', '"${to}"')::text`
+          : `json_set(meta, '$.domain', '${to}')`)
+        for (const id of jobIds) {
+          // 先 comic→jm 再 manga→comic：顺序反了会把刚改成 comic 的 manga 任务又改成 jm
+          await tx.exec(`update jobs set meta = ${setDomain('jm')} where id = ? and ${domainOf} = 'comic'`, [id])
+          await tx.exec(`update jobs set meta = ${setDomain('comic')} where id = ? and ${domainOf} = 'manga'`, [id])
+        }
       }
       // audit_log 的自增：显式写了 id 之后 PG 序列不会跟着走
       if (!result.dryRun && db.dialect.name === 'postgres') {

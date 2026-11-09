@@ -3,7 +3,7 @@
  *
  * 顺序就是 `astra help` 里的顺序。
  *
- * 0.56.0 起是**懒加载**：只写名字和 `load`，跑 `astra music get` 时只 import music。
+ * 0.58.0 起是**懒加载**：只写名字和 `load`，跑 `astra music get` 时只 import music。
  * `load` 必须是字面量的 `import('./x/manifest.ts')` —— 打包器靠它切块，写成变量拼接就切不开了。
  */
 import type { DomainEntry } from './core/domain.ts'
@@ -18,7 +18,7 @@ export const DOMAINS: DomainEntry[] = [
   { name: 'quark', load: async () => (await import('./quark/manifest.ts')).domain },
   { name: 'cloud', load: async () => (await import('./cloud/manifest.ts')).domain },
   { name: 'pixiv', load: async () => (await import('./pixiv/manifest.ts')).domain },
-  { name: 'comic', load: async () => (await import('./comic/manifest.ts')).domain },
+  { name: 'jm', load: async () => (await import('./jm/manifest.ts')).domain },
   { name: 'douyin', load: async () => (await import('./douyin/manifest.ts')).domain },
   { name: 'lol', load: async () => (await import('./lol/manifest.ts')).domain },
   { name: 'heybox', load: async () => (await import('./heybox/manifest.ts')).domain },
@@ -28,5 +28,6 @@ export const DOMAINS: DomainEntry[] = [
   { name: 'auth', load: async () => (await import('./auth/manifest.ts')).domain },
   { name: 'schedule', load: async () => (await import('./schedule/manifest.ts')).domain },
   { name: 'novel', load: async () => (await import('./novel/manifest.ts')).domain },
+  { name: 'comic', load: async () => (await import('./comic/manifest.ts')).domain },
   { name: 'archive', load: async () => (await import('./archive/manifest.ts')).domain },
 ]

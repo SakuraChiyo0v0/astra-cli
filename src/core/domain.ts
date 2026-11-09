@@ -5,7 +5,7 @@
  * core 里的 config / doctor / sessions 也直接 import 领域代码 —— 删一个领域要改四五处，
  * 而且任何命令都得把所有领域加载一遍。
  *
- * 0.56.0 起按首词懒加载：`src/domains.ts` 只登记 `{ name, load }`，跑 `astra music get`
+ * 0.58.0 起按首词懒加载：`src/domains.ts` 只登记 `{ name, load }`，跑 `astra music get`
  * 只 import music（和它 dependsOn 的领域）。core 需要领域提供的东西（doctor 检查、登录状态）
  * 通过清单上的钩子拿，core 自己一行领域代码都不 import。
  *

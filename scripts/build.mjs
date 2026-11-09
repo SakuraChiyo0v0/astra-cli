@@ -6,7 +6,7 @@
 //
 // 进容器只要一个 Node 24 和 dist 整个目录，没有 node_modules。
 //
-// 0.56.0 起切块（splitting）：domains.ts 里每个 `import('./x/manifest.ts')` 都是一个切点，
+// 0.58.0 起切块（splitting）：domains.ts 里每个 `import('./x/manifest.ts')` 都是一个切点，
 // 跑 `astra music get` 只加载入口 + music 那几块，不再把 20 个领域、9.8 MB 全部解析一遍。
 //
 // 为什么要桩 + 版本目录：产物从一个文件变成一个目录后，「原地覆盖」不再是原子的 ——

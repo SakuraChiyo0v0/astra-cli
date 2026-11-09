@@ -6,7 +6,7 @@
  *
  * 但**用户 / AI 需要一个统一的「我现在登录了什么、哪里过期了」**。这里只做只读汇总，不写会话。
  *
- * 0.56.0：每个域在自己的 manifest 里登记 `sessions`（视图 + 清理），这里只放公共小工具，
+ * 0.58.0：每个域在自己的 manifest 里登记 `sessions`（视图 + 清理），这里只放公共小工具，
  * core 不再 import 任何领域的 auth.ts。
  */
 import { createHash } from 'node:crypto'

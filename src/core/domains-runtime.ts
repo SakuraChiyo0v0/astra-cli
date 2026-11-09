@@ -1,5 +1,5 @@
 /**
- * 领域的运行时加载（0.56.0）。
+ * 领域的运行时加载（0.58.0）。
  *
  * `src/domains.ts` 登记 `{ name, load }`；main 启动时把这份表交给这里（core 不 import domains.ts，
  * 否则 core → 全部领域，懒加载就白做了）。

@@ -78,21 +78,35 @@ DASH 的音视频是**分开的两个流**，下完用 ffmpeg 合并 —— 所�
 ### 漫画
 
 ```sh
-astra comic search 关键词
-astra comic search 全彩 --scope tag      # site / work / author / tag / actor
-astra comic info 123456
-astra comic get 123456                 # 整本（多话自动开后台任务）
-astra comic get 123456 --chapter 3     # 只下一话
-astra comic get 123456 --wait          # 多话也当场下完
-astra comic job <任务id> --wait 600     # 看 / 等后台任务
-astra comic jobs --active
-astra comic subscribe add 123456 --every 24   # 追更连载
-astra comic subscribe run              # 给 cron：只跑到点的订阅
-astra comic doctor
+astra comic search 葬送的芙莉莲          # Komiic + 拷贝漫画一起搜，繁简通用
+astra comic info <作品名|链接>           # 分组（单行本 / 单话 / 连载 / 翻译组）与章节
+astra comic get <链接> --group 单行本 --range 1-3 --cbz
+astra comic job <任务id> --wait 600
+astra comic job resume <任务id>          # 限流 / 额度用完后接着下，只补缺的页
+astra comic doctor                       # 目录、各源连通、Komiic 剩余额度
+```
+
+落盘看 `comic.dir` / `ASTRA_COMIC_DIR`：`<作品>/<分组>/<第01卷>/001.jpg`。
+Komiic 匿名每天约 300 张、要走代理；拷贝漫画不限量但只能直连，请求太密会被限流约 1 小时。
+
+### JM 本子
+
+```sh
+astra jm search 关键词
+astra jm search 全彩 --scope tag      # site / work / author / tag / actor
+astra jm info 123456
+astra jm get 123456                 # 整本（多话自动开后台任务）
+astra jm get 123456 --chapter 3     # 只下一话
+astra jm get 123456 --wait          # 多话也当场下完
+astra jm job <任务id> --wait 600     # 看 / 等后台任务
+astra jm jobs --active
+astra jm subscribe add 123456 --every 24   # 追更连载
+astra jm subscribe run              # 给 cron：只跑到点的订阅
+astra jm doctor
 ```
 
 纯 TS 实现移动端 API，不依赖本机其它下载容器。解混淆用 ffmpeg（与 B 站共用）。
-落盘看 `comic.dir` / `ASTRA_COMIC_DIR`。截断的图不会留在目录里，下完按 `comic:<本子>_c<话>_p<页>` 登记进资产库。
+落盘看 `jm.dir` / `ASTRA_JM_DIR`。截断的图不会留在目录里，下完按 `jm:<本子>_c<话>_p<页>` 登记进资产库。
 搜索多条结果时 `data.status` 是 `ambiguous`，只给候选不替人挑。订阅建好时把现有的话记为基线，之后只补新话。
 
 ### Steam

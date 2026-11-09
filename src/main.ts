@@ -611,7 +611,7 @@ function normalizePath(value: string): string {
 
 const entryPath = process.argv[1] ? normalizePath(process.argv[1]) : ''
 const selfPath = normalizePath(fileURLToPath(import.meta.url))
-// 0.56.0 起打包产物是「入口桩 dist/astra.mjs → releases/<版本>/astra.mjs」：
+// 0.58.0 起打包产物是「入口桩 dist/astra.mjs → releases/<版本>/astra.mjs」：
 // 经桩启动时 argv[1] 是桩，桩把自己的 URL 放在 globalThis.__astraEntry 里，对上它也算入口。
 const stub = (globalThis as { __astraEntry?: string }).__astraEntry
 const stubPath = typeof stub === 'string' ? normalizePath(fileURLToPath(stub)) : ''

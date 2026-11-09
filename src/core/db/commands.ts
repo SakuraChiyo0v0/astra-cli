@@ -183,10 +183,10 @@ export const dbCommands: Command[] = [
   },
   {
     name: 'db import-state',
-    summary: '把老的 astra.db（0.55 及以前的独立状态库）搬进当前库',
+    summary: '把老的 astra.db（0.57 及以前的独立状态库）搬进当前库',
     usage: 'astra db import-state [--from <astra.db>] [--dry-run] [--keep-source]',
     notes: [
-      '0.56.0 起曲库 / 任务 / 订阅 / 调度 / 审计和资产库在同一个库里；升级后跑一次，把老数据搬过来',
+      '0.58.0 起曲库 / 任务 / 订阅 / 调度 / 审计和资产库在同一个库里；升级后跑一次，把老数据搬过来',
       '幂等：按主键跳过已存在的行，跑两次结果一样',
       '成功后源文件改名为 astra.db.migrated-<时间> 留底（--keep-source 不改名）',
       '源里早期资产库的残留（assets / files / roots / events）不搬，会在 leftBehind 里报行数',

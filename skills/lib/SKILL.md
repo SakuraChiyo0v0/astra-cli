@@ -63,7 +63,7 @@ stdout 只有一个 JSON。`ok:true` 看 `data`，`ok:false` 看 `error.code` / 
 6. 盘上有、库里没有（`lib scan` 的 orphan，或用户说旧漫画搜不到）：`astra lib adopt --dry-run` 看规模，用户同意后再去掉 `--dry-run`。
    想让它自己发生就用 `astra lib scan --adopt`（认领规则与 `adopt` 完全相同，幂等；巡检 cron 就是这么跑的）。
    混合目录（图片和视频混在一起）**不要带 `--kind`**，否则另一类会被漏掉（`--kind` 可选 `video` / `audio` / `image` / `ebook`）。
-   - 同目录有 `.astra-comic.json` 的页会记成 `comic:<本子id>_c<话数>_p<页码>`，不用重下。
+   - 同目录有 `.astra-jm.json`（旧名 `.astra-comic.json`）的页会记成 `jm:<本子id>_c<话数>_p<页码>`，不用重下。
    - 带 BV 号的 `.nfo` 记成 `bili:<BV>_p1`。
    - `.epub` 记成 `ebook` 类；小说域下载的书走 `novel-<书源>:<书号>`，其余 epub 用指纹。
    - 其余用内容指纹，挪位置不会变成两条。

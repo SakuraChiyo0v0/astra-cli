@@ -34,7 +34,7 @@ metadata:
 >     && md5sum /b/astra.mjs /b/releases/$V/astra.mjs"
 > ```
 >
-> **0.56.0 起产物是一个目录**：`dist/astra.mjs` 只是几行的入口桩，真东西在 `dist/releases/<版本>/`
+> **0.58.0 起产物是一个目录**：`dist/astra.mjs` 只是几行的入口桩，真东西在 `dist/releases/<版本>/`
 > （入口 + `chunks/`）。顺序必须是**先放好版本目录，再换桩**：桩一换，下一次调用就去找新目录。
 > 只拷桩不拷目录 = 所有命令 `Cannot find module`。
 
@@ -45,7 +45,7 @@ metadata:
 
 ## 关键事实
 
-astra 的产物是 `dist/` 整个目录（0.56.0 起）：
+astra 的产物是 `dist/` 整个目录（0.58.0 起）：
 
 ```
 dist/astra.mjs                      入口桩，几行：import ./releases/<版本>/astra.mjs
@@ -57,7 +57,7 @@ dist/releases/<版本>/chunks/*.mjs    按领域切的块（steam 那块 6.6 MB�
 **桩不换，版本号就不变** —— 仓库发了新版，NAS 不会自己变。
 
 **回滚**：旧版本目录还在 `bin/releases/` 下，把 `astra.mjs.prev` 拷回 `astra.mjs` 即可。
-（从 0.55 及以前的单文件回滚：`astra.mjs.prev` 就是那个单文件，同样拷回去。）
+（从 0.57 及以前的单文件回滚：`astra.mjs.prev` 就是那个单文件，同样拷回去。）
 
 **正在跑的后台任务不受部署影响**：worker 进程钉在它启动时的版本目录上（`src/core/entry.ts`），
 所以**别在任务还在跑的时候删它的版本目录**。删旧目录之前先 `astra jobs --active` 看一眼。
@@ -87,7 +87,7 @@ node dist/astra.mjs version    # 期望 {"ok":true,"data":{"version":"x.y.z",...
 
 ### 2. 传到 NAS
 
-> 以下 WebDAV 步骤写于单文件时代。0.56.0 起要传的是 `dist/releases/<版本>/` 整个目录 + 入口桩，
+> 以下 WebDAV 步骤写于单文件时代。0.58.0 起要传的是 `dist/releases/<版本>/` 整个目录 + 入口桩，
 > 用 WebDAV 得逐个文件 PUT；能用 docker 就用开头那条命令。
 
 本机 SSH 到 NAS 是不通的（22 端口超时），走 **Kura 的本地 WebDAV**。
@@ -147,6 +147,8 @@ docker exec hermes astra version    # 期望看到新版本号
 | `skills/bili/` | `skills/astra-bili/` |
 | `skills/music/` | `skills/astra-music/` |
 | `skills/vrchat/` | `skills/astra-vrchat/` |
+| `skills/jm/` | `skills/astra-jm/`（0.57.0 之前叫 `astra-comic`，现在那个名字归普通漫画） |
+| `skills/comic/` | `skills/astra-comic/` |
 | `skills/astra-deploy/` | `skills/astra-deploy/` |
 
 传错目录会静默成功（WebDAV 会新建），但 Hermes 永远读不到 —— 先 `PROPFIND` 看一眼：
@@ -195,12 +197,12 @@ docker exec hermes astra bili get BV1xxx --audio-only
 
 ## Pitfalls
 
-- **0.56.0 升级要搬一次数据**：部署完跑 `astra db import-state`（先 `--dry-run` 看行数）。
+- **0.58.0 升级要搬一次数据**：部署完跑 `astra db import-state`（先 `--dry-run` 看行数）。
   不跑的话 `music have` 是空的、`astra jobs` 没有历史、订阅全没了 —— 数据都还在老的
   `home/astra.db` 里，`astra doctor` 的 `state-import` 会提示。搬完源文件改名成 `astra.db.migrated-*` 留底。
 - **产物只内联「静态」require，动态依赖要自己放到 `bin/node_modules/`**。
   esbuild 把依赖打进产物，但 `require('lzma')` 这类**动态**调用会原样留在产物里，
-  运行时按产物所在目录往上找 `node_modules`（0.56.0 起是 `bin/releases/<版本>/chunks/`，往上一样能找到 `bin/node_modules`）。`bin/` 是只读挂载、又没有 `node_modules`，
+  运行时按产物所在目录往上找 `node_modules`（0.58.0 起是 `bin/releases/<版本>/chunks/`，往上一样能找到 `bin/node_modules`）。`bin/` 是只读挂载、又没有 `node_modules`，
   于是某些命令直接 `INTERNAL: Cannot find module 'lzma'`（典型：`steam idle start` 这类要起会话的），
   而 `version` / `status` 照常 —— 极容易误判成上游掉线。
   装法（docker 看不见容器内 `/opt/data`，要先落到 NAS 路径）：

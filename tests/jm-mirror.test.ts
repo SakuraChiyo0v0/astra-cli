@@ -1,5 +1,5 @@
 /**
- * 已经下全、且每页都完整时，comic 不再拉图，但会登记进资产库。
+ * 已经下全、且每页都完整时，jm 不再拉图，但会登记进资产库。
  * 截断页不算 already_have —— 那条走网络，这里不测。
  */
 import { test } from 'node:test'
@@ -7,8 +7,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { downloadChapter } from '../src/comic/download.ts'
-import type { AlbumDetail, ChapterDetail } from '../src/comic/client.ts'
+import { downloadChapter } from '../src/jm/download.ts'
+import type { AlbumDetail, ChapterDetail } from '../src/jm/client.ts'
 import { SqliteConn, sqliteDialect } from '../src/core/db/sqlite.ts'
 import { migrate } from '../src/core/db/migrations.ts'
 import { addRoot, whereAsset } from '../src/core/db/library.ts'
@@ -51,19 +51,19 @@ const chapter: ChapterDetail = {
 }
 
 test('页都完整时 already_have，并按本子/话数/页码登记', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'astra-comic-have-'))
+  const dir = mkdtempSync(path.join(tmpdir(), 'astra-jm-have-'))
   const prevDb = process.env.ASTRA_DB_URL
   const prevHome = process.env.ASTRA_HOME
-  const prevComic = process.env.ASTRA_COMIC_DIR
+  const prevJm = process.env.ASTRA_JM_DIR
   const dbFile = path.join(dir, 'astra.db')
-  const root = path.join(dir, 'comic')
+  const root = path.join(dir, 'jm')
   const db: Database = { conn: new SqliteConn(dbFile), dialect: sqliteDialect, url: `sqlite:${dbFile}` }
   process.env.ASTRA_DB_URL = `sqlite:${dbFile}`
   process.env.ASTRA_HOME = dir
-  process.env.ASTRA_COMIC_DIR = root
+  process.env.ASTRA_JM_DIR = root
   try {
     await migrate(db)
-    await addRoot(db, 'comic', root)
+    await addRoot(db, 'jm', root)
     const page = path.join(root, '123 书', '03', '001.jpg')
     mkdirSync(path.dirname(page), { recursive: true })
     writeFileSync(page, tinyPng())
@@ -71,11 +71,11 @@ test('页都完整时 already_have，并按本子/话数/页码登记', async ()
     const result = await downloadChapter(album, chapter)
     assert.equal(result.status, 'already_have')
 
-    const sidecar = JSON.parse(readFileSync(path.join(path.dirname(page), '.astra-comic.json'), 'utf8')) as { sort: number; albumId: string }
+    const sidecar = JSON.parse(readFileSync(path.join(path.dirname(page), '.astra-jm.json'), 'utf8')) as { sort: number; albumId: string }
     assert.equal(sidecar.albumId, '123')
     assert.equal(sidecar.sort, 3)
 
-    const files = await whereAsset(db, 'comic:123_c3_p1')
+    const files = await whereAsset(db, 'jm:123_c3_p1')
     assert.equal(files.length, 1)
     assert.equal(files[0]!.rel_path, path.join('123 书', '03', '001.jpg'))
   } finally {
@@ -84,8 +84,8 @@ test('页都完整时 already_have，并按本子/话数/页码登记', async ()
     else process.env.ASTRA_DB_URL = prevDb
     if (prevHome === undefined) delete process.env.ASTRA_HOME
     else process.env.ASTRA_HOME = prevHome
-    if (prevComic === undefined) delete process.env.ASTRA_COMIC_DIR
-    else process.env.ASTRA_COMIC_DIR = prevComic
+    if (prevJm === undefined) delete process.env.ASTRA_JM_DIR
+    else process.env.ASTRA_JM_DIR = prevJm
     rmSync(dir, { recursive: true, force: true })
   }
 })

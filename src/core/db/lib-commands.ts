@@ -53,11 +53,12 @@ export const libCommands: Command[] = [
           return { data: { roots: await listRoots(db), url: redact(db.url) } }
         }
         if (action === 'auto') {
-          // 按 astra 自己的配置注册存储根：music / bili / pixiv / comic
+          // 按 astra 自己的配置注册存储根：music / bili / pixiv / jm / comic
           const wanted: { label: string; path: string; note: string }[] = [
             { label: 'music', path: musicRoot(), note: 'music.dir' },
             { label: 'bili', path: getConfig('bili.dir'), note: 'bili.dir' },
             { label: 'pixiv', path: getConfig('pixiv.dir'), note: 'pixiv.dir' },
+            { label: 'jm', path: getConfig('jm.dir'), note: 'jm.dir' },
             { label: 'comic', path: getConfig('comic.dir'), note: 'comic.dir' },
           ]
           try {
@@ -148,7 +149,7 @@ export const libCommands: Command[] = [
       'dry-run': { type: 'boolean', description: '只统计不写库' },
     },
     notes: [
-      '身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；同目录 .astra-comic.json → comic:<本子>_c<话>_p<页>；否则 local:<内容指纹>',
+      '身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；同目录 .astra-jm.json → jm:<本子>_c<话>_p<页>；否则 local:<内容指纹>',
       '用内容指纹当 id 而不是路径：文件挪了不会变成两条',
       '只建记录，不动任何文件',
     ],

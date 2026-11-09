@@ -369,15 +369,37 @@ const M0006: Migration = {
 }
 
 /**
- * 0007：运行状态表并进同一个库（0.56.0）。
+ * 0007：JM 本子的资产 id 从 `comic:` 改成 `jm:`（0.57.0 起 JM 域叫 jm，comic 让给普通漫画）。
+ *
+ * 资产 id 是 `<platform>:<native_id>`，被 files / events 按 asset_id 引用（没有外键），三处一起改。
+ * 这一步之前 `comic` 这个 platform 只有 JM 一家（普通漫画 0.56.0 用的是 `manga-<源>`），
+ * 所以按 `platform = 'comic'` 改全部是对的。`manga-<源>` 一并改成 `comic-<源>`。
+ * 只改字符串，幂等：第二次跑时已经没有匹配行。
+ */
+const M0007_SQL = [
+  `update files set asset_id = 'jm:' || substr(asset_id, 7) where asset_id like 'comic:%'`,
+  `update events set asset_id = 'jm:' || substr(asset_id, 7) where asset_id like 'comic:%'`,
+  `update assets set id = 'jm:' || substr(id, 7), platform = 'jm' where platform = 'comic'`,
+  `update files set asset_id = 'comic-' || substr(asset_id, 7) where asset_id like 'manga-%'`,
+  `update events set asset_id = 'comic-' || substr(asset_id, 7) where asset_id like 'manga-%'`,
+  `update assets set id = 'comic-' || substr(id, 7), platform = 'comic-' || substr(platform, 7) where platform like 'manga-%'`,
+]
+const M0007: Migration = {
+  id: 'astra_0007_jm_rename',
+  summary: 'JM 本子资产 comic:* → jm:*；manga-* → comic-*',
+  up: { sqlite: M0007_SQL, postgres: M0007_SQL, mysql: [] },
+}
+
+/**
+ * 0008：运行状态表并进同一个库（0.58.0）。
  *
  * tracks / jobs / job_items / subscriptions / subscription_runs / audit_log / schedules
  * 以前单独落在 `<ASTRA_HOME>/astra.db`。PG 上直接建最终形状；SQLite 上**什么也不做**——
  * 本机 SQLite 本来就是同一个文件，表由 `climbSqliteLadder` 按老阶梯补齐（老库可能停在任意一级）。
  * 定义见 `state-schema.ts`。
  */
-const M0007: Migration = {
-  id: 'astra_0007_state_tables',
+const M0008: Migration = {
+  id: 'astra_0008_state_tables',
   summary: '运行状态表（曲库 / 任务 / 订阅 / 审计 / 调度）进同一个库',
   up: {
     sqlite: ['select 1'],
@@ -386,10 +408,10 @@ const M0007: Migration = {
   },
 }
 
-export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004, M0005, M0006, M0007]
+export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004, M0005, M0006, M0007, M0008]
 
 /** 状态表必须的迁移 id。 */
-export const STATE_MIGRATION = M0007.id
+export const STATE_MIGRATION = M0008.id
 
 /**
  * 保证状态表存在。`state()` 第一次打开时调。
@@ -399,7 +421,7 @@ export const STATE_MIGRATION = M0007.id
  * 以前的 `core/db.ts` 也是打开时自动迁移的，这里保持同样的行为。
  *
  * SQLite：补老阶梯（幂等，靠 user_version）。
- * PG：执行 M0007（全是 `if not exists`）并记账；咨询锁防两个进程同时建。
+ * PG：执行 M0008（全是 `if not exists`）并记账；咨询锁防两个进程同时建。
  */
 export async function ensureStateTables(db: Database): Promise<void> {
   if (db.dialect.name === 'sqlite') {
@@ -411,17 +433,17 @@ export async function ensureStateTables(db: Database): Promise<void> {
   }
   const done = async (): Promise<boolean> => {
     await ensureTable(db)
-    const rows = await db.conn.query<{ id: string }>('select id from schema_migrations where id = ?', [M0007.id])
+    const rows = await db.conn.query<{ id: string }>('select id from schema_migrations where id = ?', [M0008.id])
     return rows.length > 0
   }
   if (await done()) return
   const apply = async (): Promise<void> => {
     if (await done()) return // 拿到锁之后再看一次：另一个进程可能刚建完
     await db.conn.tx(async (tx) => {
-      for (const stmt of M0007.up.postgres) await tx.exec(stmt.replace(/\n\s+/g, ' ').trim())
+      for (const stmt of M0008.up.postgres) await tx.exec(stmt.replace(/\n\s+/g, ' ').trim())
       await tx.exec(
         'insert into schema_migrations (id, dialect, checksum, applied_at) values (?, ?, ?, ?) on conflict (id) do nothing',
-        [M0007.id, 'postgres', checksum(M0007), new Date().toISOString()],
+        [M0008.id, 'postgres', checksum(M0008), new Date().toISOString()],
       )
     })
   }

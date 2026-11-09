@@ -1,5 +1,5 @@
 /**
- * 0.56.0 状态表并库：老 astra.db → 当前库的一次性搬迁。
+ * 0.58.0 状态表并库：老 astra.db → 当前库的一次性搬迁。
  *
  * 要守住的几件事：
  * - 七张表的行都过去，跑第二次不重复（幂等）
@@ -17,7 +17,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { SqliteConn, sqliteDialect } from '../src/core/db/sqlite.ts'
 import type { Database } from '../src/core/db/index.ts'
 import { importLegacyState } from '../src/core/db/import-state.ts'
-import { POSTGRES_STATE, SQLITE_LADDER, STATE_TABLES, climbSqliteLadder } from '../src/core/db/state-schema.ts'
+import { JM_RENAME_LEVEL, POSTGRES_STATE, SQLITE_LADDER, STATE_TABLES, climbSqliteLadder } from '../src/core/db/state-schema.ts'
 
 function legacyDb(dir: string, upTo = SQLITE_LADDER.length): string {
   const file = path.join(dir, 'astra.db')
@@ -93,6 +93,33 @@ test('源停在阶梯中间（缺后加的列）也能搬，缺的列用默认�
     const rows = await db.conn.query<{ options: string | null; enabled: number }>('select options, enabled from subscriptions')
     assert.equal(rows[0]!.options, null)
     assert.equal(Number(rows[0]!.enabled), 1)
+  } finally {
+    await db.conn.close()
+  }
+})
+
+test('源停在 0.57 改名之前：JM 订阅 / 任务搬过来时补上 comic → jm，manga → comic', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'astra-import-jm-'))
+  // 生产上的老库就停在这一级：0.55 及以前没有 jm 改名那三条
+  const file = legacyDb(dir, JM_RENAME_LEVEL)
+  const src = new DatabaseSync(file)
+  src.exec(`insert into subscriptions (id, kind, target_id, title, every_hours, created_at) values ('s1', 'comic-album', '9', '本子', 24, '2026-01-01'), ('s2', 'playlist', '42', '红心', 24, '2026-01-01')`)
+  src.exec(`insert into jobs (id, kind, title, status, total, created_at, updated_at, meta) values
+    ('j1', 'album', '本子', 'done', 1, '2026-01-01', '2026-01-01', '{"domain":"comic","albumId":"9"}'),
+    ('j2', 'album', '普通漫画', 'done', 1, '2026-01-01', '2026-01-01', '{"domain":"manga"}'),
+    ('j3', 'album', '歌', 'done', 1, '2026-01-01', '2026-01-01', '{"domain":"music"}')`)
+  src.close()
+
+  const db = target(dir)
+  try {
+    // 目标库里新版本自己写的 comic 任务（普通漫画）不能被当成 JM 改掉
+    await climbSqliteLadder(db.conn)
+    await db.conn.exec(`insert into jobs (id, kind, title, status, total, created_at, updated_at, meta) values ('new1', 'album', '新漫画', 'done', 1, '2026-02-01', '2026-02-01', '{"domain":"comic"}')`)
+    await importLegacyState(db, { from: file, keepSource: true })
+    const subs = await db.conn.query<{ id: string; kind: string }>('select id, kind from subscriptions order by id')
+    assert.deepEqual(subs.map((r) => ({ ...r })), [{ id: 's1', kind: 'jm-album' }, { id: 's2', kind: 'playlist' }])
+    const jobs = await db.conn.query<{ id: string; d: string }>("select id, json_extract(meta, '$.domain') d from jobs order by id")
+    assert.deepEqual(jobs.map((r) => ({ ...r })), [{ id: 'j1', d: 'jm' }, { id: 'j2', d: 'comic' }, { id: 'j3', d: 'music' }, { id: 'new1', d: 'comic' }])
   } finally {
     await db.conn.close()
   }

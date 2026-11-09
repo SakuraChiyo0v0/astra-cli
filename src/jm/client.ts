@@ -136,7 +136,7 @@ export class JmClient {
   private async bootstrap(): Promise<void> {
     const refreshed = await this.fetchLatestDomains().catch(() => null)
     if (refreshed && refreshed.length > 0) {
-      progress('comic.domain', { domains: refreshed })
+      progress('jm.domain', { domains: refreshed })
       this.domains = refreshed
     }
     await this.refreshCookies()
@@ -164,7 +164,7 @@ export class JmClient {
     this.cookies = joinCookie(setCookie, this.cookies)
     const ver = data && typeof data === 'object' ? String((data as { jm3_version?: string }).jm3_version ?? '') : ''
     if (ver && ver !== this.version) {
-      progress('comic.version', { from: this.version, to: ver })
+      progress('jm.version', { from: this.version, to: ver })
       this.version = ver
     }
   }
@@ -199,7 +199,7 @@ export class JmClient {
         const rawText = await resp.text()
         const setCookie = typeof resp.headers.getSetCookie === 'function' ? resp.headers.getSetCookie() : null
         if (!resp.ok) {
-          lastError = new AstraError('COMIC_UPSTREAM', `漫画接口 HTTP ${resp.status}`, { exitCode: 5, retryable: resp.status >= 500 })
+          lastError = new AstraError('JM_UPSTREAM', `漫画接口 HTTP ${resp.status}`, { exitCode: 5, retryable: resp.status >= 500 })
           continue
         }
         if (options.scrambleToken) {
@@ -209,11 +209,11 @@ export class JmClient {
         try {
           json = JSON.parse(rawText) as { code?: number; data?: string }
         } catch {
-          lastError = new AstraError('COMIC_UPSTREAM', '漫画接口返回的不是 JSON', { exitCode: 5, retryable: true })
+          lastError = new AstraError('JM_UPSTREAM', '漫画接口返回的不是 JSON', { exitCode: 5, retryable: true })
           continue
         }
         if (json.code !== 200 || typeof json.data !== 'string') {
-          lastError = new AstraError('COMIC_UPSTREAM', `漫画接口 code=${String(json.code)}`, { exitCode: 5, retryable: true })
+          lastError = new AstraError('JM_UPSTREAM', `漫画接口 code=${String(json.code)}`, { exitCode: 5, retryable: true })
           continue
         }
         const decoded = decodeRespData(json.data, ts)
@@ -226,7 +226,7 @@ export class JmClient {
     throw new AstraError('NETWORK_ERROR', `漫画接口不可达：${lastError instanceof Error ? lastError.message : String(lastError)}`, {
       exitCode: 5,
       retryable: true,
-      hint: '检查网络；若域名被墙可配 proxy（comic 域默认直连）',
+      hint: '检查网络；若域名被墙可配 proxy（jm 域默认直连）',
     })
   }
 
@@ -240,7 +240,7 @@ export class JmClient {
   async getAlbum(albumId: string, signal?: AbortSignal): Promise<AlbumDetail> {
     const data = (await this.api(`/album?id=${encodeURIComponent(albumId)}`, signal)) as Record<string, unknown>
     if (!data || data.name == null) {
-      throw new AstraError('NOT_FOUND', `找不到漫画 ${albumId}`, { exitCode: 4, hint: '核对车号，或用 `astra comic search` 搜标题' })
+      throw new AstraError('NOT_FOUND', `找不到漫画 ${albumId}`, { exitCode: 4, hint: '核对车号，或用 `astra jm search` 搜标题' })
     }
     const series = Array.isArray(data.series) ? data.series : []
     const episodes: AlbumEpisode[] = series.map((item) => {
@@ -255,7 +255,7 @@ export class JmClient {
     const seriesId = String(data.series_id ?? '0')
     // 传入的其实是章节 id 时，跟官方客户端一样跳回本子
     if (seriesId && seriesId !== '0' && seriesId !== String(data.id)) {
-      progress('comic.redirect', { from: albumId, to: seriesId })
+      progress('jm.redirect', { from: albumId, to: seriesId })
       return this.getAlbum(seriesId, signal)
     }
     const addtime = data.addtime != null ? Number(data.addtime) : NaN
@@ -284,7 +284,7 @@ export class JmClient {
         ? (JSON.parse(imagesRaw) as string[])
         : []
     if (images.length === 0) {
-      throw new AstraError('COMIC_EMPTY', `章节 ${photoId} 没有图片`, { exitCode: 5 })
+      throw new AstraError('JM_EMPTY', `章节 ${photoId} 没有图片`, { exitCode: 5 })
     }
     const seriesId = String(data.series_id ?? '0')
     const albumId = seriesId === '0' ? String(data.id ?? photoId) : seriesId
@@ -387,11 +387,11 @@ export class JmClient {
     if (this.cookies) headers.cookie = this.cookies
     const resp = await httpRequest(url, { headers, timeoutMs: 60_000, retries: 2, signal })
     if (!resp.ok) {
-      throw new AstraError('COMIC_IMAGE', `图片下载失败 HTTP ${resp.status}：${imgName}`, { exitCode: 5, retryable: true })
+      throw new AstraError('JM_IMAGE', `图片下载失败 HTTP ${resp.status}：${imgName}`, { exitCode: 5, retryable: true })
     }
     const buf = Buffer.from(await resp.arrayBuffer())
     if (buf.length < 100) {
-      throw new AstraError('COMIC_IMAGE', `图片内容异常（${buf.length} 字节）：${imgName}`, { exitCode: 5, retryable: true })
+      throw new AstraError('JM_IMAGE', `图片内容异常（${buf.length} 字节）：${imgName}`, { exitCode: 5, retryable: true })
     }
     return buf
   }
@@ -399,7 +399,7 @@ export class JmClient {
 
 let shared: JmClient | null = null
 
-export function comicClient(): JmClient {
+export function jmClient(): JmClient {
   if (!shared) shared = new JmClient()
   return shared
 }

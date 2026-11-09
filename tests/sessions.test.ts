@@ -13,7 +13,7 @@ import path from 'node:path'
 let sessions: typeof import('../src/core/sessions.ts')
 let providers: import('../src/core/domain.ts').SessionProvider[] = []
 
-/** 0.56.0 起各域的登录视图登记在自己的 manifest 里；这里按 `astra login` 的顺序收集。 */
+/** 0.58.0 起各域的登录视图登记在自己的 manifest 里；这里按 `astra login` 的顺序收集。 */
 const view = (domain: string) => providers.find((p) => p.domain === domain)!.view()
 
 before(async () => {

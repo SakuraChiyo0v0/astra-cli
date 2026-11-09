@@ -12,7 +12,7 @@
  * - worker 进程没了而状态还是 running → 判定为中断，可以 `resume`
  * - 表和列是共用的，各域自己的业务字段（音质 / 画质 / 分 P）放进 `meta` JSON
  *
- * 0.56.0：表搬进统一的状态库（线上是 PG），所有读写变成异步。
+ * 0.58.0：表搬进统一的状态库（线上是 PG），所有读写变成异步。
  */
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'

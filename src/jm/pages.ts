@@ -35,7 +35,7 @@ export async function saveVerifiedPage(target: string, write: () => Promise<void
       await rm(target, { force: true }).catch(() => {})
       last = err
       const code = err instanceof AstraError ? err.code : ''
-      const retry = !(err instanceof AstraError) || code === 'FFMPEG_FAILED' || code === 'COMIC_BAD_IMAGE' || code === 'TRUNCATED'
+      const retry = !(err instanceof AstraError) || code === 'FFMPEG_FAILED' || code === 'JM_BAD_IMAGE' || code === 'TRUNCATED'
       if (!retry) throw err
     }
   }

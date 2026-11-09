@@ -1,4 +1,4 @@
-## 0.56.0 — 2026-11-10
+## 0.58.0 — 2026-11-10
 
 **运行状态并进同一个库；按领域懒加载**
 
@@ -7,7 +7,7 @@
 - 曲库（`tracks`）、后台任务（`jobs` / `job_items`）、订阅（`subscriptions` / `subscription_runs`）、
   审计（`audit_log`）、调度（`schedules`）以前单独落在 `<ASTRA_HOME>/astra.db`，资产库在 `db-url` 指的 PG。
   现在都在 `openDatabase()` 那个库里：配了 PG 就是 PG，没配就是本机 `astra.db`（和以前一样）
-- 迁移 `astra_0007_state_tables`：PG 上建七张表；状态表是 CLI 能跑的前提，**第一次打开时自动建**，
+- 迁移 `astra_0008_state_tables`：PG 上建七张表；状态表是 CLI 能跑的前提，**第一次打开时自动建**，
   不用等 `astra db migrate`（其它资产库迁移仍然要显式跑）
 - 新命令 `astra db import-state [--from <astra.db>] [--dry-run] [--keep-source]`：把老 `astra.db` 的七张表搬进当前库。
   幂等（按主键跳过已有行），成功后源改名 `astra.db.migrated-<时间>` 留底。源里早期资产库的残留
@@ -15,6 +15,7 @@
 - `astra doctor` 新增 `state`（必需：状态库连得上、表齐）与 `state-import`（老库还没搬时提示）
 - `astra backup`：本机 SQLite 时照旧 VACUUM INTO；PG 时只备会话文件（结果里 `database: "postgres"`），
   库请用 `astra db backup`
+- 0.57.0 的 JM 改名（comic → jm、manga → comic）在老 `astra.db` 里还没跑时，`import-state` 搬完顺带补上
 - **升级要做的事**：部署后跑一次 `astra db import-state`。不跑的话新库是空的：曲库、任务历史、订阅都看不到
   （老文件原样在，跑了就回来）
 
@@ -35,6 +36,46 @@
 
 - `upsertAsset`：查完到插入之间另一个进程刚插了同一个 id 时（后台下载的 mirror 和 `lib scan --adopt` 同时跑）
   不再报 `duplicate key`、整批回滚
+
+## 0.57.0 — 2026-11-10
+
+**改名：JM 本子 `comic` → `jm`，`comic` 让给普通漫画（原 `manga`）**
+
+为什么：`comic` 字面是「漫画」，却一直指 JM 本子；0.56.0 加普通漫画时只好另起 `manga`。现在按内容归位。
+
+- 命令：`astra comic ...`（JM）→ `astra jm ...`；`astra manga ...` → `astra comic ...`。旧命令不保留别名
+- 配置键：`comic.dir / comic.template / comic.concurrency`（JM）→ `jm.dir / jm.template / jm.concurrency`；
+  `manga.dir` → `comic.dir`。环境变量 `ASTRA_COMIC_DIR`（JM）→ `ASTRA_JM_DIR`，`ASTRA_MANGA_DIR` → `ASTRA_COMIC_DIR`。
+  **配置值不会自动搬**，升级时手动改（见下）
+- 资产库迁移 `astra_0007_jm_rename`：`comic:*` → `jm:*`、`manga-*` → `comic-*`，files / events 跟着改；
+  需要 `astra db migrate`
+- 状态库：JM 订阅 kind `comic-album` → `jm-album`；任务 domain `comic` → `jm`、`manga` → `comic`（启动时自动）
+- 本子识别文件 `.astra-comic.json` → `.astra-jm.json`：读的时候两个名字都认，重下一话时写新名并删旧名
+- skills：`astra-comic`（JM）→ `astra-jm`；新 `astra-comic` 是普通漫画
+
+升级步骤（线上）：
+
+```sh
+astra config set jm.dir "$(astra config get comic.dir)"   # 先把 JM 目录挪到新键
+astra config set comic.dir <普通漫画目录>                  # 原 manga.dir 的值
+astra db migrate
+astra lib root list                                        # 存储根标签 comic → jm、manga → comic 手动改
+```
+
+## 0.56.0 — 2026-11-09
+
+**新增 `astra manga`：普通漫画（本子类仍在 `astra comic`）**
+
+- 两个源：`komiic`（繁体，单行本 + 单话，GraphQL；匿名每 IP 约 300 张 / 天）、
+  `copymanga`（拷贝漫画，作品最全，连载 / 单行本 / 翻译组；没有额度，但请求太密会 code 210 限流约 1 小时）。
+  协议参考 venera-configs 的 komiic.js / copy_manga.js
+- `manga search / info / get / job / jobs / job cancel / job resume / doctor`：一项 = 一话或一卷，后台任务
+- 落盘 `manga.dir`（`ASTRA_MANGA_DIR` 优先）：`<作品>/<分组>/<第01卷|第01话>/001.jpg`，`--cbz` 另打包；
+  已有且魔数正确的页跳过，中断后 `job resume` 只补缺的页
+- 额度 / 限流统一报 `RATE_LIMITED`（可重试），错误里写大约几点能 resume
+- 网络：Komiic 直连不通，要把 `komiic.com` 加进 `proxy.include`；拷贝漫画只能直连，别加
+- 拷贝漫画的设备号固定存在 `<ASTRA_HOME>/manga/copymanga-device.json`；接口间隔 1.2 秒、图片间隔 0.8 秒
+- `lib root auto` 认 `manga.dir`
 
 ## 0.55.0 — 2026-11-09
 

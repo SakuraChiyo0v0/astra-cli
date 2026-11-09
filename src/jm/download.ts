@@ -1,16 +1,16 @@
 /**
  * 下载一本 / 一章：取图 → 解混淆 → 校验 → 落盘 → 登记资产库。
  */
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { AstraError } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
 import { mirrorFile } from '../core/db/mirror.ts'
-import { comicClient, type AlbumDetail, type ChapterDetail } from './client.ts'
+import { jmClient, type AlbumDetail, type ChapterDetail } from './client.ts'
 import { chapterDir, pageFile } from './paths.ts'
 import { imageIntact, saveVerifiedPage } from './pages.ts'
 import { descrambleToFile } from './scramble.ts'
-import { comicNativeId } from './sidecar.ts'
+import { jmNativeId, LEGACY_SIDECAR_NAME, SIDECAR_NAME } from './sidecar.ts'
 
 export interface ChapterDownloadResult {
   chapterId: string
@@ -59,14 +59,16 @@ function sidecarBody(album: AlbumDetail, chapter: ChapterDetail): string {
 }
 
 async function writeSidecar(dir: string, album: AlbumDetail, chapter: ChapterDetail): Promise<void> {
-  await writeFile(path.join(dir, '.astra-comic.json'), sidecarBody(album, chapter), 'utf8')
+  await writeFile(path.join(dir, SIDECAR_NAME), sidecarBody(album, chapter), 'utf8')
+  // 旧名留着会和新名内容分叉；新名写好后删掉
+  await rm(path.join(dir, LEGACY_SIDECAR_NAME), { force: true })
 }
 
 /** 登记一页。资产库失败不影响下载（mirrorFile 自己吞错）。 */
-async function mirrorComicPage(album: AlbumDetail, chapter: ChapterDetail, page: number, file: string): Promise<boolean> {
+async function mirrorJmPage(album: AlbumDetail, chapter: ChapterDetail, page: number, file: string): Promise<boolean> {
   return await mirrorFile({
-    platform: 'comic',
-    nativeId: comicNativeId(album.id, chapter.sort, page),
+    platform: 'jm',
+    nativeId: jmNativeId(album.id, chapter.sort, page),
     kind: 'image',
     title: album.title,
     artists: album.authors.filter((a) => a.trim() !== '').join(', ') || null,
@@ -97,7 +99,7 @@ export async function downloadChapter(
       await writeSidecar(dir, album, chapter)
       let registered = 0
       for (let i = 0; i < targets.length; i += 1) {
-        if (await mirrorComicPage(album, chapter, i + 1, targets[i]!)) registered += 1
+        if (await mirrorJmPage(album, chapter, i + 1, targets[i]!)) registered += 1
       }
       return {
         chapterId: chapter.id,
@@ -112,7 +114,7 @@ export async function downloadChapter(
   }
 
   await mkdir(dir, { recursive: true })
-  const client = comicClient()
+  const client = jmClient()
   const scrambleId = Number(chapter.scrambleId) || 0
   const concurrency = Math.max(1, Math.min(6, options.concurrency ?? 3))
   let fetched = false
@@ -122,11 +124,11 @@ export async function downloadChapter(
     options.signal?.throwIfAborted()
     const target = targets[index]!
     if (!options.force && await imageIntact(target)) {
-      if (await mirrorComicPage(album, chapter, index + 1, target)) registered += 1
+      if (await mirrorJmPage(album, chapter, index + 1, target)) registered += 1
       return
     }
     fetched = true
-    progress('comic.page', { album: album.id, chapter: chapter.id, page: index + 1, total: chapter.images.length })
+    progress('jm.page', { album: album.id, chapter: chapter.id, page: index + 1, total: chapter.images.length })
     await saveVerifiedPage(target, async () => {
       const bytes = await client.downloadImageBytes(chapter, imgName, options.signal)
       await descrambleToFile({
@@ -138,7 +140,7 @@ export async function downloadChapter(
         signal: options.signal,
       })
     })
-    if (await mirrorComicPage(album, chapter, index + 1, target)) registered += 1
+    if (await mirrorJmPage(album, chapter, index + 1, target)) registered += 1
   })
 
   await writeSidecar(dir, album, chapter)
@@ -158,7 +160,7 @@ export async function downloadAlbum(
   albumOrId: string | AlbumDetail,
   options: { force?: boolean; chapter?: number | 'all'; concurrency?: number; signal?: AbortSignal } = {},
 ): Promise<AlbumDownloadResult> {
-  const client = comicClient()
+  const client = jmClient()
   // 调用方已经查过详情时直接用，少打一次上游
   const album = typeof albumOrId === 'string' ? await client.getAlbum(albumOrId, options.signal) : albumOrId
   const scrambleId = await client.getScrambleId(album.episodes[0]!.id, options.signal)
@@ -166,14 +168,14 @@ export async function downloadAlbum(
   let episodes = album.episodes
   if (typeof options.chapter === 'number') {
     const hit = episodes.find((e) => e.sort === options.chapter)
-    if (!hit) throw new AstraError('NOT_FOUND', `没有第 ${options.chapter} 话`, { exitCode: 4, hint: '`astra comic info` 看章节列表' })
+    if (!hit) throw new AstraError('NOT_FOUND', `没有第 ${options.chapter} 话`, { exitCode: 4, hint: '`astra jm info` 看章节列表' })
     episodes = [hit]
   }
 
   const chapters: ChapterDownloadResult[] = []
   for (const ep of episodes) {
     options.signal?.throwIfAborted()
-    progress('comic.chapter', { album: album.id, chapter: ep.id, sort: ep.sort, title: ep.title })
+    progress('jm.chapter', { album: album.id, chapter: ep.id, sort: ep.sort, title: ep.title })
     const detail = await client.getChapter(ep.id, scrambleId, options.signal)
     chapters.push(await downloadChapter(album, detail, options))
   }

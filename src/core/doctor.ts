@@ -63,7 +63,7 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
   const homeWrite = checkWritable(home)
   add({ name: 'home', kind: 'required', ok: homeWrite.ok, detail: homeWrite.detail, ...(homeWrite.ok ? {} : { hint: '检查 ASTRA_HOME 的属主与权限' }) })
 
-  // 状态库：0.56.0 起和资产库是同一个库。连得上、状态表在，CLI 才能跑
+  // 状态库：0.58.0 起和资产库是同一个库。连得上、状态表在，CLI 才能跑
   try {
     const current = await stateDb()
     const legacy = legacyStatePending(current)
@@ -88,7 +88,7 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
   }
 
   // —— 各领域自己的检查（音乐 / B 站 / 漫画 …）——
-  // 0.56.0 起由领域在 manifest 里声明 `doctor`，core 不再 import 领域代码
+  // 0.58.0 起由领域在 manifest 里声明 `doctor`，core 不再 import 领域代码
   const disks: Array<[string, string]> = []
   const ctx = { add, checkWritable, ensureExists, watchDisk: (name: string, dir: string) => { disks.push([name, dir]) } }
   for (const d of await loadAllDomains()) {
