@@ -614,7 +614,7 @@ const MEDIA_EXT = new Set([
   '.mp4', '.mkv', '.flv', '.webm', '.mov',
   '.mp3', '.flac', '.m4a',
   '.jpg', '.jpeg', '.png', '.webp', '.gif',
-])
+, '.epub'])
 
 export interface AdoptOne {
   relPath: string
@@ -658,7 +658,8 @@ async function adoptEntry(
   const size = entry.size
   const fp = `${size}-${await quickHash(abs)}`
   const kind = ['.mp4', '.mkv', '.flv', '.webm', '.mov'].includes(ext) ? 'video'
-    : ['.mp3', '.flac', '.m4a'].includes(ext) ? 'audio' : 'image'
+    : ['.mp3', '.flac', '.m4a'].includes(ext) ? 'audio'
+    : ext === '.epub' ? 'ebook' : 'image'
   const assetIdValue = bvid ? `bili:${bvid}_p1` : `local:${fp}`
   const title = meta.title || path.basename(base, ext)
   const out: AdoptOne = { relPath: rel, assetId: assetIdValue, kind, withBvid: Boolean(bvid) }
@@ -715,14 +716,17 @@ export async function adopt(
       const ext = path.extname(base).toLowerCase()
       // 只认领媒体文件；sidecar（nfo/jpg/ass/lrc）跳过
       // .gif 也是资产：官方活动图里大量动图，漏掉会每次扫描都被当孤儿
-      if (!['.mp4', '.mkv', '.flv', '.webm', '.mov', '.mp3', '.flac', '.m4a', '.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) continue
+      // .epub：小说域落的电子书；老的、不是 astra 下的书也该能收编
+      if (!['.mp4', '.mkv', '.flv', '.webm', '.mov', '.mp3', '.flac', '.m4a', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.epub'].includes(ext)) continue
       if (options.kinds && options.kinds.length > 0) {
         const isVideo = ['.mp4', '.mkv', '.flv', '.webm', '.mov'].includes(ext)
         const isAudio = ['.mp3', '.flac', '.m4a'].includes(ext)
         const isImage = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)
+        const isEbook = ext === '.epub'
         if (!(options.kinds.includes('video') && isVideo)
           && !(options.kinds.includes('audio') && isAudio)
-          && !(options.kinds.includes('image') && isImage)) continue
+          && !(options.kinds.includes('image') && isImage)
+          && !(options.kinds.includes('ebook') && isEbook)) continue
       }
       const rel = path.relative(root.abs_path, abs)
       if (known.has(rel)) {

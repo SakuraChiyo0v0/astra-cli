@@ -51,7 +51,10 @@ test('备份会话文件权限是 600（里面有 cookie）', { skip: process.pl
 test('有数据库时用 VACUUM INTO 备份（快照一致）', () => {
   // 触发建表
   dbMod.db()
-  jobsMod.createJob({ domain: 'music', kind: 'x', title: '备份测试', items: [{ id: 'a', title: 't' }] })
+  const job = jobsMod.createJob({ domain: 'music', kind: 'x', title: '备份测试', items: [{ id: 'a', title: 't' }] })
+  // 只是为了让库里有数据；标成已完成，别留一个「排队中」的任务影响后面的恢复测试。
+  // （0.52.0 之前新建任务一读就被误判成「已中断」，这里不收尾也碰巧没事）
+  dbMod.db().prepare("update jobs set status = 'done' where id = ?").run(job.id)
   const r = backupMod.backup()
   // astra.db 由 db() 懒创建；这里有写入就一定有
   assert.equal(r.hasDatabase, true)

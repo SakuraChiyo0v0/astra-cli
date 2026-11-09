@@ -1,3 +1,30 @@
+## 0.52.0
+
+新增小说域 `astra novel`：按书名找书，打成 EPUB 落到 NAS，可追更连载。
+取代 `/opt/data/scripts/novel_get.sh` + `lnovel2epub` 那套 Python 脚本。
+
+- 三个书源：8novel（繁体日轻，分卷齐、能搜）、lnovel.tw（繁体日轻，只认书号）、
+  努努书坊 kanunu8（简体出版读物，靠本地书名索引，约 8,700 本）
+- `search` / `info` / `get`（后台任务，`--wait`）/ `job` / `jobs` / `job cancel` / `job resume` / `index` / `doctor`
+- 书名只在「完全同名且只有一条」时自动选，否则 `AMBIGUOUS` + 候选；日轻多卷不选卷报 `AMBIGUOUS_VOLUME`
+- 章节先进 `<ASTRA_HOME>/novel/cache/`，全部到齐才打包；有一章缺就不出书（`NOVEL_INCOMPLETE`）
+- 站点的下架提示（「因版權問題，文庫不再提供…」）认出来报 `NOVEL_TAKEN_DOWN`，不当正文打包
+- 8novel 的同形字水印按 NFKC + 同形字表归一后识别，实测三种变体都删
+- 繁→简用内置表（OpenCC 的 TSCharacters / TSPhrases，Apache-2.0，`src/novel/t2s-data.ts`）
+- EPUB3 + NCX，自写 zip（mimetype 第一个且不压缩）；WebP 插图经 ffmpeg 转 JPEG
+- 追更：`novel subscribe add|list|remove|run [--notify]`，复用 `subscriptions` 表，
+  新增 `options` 列（每条订阅自己的卷 / 繁转简 / 插图选项，JSON）
+- 完成后登记资产库：`kind = ebook`，`platform = novel-<书源>`；`lib adopt` 也认 `.epub` 了
+- 配置：`novel.dir` / `novel.template` / `novel.concurrency`，环境变量 `ASTRA_NOVEL_DIR`
+
+core 的改动（其它域受益）：
+
+- `jobs`：新增 `finalize` 钩子（各项跑完后合成一个产物）与 `patchJob`。
+  finalize 期间任务对外仍是 running，结束才落 done —— 轮询的调用方看到「已完成」时产物一定已写好；
+  finalize 期间被取消以取消为准
+- `jobs`：**修 bug**：刚建好、worker 还没起的任务被读一次就会被写成 `interrupted`
+  （`createJob` 自己返回视图时 pid 还是空）。表现是建完立刻查进度看到「已中断」
+
 ## 0.51.0
 
 pixiv 落盘改成「按作品分层」：`<root>/<userId>/<illustId>/<illustId>_pN.ext`。

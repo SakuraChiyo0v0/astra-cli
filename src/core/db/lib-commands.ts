@@ -140,10 +140,10 @@ export const libCommands: Command[] = [
   {
     name: 'lib adopt',
     summary: '认领孤儿文件：给盘上有、库里没有的媒体建 asset',
-    usage: 'astra lib adopt [--root <标签>] [--kind video,audio,image] [--limit N] [--dry-run]',
+    usage: 'astra lib adopt [--root <标签>] [--kind video,audio,image,ebook] [--limit N] [--dry-run]',
     options: {
       root: { type: 'string', valueName: '标签', description: '只处理某个 root，默认全部' },
-      kind: { type: 'string', valueName: '类型', description: 'video / audio / image，逗号分隔' },
+      kind: { type: 'string', valueName: '类型', description: 'video / audio / image / ebook，逗号分隔' },
       limit: { type: 'string', valueName: '条数', description: '最多认领几个，默认全部' },
       'dry-run': { type: 'boolean', description: '只统计不写库' },
     },

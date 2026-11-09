@@ -110,6 +110,15 @@ interface Handler {
    * 的项才算数，失败的下次要重试。
    */
   afterFinish?: (job: JobView, items: JobItemView[]) => void
+  /**
+   * 所有项跑完后、发通知**之前**调一次，会被 await。
+   *
+   * 给「各项只是原料，最后还要合成一个产物」的域用 —— 小说要把各章打成一本 EPUB。
+   * 返回的行追加进通知；可以用 `patchJob` 写 meta（产物路径之类）。
+   * 跑 finalize 期间任务对外仍是 running，结束后才落 done / partial —— 轮询的调用方
+   * 看到「已完成」时产物一定已经写好。抛错 = 任务记为 failed，错误原因进通知。
+   */
+  finalize?: (job: JobView, items: JobItemView[]) => Promise<string[]>
 }
 
 const handlers = new Map<string, Handler>()
@@ -187,7 +196,11 @@ function ownerScope(): string | null {
 function toView(row: JobRow): JobView {
   const meta = parseJson(row.meta)
   let status = row.status as JobStatus
-  if ((status === 'running' || status === 'queued') && !alive(row.pid)) {
+  // 刚建好、还没起 worker 的任务 pid 为空 —— 不能当成中断。早先 createJob 自己返回视图时
+  // 就会走到这里，把每个新任务当场写成 interrupted（worker 起来后再改回 running），
+  // 建完立刻查进度的调用方（`novel get --wait`）因此一上来就看到「已中断」
+  const justCreated = status === 'queued' && !row.pid && Date.now() - Date.parse(row.created_at) < 60_000
+  if ((status === 'running' || status === 'queued') && !justCreated && !alive(row.pid)) {
     status = 'interrupted'
     db().prepare("update jobs set status = 'interrupted', updated_at = ? where id = ?").run(now(), row.id)
   }
@@ -389,14 +402,55 @@ export async function runWorker(domain: string, jobId: string): Promise<void> {
     refreshCounts(row.id)
     const counts = db().prepare('select total, done, skipped, failed from jobs where id = ?').get(row.id) as { total: number; done: number; skipped: number; failed: number }
     const status: JobStatus = counts.failed === 0 ? 'done' : counts.done + counts.skipped > 0 ? 'partial' : 'failed'
-    db().prepare('update jobs set status = ?, updated_at = ? where id = ?').run(status, now(), row.id)
+    // 有 finalize 的域：状态先留在 running，finalize 跑完（产物写好）再落最终状态。
+    // 否则轮询 `--wait` 的调用方会在「已完成、产物还没出来」的空档拿到结果
+    if (handler.finalize) await runFinalize(domain, row.id, status)
+    else db().prepare('update jobs set status = ?, updated_at = ? where id = ?').run(status, now(), row.id)
   }
   await finish(domain, row.id)
 }
 
+/** finalize 的结果行，留给 finish() 拼进通知。 */
+const finalizeNotes = new Map<string, string[]>()
+
+async function runFinalize(domain: string, jobId: string, status: JobStatus): Promise<void> {
+  const handler = handlerFor(domain)
+  // finalize 看到的是「即将落定」的状态，便于它判断要不要出产物
+  db().prepare('update jobs set status = ?, updated_at = ? where id = ?').run(status, now(), jobId)
+  const snapshot = getJob(jobId, true, domain)
+  db().prepare("update jobs set status = 'running', updated_at = ? where id = ?").run(now(), jobId)
+  // finalize 可能要几十秒（打包、传图）。期间用户 cancel 了，就以取消为准：
+  // 最终状态只在「还是 running」时才写，不覆盖 cancelled
+  const settle = (next: JobStatus, error: string | null = null): void => {
+    db().prepare("update jobs set status = ?, error = coalesce(?, error), updated_at = ? where id = ? and status = 'running'").run(next, error, now(), jobId)
+  }
+  try {
+    finalizeNotes.set(jobId, await handler.finalize!(snapshot.job, snapshot.items ?? []))
+    settle(status)
+  } catch (err) {
+    const message = (err as Error).message.slice(0, 300)
+    settle('failed', message)
+    finalizeNotes.set(jobId, [`✗ ${message}`])
+  }
+}
+
+/** 改任务的状态 / 错误 / meta（meta 是浅合并）。给 `finalize` 用。 */
+export function patchJob(jobId: string, patch: { status?: JobStatus; error?: string | null; meta?: Record<string, unknown> }): void {
+  const row = db().prepare('select meta from jobs where id = ?').get(jobId) as { meta: string | null } | undefined
+  if (!row) return
+  if (patch.meta) {
+    const merged = { ...(parseJson(row.meta) ?? {}), ...patch.meta }
+    db().prepare('update jobs set meta = ?, updated_at = ? where id = ?').run(JSON.stringify(merged), now(), jobId)
+  }
+  if (patch.status) db().prepare('update jobs set status = ?, updated_at = ? where id = ?').run(patch.status, now(), jobId)
+  if (patch.error !== undefined) db().prepare('update jobs set error = ?, updated_at = ? where id = ?').run(patch.error, now(), jobId)
+}
+
 async function finish(domain: string, jobId: string): Promise<void> {
-  const { job, items } = getJob(jobId, true, domain)
   const handler = handlers.get(domain)
+  const extra = finalizeNotes.get(jobId) ?? []
+  finalizeNotes.delete(jobId)
+  const { job, items } = getJob(jobId, true, domain)
   // 域自己的收尾（按实际结果更新状态）。出问题不能影响通知。
   if (handler?.afterFinish) {
     try {
@@ -410,6 +464,7 @@ async function finish(domain: string, jobId: string): Promise<void> {
     `【${job.title}】${statusLabel(job.status)}`,
     `共 ${job.total} 项：新完成 ${job.done}，已有 ${job.skipped}，失败 ${job.failed}`,
     ...(handler ? handler.summary(items ?? []) : []),
+    ...extra,
     ...failed.slice(0, 5).map((i) => `✗ ${i.title}${i.subtitle ? ` - ${i.subtitle}` : ''}：${i.error ?? ''}`),
     failed.length > 5 ? `…另有 ${failed.length - 5} 项失败，详见 astra ${domain} job ${job.id}` : '',
   ].filter(Boolean)

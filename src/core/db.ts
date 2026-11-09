@@ -181,6 +181,9 @@ const MIGRATIONS: string[] = [
      last_status text,
      created_at text not null
    )`,
+  // 小说订阅（0.52.0）：选哪卷、要不要繁转简这类每条订阅自己的选项，存 JSON。
+  // 不给每个域各加一列 —— 那正是 bili 那几列 audio_only / pages_mode 的教训。
+  `alter table subscriptions add column options text`,
 ]
 
 export function db(): DatabaseSync {

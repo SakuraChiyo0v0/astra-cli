@@ -39,6 +39,7 @@ import { lolCommands } from './lol/commands.ts'
 import { xCommands } from './x/commands.ts'
 import { authCommands } from './auth/commands.ts'
 import { scheduleCommands } from './schedule/commands.ts'
+import { novelCommands } from './novel/commands.ts'
 import { allowedPatterns, authorize, openAuth, resolveToken, scopeOf } from './core/auth.ts'
 import { readToken, setIdentity, setToken } from './core/identity.ts'
 import { setCommandRegistry } from './core/registry.ts'
@@ -401,7 +402,7 @@ const commands: Command[] = [
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest, notifyProvidersCmd,
   ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands, ...modelCommands,
   ...dbCommands, ...libCommands, ...quarkCommands, ...cloudCommands,
-  ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands, ...llmCommands, ...deviceCommands, ...xCommands, ...authCommands, ...scheduleCommands,
+  ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands, ...llmCommands, ...deviceCommands, ...xCommands, ...authCommands, ...scheduleCommands, ...novelCommands,
 ]
 
 // 供 `astra auth doctor` 之类需要完整清单的命令读取（避免 import main 形成环）
