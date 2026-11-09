@@ -8,6 +8,7 @@ import path from 'node:path'
 import { AstraError, invalidInput } from '../errors.ts'
 import type { Command } from '../command.ts'
 import { getConfig, musicRoot } from '../config.ts'
+import { notify } from '../notify.ts'
 import { openDatabase, redact } from './index.ts'
 import { MIGRATIONS, appliedMigrations } from './migrations.ts'
 import {
@@ -111,6 +112,7 @@ export const libCommands: Command[] = [
     options: {
       root: { type: 'string', valueName: '标签', description: '只扫某个 root，默认全部' },
       adopt: { type: 'boolean', description: '发现孤儿时直接按 adopt 规则入库（默认只报告）' },
+      notify: { type: 'boolean', description: '有移动/丢失/新收编时发一条摘要（走 notify 通道）' },
     },
     notes: [
       '身份三层：rel_path → dev:ino → 内容指纹；都命中不了才认领/报孤儿',
@@ -122,6 +124,13 @@ export const libCommands: Command[] = [
       try {
         const roots = typeof values.root === 'string' ? [values.root] : undefined
         const result = await scan(db, { roots, adopt: values.adopt === true })
+        if (values.notify === true) {
+          const parts: string[] = []
+          if (result.moved.length) parts.push(`移动 ${result.moved.length}`)
+          if (result.missing.length) parts.push(`丢失 ${result.missing.length}`)
+          if (result.adopted) parts.push(`新收编 ${result.adopted}`)
+          if (parts.length > 0) await notify(`【资产库】${parts.join(' / ')}（扫描 ${result.scanned} 个文件）`)
+        }
         return { data: { ...result, url: redact(db.url) } }
       } finally {
         await db.conn.close()
