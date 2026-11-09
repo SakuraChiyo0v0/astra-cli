@@ -14,6 +14,8 @@ import { SqliteConn, sqliteDialect } from '../src/core/db/sqlite.ts'
 import { migrate } from '../src/core/db/migrations.ts'
 import { addRoot, adopt, scan, stats } from '../src/core/db/library.ts'
 import type { Database } from '../src/core/db/index.ts'
+// 漫画身份是 comic 领域登记进来的钩子（core 不 import 领域），这里按生产时的样子加载一次
+import '../src/comic/manifest.ts'
 
 function setup() {
   const dir = mkdtempSync(path.join(tmpdir(), 'astra-adopt-'))
@@ -160,6 +162,65 @@ test('两个 root 里有同一份内容：共用同一个 asset，不报主键�
     const s = await stats(db)
     assert.equal(s.assets, 1)
     assert.equal(s.files, 2)
+  } finally {
+    await close()
+  }
+})
+
+test('同目录 .astra-comic.json 用本子/话数/页码做 id，不走指纹', async () => {
+  const { db, root, close } = setup()
+  try {
+    await migrate(db)
+    await addRoot(db, 'comic', root)
+    const page = path.join(root, '123 书', '03', '001.jpg')
+    mkdirSync(path.dirname(page), { recursive: true })
+    writeFileSync(page, 'page-bytes')
+    writeFileSync(path.join(path.dirname(page), '.astra-comic.json'), JSON.stringify({
+      albumId: '123',
+      albumTitle: '书',
+      authors: ['某人'],
+      chapterId: '999',
+      sort: 3,
+      title: '第3话',
+      pages: 1,
+      scrambleId: '0',
+    }))
+
+    const r = await adopt(db, { kinds: ['image'] })
+    assert.equal(r.adopted, 1)
+    assert.equal(r.withComic, 1)
+    assert.equal(r.local, 0)
+    assert.equal(r.items[0]!.assetId, 'comic:123_c3_p1')
+
+    const rows = await db.conn.query<{ title: string; artists: string; album: string }>(
+      'select title, artists, album from assets',
+    )
+    assert.equal(rows[0]!.title, '书')
+    assert.equal(rows[0]!.artists, '某人')
+    assert.equal(rows[0]!.album, '第3话')
+  } finally {
+    await close()
+  }
+})
+
+test('老 sidecar 没有 sort 时，用章节目录名当话数', async () => {
+  const { db, root, close } = setup()
+  try {
+    await migrate(db)
+    await addRoot(db, 'comic', root)
+    const page = path.join(root, '旧', '03', '002.jpg')
+    mkdirSync(path.dirname(page), { recursive: true })
+    writeFileSync(page, 'old-page')
+    writeFileSync(path.join(path.dirname(page), '.astra-comic.json'), JSON.stringify({
+      albumId: '456',
+      chapterId: '1',
+      title: '旧话',
+      pages: 2,
+      scrambleId: '0',
+    }))
+
+    const r = await adopt(db, { kinds: ['image'] })
+    assert.equal(r.items[0]!.assetId, 'comic:456_c3_p2')
   } finally {
     await close()
   }

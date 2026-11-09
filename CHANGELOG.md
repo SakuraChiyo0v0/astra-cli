@@ -1,3 +1,25 @@
+## 0.54.0 — 2026-11-09
+
+**漫画后台任务与连载订阅**（在原 `claude/comic-cli-446f14` 分支上编号 0.32.0；
+那条线还带着一段 0.31.0，但 0.31.0 这个号在主线已经是「数据库 db exec」，合并时统一顺延）
+
+- `comic get`：多话本默认开后台任务（`status: job_started`，`data.job.id`），单话当场下；`--background` / `--wait` 可强制
+- 新增 `comic job <id>` / `comic jobs` / `comic job cancel` / `comic job resume`，任务也出现在 `astra jobs`
+- 新增 `comic subscribe add / list / set / remove / run`：建订阅时现有话记为基线（`--backfill` 不记），按章节 id 求差只补新话；只把下成功的话记为已下；cron 调 `astra comic subscribe run`
+- `comic search` 返回 `status`：`exact`（带 `pick`）/ `ambiguous`（带 `candidates`）/ `empty`
+- 下载结果每话带 `registered`；漫画目录不是 lib root 时给 warning，提示 `lib root auto` + `lib adopt`
+- 修：`music subscribe list / run` 会把 B 站和漫画的订阅行当成音乐订阅
+
+## 0.53.1 — 2026-11-09
+
+**漫画页进资产库，截断的图不算下完**（原分支编号 0.31.0，合并时顺延）
+
+- `comic get` 落盘后用 `verifyImage` 验容器结构。不完整就重下一次，仍坏则删掉文件并报 `TRUNCATED`，不留半张图
+- `already_have` 不再只数页数：缺页或截断的页会重下
+- 登记 id 为 `comic:<本子id>_c<话数>_p<页码>`，和 pixiv / bili 一样走 `mirrorFile`
+- `.astra-comic.json` 补上 `sort` / `albumTitle` / `authors`。`lib adopt` 读这个 sidecar 认领存量，不用重下；老文件没有 `sort` 时用章节目录名（`03` → 第 3 话）
+- Hermes skill：`skills/lib/SKILL.md`（根、扫描、查找、校验、重复、认领）
+
 ## 0.53.0
 
 内部重构：理顺 core 与领域的边界，为「按领域懒加载」做准备。**命令、参数、输出、配置键都没变**

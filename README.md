@@ -5,7 +5,7 @@
 目标场景：NAS 上的 Hermes 收到飞书消息"下一首晴天"，调 `astra music get 晴天 周杰伦`，把结果回给你；
 你说"这个视频离线存一下"，它调 `astra bili get <链接>`。
 
-**不依赖任何其它服务**：没有数据库服务、没有常驻进程，状态全在一个目录里。
+**不依赖常驻进程**。默认状态在一个目录里的 SQLite；要换 PostgreSQL 用 `astra db use`。
 
 ## 现在有什么
 
@@ -17,9 +17,8 @@
 | **Steam** | 愿望单（带价格/折扣）、公开库存、玩家资料 | 8 |
 | **VRChat** | 好友、通知、世界、实例、群组、头像、收藏、经济 | 32 |
 | **漫画** | 搜本 / 看信息 / 按车号下载（解混淆） | 4 |
+| **资产库** | 存储根、对账、查找、校验、重复、认领已有文件 | 9 |
 | 基础设施 | 统一输出、配置、飞书通知、自检、后台任务、备份、审计 | 10 |
-
-规模：约 122 条命令（不含内部 worker）。
 
 **代理**：`proxy.url` / `include` / `exclude` 按域名决定哪些请求走代理，
 Steam 这类被墙的域名走代理，B 站和网易云保持直连（它们对代理 IP 更敏感）。
@@ -80,13 +79,19 @@ DASH 的音视频是**分开的两个流**，下完用 ffmpeg 合并 —— 所�
 astra comic search 关键词
 astra comic search 全彩 --scope tag      # site / work / author / tag / actor
 astra comic info 123456
-astra comic get 123456                 # 整本
+astra comic get 123456                 # 整本（多话自动开后台任务）
 astra comic get 123456 --chapter 3     # 只下一话
+astra comic get 123456 --wait          # 多话也当场下完
+astra comic job <任务id> --wait 600     # 看 / 等后台任务
+astra comic jobs --active
+astra comic subscribe add 123456 --every 24   # 追更连载
+astra comic subscribe run              # 给 cron：只跑到点的订阅
 astra comic doctor
 ```
 
 纯 TS 实现移动端 API，不依赖本机其它下载容器。解混淆用 ffmpeg（与 B 站共用）。
-落盘看 `comic.dir` / `ASTRA_COMIC_DIR`。
+落盘看 `comic.dir` / `ASTRA_COMIC_DIR`。截断的图不会留在目录里，下完按 `comic:<本子>_c<话>_p<页>` 登记进资产库。
+搜索多条结果时 `data.status` 是 `ambiguous`，只给候选不替人挑。订阅建好时把现有的话记为基线，之后只补新话。
 
 ### Steam
 
@@ -147,6 +152,7 @@ npm run check      # 类型检查 + 测试 + 打包
 
 部署见 [部署手册](deploy/部署手册.md)（照着做）与 [架构说明](deploy/README.md)；
 Hermes 用的 skill 在 [skills/music/SKILL.md](skills/music/SKILL.md)、[skills/bili/SKILL.md](skills/bili/SKILL.md)、
+[skills/comic/SKILL.md](skills/comic/SKILL.md)、[skills/lib/SKILL.md](skills/lib/SKILL.md)、
 [skills/steam/SKILL.md](skills/steam/SKILL.md) 和 [skills/vrchat/SKILL.md](skills/vrchat/SKILL.md)。
 
 ## 目录

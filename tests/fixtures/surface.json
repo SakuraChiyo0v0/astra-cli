@@ -1931,7 +1931,7 @@
         "--dry-run": "只统计不写库"
       },
       "notes": [
-        "身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；没有平台 id → local:<内容指纹>",
+        "身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；同目录 .astra-comic.json → comic:<本子>_c<话>_p<页>；否则 local:<内容指纹>",
         "用内容指纹当 id 而不是路径：文件挪了不会变成两条",
         "只建记录，不动任何文件"
       ]
@@ -2484,15 +2484,20 @@
     {
       "command": "comic get",
       "summary": "下载一本漫画：车号、JM 号或链接都行",
-      "usage": "astra comic get <车号|链接> [--chapter <n>] [--force] [--concurrency 3]",
+      "usage": "astra comic get <车号|链接> [--chapter <n>] [--background | --wait] [--force] [--concurrency 3]",
       "options": {
         "--chapter <n>": "只下一话（从 1 开始的 sort）",
-        "--force": "已有也重新下",
-        "--concurrency <n>": "单话内图片并发 1..6，默认 3"
+        "--background": "开后台任务，立刻返回 job id",
+        "--wait": "当场下完再返回（多话本也不开任务）",
+        "--force": "已有也重新下（只在当场下载时生效）",
+        "--concurrency <n>": "单话内图片并发 1..6，默认取 comic.concurrency"
       },
       "notes": [
-        "data.status：downloaded / already_have",
-        "多话本默认全下；只要某一话加 `--chapter 3`",
+        "data.status：downloaded / already_have / job_started",
+        "**多话本默认开后台任务**（job_started，看 data.job.id）；单话本或给了 --chapter 时当场下完。`--background` 强制后台，`--wait` 强制当场下",
+        "后台任务用 `astra comic job <id>` 查进度；每一项是一话，items[].status 是 downloaded / skipped（已有）/ failed",
+        "截断的图不算已有，会重下；仍不完整就不留文件",
+        "落盘后登记资产库，id 是 comic:<本子>_c<话数>_p<页码>。chapters[].registered 小于 pages 说明漫画目录还不是 lib root",
         "落盘目录看 `comic.dir` / `ASTRA_COMIC_DIR`，模板看 `comic.template`",
         "解混淆需要 ffmpeg（和 B 站共用 `music.ffmpeg`）"
       ]
@@ -2516,7 +2521,8 @@
         "默认 --scope site：站内全文，对标题和正文",
         "--scope tag 按站内标签；author 作者；work 作品；actor 登场角色",
         "搜到车号会直接 redirect 到那一本",
-        "拿不准时把 items 列给用户，让用户选 id 再 `comic get <id>`"
+        "data.status：exact（上游跳转或全站只有一条，data.pick 可直接 `comic get`）/ ambiguous（多条）/ empty（没搜到）",
+        "ambiguous 时**不要替用户挑**：把 candidates 的 id / title / author 列给用户，选定后再 `comic get <id>`"
       ]
     },
     {
@@ -2524,6 +2530,94 @@
       "summary": "漫画能力自检：目录、ffmpeg、上游连通",
       "usage": "astra comic doctor",
       "options": {}
+    },
+    {
+      "command": "comic job",
+      "summary": "看漫画后台任务进度（一项 = 一话）",
+      "usage": "astra comic job <id> [--items] [--failed] [--wait 60]",
+      "options": {
+        "--items": "列出每一话",
+        "--failed": "只列失败的",
+        "--wait <s>": "最多等待秒数（≤600）"
+      },
+      "notes": [
+        "status：queued / running / done / partial / failed / cancelled / interrupted",
+        "interrupted = worker 进程没了（重启、被杀），用 `astra comic job resume <id>` 接着下",
+        "--wait 最多阻塞这么多秒等它结束（≤600）"
+      ]
+    },
+    {
+      "command": "comic jobs",
+      "summary": "最近的漫画后台任务",
+      "usage": "astra comic jobs [--active] [--limit 10]",
+      "options": {
+        "--active": "只看进行中的",
+        "--limit <n>": "默认 10，最多 100"
+      }
+    },
+    {
+      "command": "comic job cancel",
+      "summary": "取消漫画后台任务（已下好的话不删）",
+      "usage": "astra comic job cancel <id>",
+      "options": {}
+    },
+    {
+      "command": "comic job resume",
+      "summary": "继续 / 重试漫画后台任务（只重跑没完成的话）",
+      "usage": "astra comic job resume <id>",
+      "options": {}
+    },
+    {
+      "command": "comic subscribe add",
+      "summary": "订阅一本连载：定时检查，出新话自动下",
+      "usage": "astra comic subscribe add <车号|链接> [--every 24] [--backfill]",
+      "options": {
+        "--every <h>": "每隔几小时检查一次，默认 24",
+        "--backfill": "不记基线：第一次检查就把还没下过的话全补上"
+      },
+      "notes": [
+        "建订阅时把**当前已有的话记为基线**，订阅只管之后出的新话；要补旧话用 `comic get`，或建订阅时加 --backfill",
+        "新话按章节 id 求差判断，不靠更新时间",
+        "定时检查：在 Hermes 里配一条 cron 定时调 `astra comic subscribe run`（比如每 6 小时）。它只跑到点的订阅，到点间隔由 --every 决定",
+        "同一本重复订阅不会建第二条，会返回已有那条（data.status: already_subscribed）"
+      ]
+    },
+    {
+      "command": "comic subscribe list",
+      "summary": "列出漫画订阅及状态",
+      "usage": "astra comic subscribe list",
+      "options": {}
+    },
+    {
+      "command": "comic subscribe set",
+      "summary": "改漫画订阅：间隔 / 启停",
+      "usage": "astra comic subscribe set <订阅id|车号> [--every 12] [--enable|--disable]",
+      "options": {
+        "--every <h>": "每隔几小时",
+        "--enable": "启用",
+        "--disable": "停用"
+      }
+    },
+    {
+      "command": "comic subscribe remove",
+      "summary": "删除漫画订阅（已下载的文件不动）",
+      "usage": "astra comic subscribe remove <订阅id|车号>",
+      "options": {}
+    },
+    {
+      "command": "comic subscribe run",
+      "summary": "检查到点的漫画订阅，有新话就开后台任务（给 cron 调）",
+      "usage": "astra comic subscribe run [--id <订阅id|车号>] [--force]",
+      "options": {
+        "--id <id>": "只跑这一个订阅",
+        "--force": "忽略间隔，立刻检查全部启用的订阅"
+      },
+      "notes": [
+        "cron 里配 `astra comic subscribe run` 即可；不带参数只跑到点的，--force 不管间隔全跑一遍",
+        "有新话时 results[].job.id 是后台任务，用 `astra comic job <id>` 看",
+        "只有下成功（downloaded / skipped）的话才记为已下；失败的下一轮自动重试",
+        "上一轮任务还没跑完的订阅这次跳过，不会重复下"
+      ]
     },
     {
       "command": "douyin get",
@@ -3473,6 +3567,7 @@
   ],
   "hidden": [
     "bili _worker",
+    "comic _worker",
     "douyin fav",
     "music _worker",
     "novel _worker",

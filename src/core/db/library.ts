@@ -582,6 +582,8 @@ export interface AdoptResult {
   dryRun: boolean
   adopted: number
   withBvid: number
+  /** 同目录 `.astra-comic.json` 认出的漫画页。 */
+  withComic: number
   local: number
   skipped: number
   items: { relPath: string; assetId: string; kind: string }[]
@@ -621,6 +623,35 @@ export interface AdoptOne {
   assetId: string
   kind: string
   withBvid: boolean
+  /** 身份从哪来：nfo-bvid / fingerprint / 领域登记的识别器名（如 comic-sidecar）。 */
+  via: string
+}
+
+/** 领域给的身份：有了它就不走指纹。 */
+export interface AdoptIdentity {
+  platform: string
+  nativeId: string
+  title: string
+  artists: string | null
+  album: string | null
+  meta: Record<string, unknown>
+  /** 记进 adopted 事件的来源，如 `comic-sidecar`。 */
+  via: string
+}
+
+/**
+ * 按领域认文件身份的钩子。
+ *
+ * 为什么是钩子：漫画页的身份写在章节目录的 `.astra-comic.json` 里，读法是 comic 领域的事；
+ * core 不能 import 领域（`tests/boundaries.test.ts`）。所以由领域在 manifest 里登记，
+ * `adopt` / `scan --adopt` 按登记顺序问一遍，谁认出来就用谁的。
+ */
+export type AdoptIdentityResolver = (file: { abs: string; base: string; ext: string; kind: string }) => AdoptIdentity | null
+
+const identityResolvers: AdoptIdentityResolver[] = []
+
+export function registerAdoptIdentity(resolver: AdoptIdentityResolver): void {
+  if (!identityResolvers.includes(resolver)) identityResolvers.push(resolver)
 }
 
 /**
@@ -660,23 +691,38 @@ async function adoptEntry(
   const kind = ['.mp4', '.mkv', '.flv', '.webm', '.mov'].includes(ext) ? 'video'
     : ['.mp3', '.flac', '.m4a'].includes(ext) ? 'audio'
     : ext === '.epub' ? 'ebook' : 'image'
-  const assetIdValue = bvid ? `bili:${bvid}_p1` : `local:${fp}`
-  const title = meta.title || path.basename(base, ext)
-  const out: AdoptOne = { relPath: rel, assetId: assetIdValue, kind, withBvid: Boolean(bvid) }
+  let domainId: AdoptIdentity | null = null
+  for (const resolve of identityResolvers) {
+    domainId = resolve({ abs, base, ext, kind })
+    if (domainId) break
+  }
+  const assetIdValue = domainId ? `${domainId.platform}:${domainId.nativeId}` : bvid ? `bili:${bvid}_p1` : `local:${fp}`
+  const via = domainId ? domainId.via : bvid ? 'nfo-bvid' : 'fingerprint'
+  const out: AdoptOne = { relPath: rel, assetId: assetIdValue, kind, withBvid: !domainId && Boolean(bvid), via }
   if (dryRun) return out
 
   await db.conn.tx(async (tx) => {
     const inner: Database = { ...db, conn: tx }
-    await upsertAsset(inner, {
-      platform: bvid ? 'bili' : 'local',
-      nativeId: bvid ? `${bvid}_p1` : fp,
-      kind,
-      title,
-      artists: meta.uploader ?? null,
-      meta: { root: root.label, source: bvid ? 'nfo' : 'fingerprint' },
-    })
+    await upsertAsset(inner, domainId
+      ? {
+        platform: domainId.platform,
+        nativeId: domainId.nativeId,
+        kind,
+        title: domainId.title,
+        artists: domainId.artists,
+        album: domainId.album,
+        meta: { root: root.label, source: via, ...domainId.meta },
+      }
+      : {
+        platform: bvid ? 'bili' : 'local',
+        nativeId: bvid ? `${bvid}_p1` : fp,
+        kind,
+        title: meta.title || path.basename(base, ext),
+        artists: meta.uploader ?? null,
+        meta: { root: root.label, source: bvid ? 'nfo' : 'fingerprint' },
+      })
     await upsertFile(inner, { assetId: assetIdValue, rootId: root.id, relPath: rel, size, hash: fp })
-    await event(inner, 'adopted', assetIdValue, null, { rel_path: rel, via: bvid ? 'nfo-bvid' : 'fingerprint' })
+    await event(inner, 'adopted', assetIdValue, null, { rel_path: rel, via })
   })
   return out
 }
@@ -686,6 +732,7 @@ async function adoptEntry(
  *
  * 身份怎么定（重要）：
  * - 有同名 `.nfo` 且里面带 BV 号 → `bili:<BV>_p<分P>`，这是最可靠的
+ * - 同目录有 `.astra-comic.json` → `comic:<本子>_c<话数>_p<页码>`，和下载时的 mirror 同一套 id
  * - 没有平台 id → `local:<指纹>`。**用内容指纹当 id**，文件挪了也不会变成两条
  *   （代价：重新压制的同一部片子会被当成新资产，这比用路径当 id 好）
  */
@@ -698,7 +745,7 @@ export async function adopt(
     ? allRoots.filter((r) => options.roots!.includes(r.label))
     : allRoots
   const result: AdoptResult = {
-    dryRun: options.dryRun === true, adopted: 0, withBvid: 0, local: 0, skipped: 0, items: [],
+    dryRun: options.dryRun === true, adopted: 0, withBvid: 0, withComic: 0, local: 0, skipped: 0, items: [],
   }
   const limit = options.limit ?? Number.POSITIVE_INFINITY
 
@@ -738,7 +785,8 @@ export async function adopt(
       if (!one) continue
       known.add(one.relPath)
       result.adopted += 1
-      if (one.withBvid) result.withBvid += 1
+      if (one.via === 'nfo-bvid') result.withBvid += 1
+      else if (one.via !== 'fingerprint') result.withComic += 1
       else result.local += 1
       result.items.push({ relPath: one.relPath, assetId: one.assetId, kind: one.kind })
     }

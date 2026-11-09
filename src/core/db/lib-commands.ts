@@ -148,7 +148,7 @@ export const libCommands: Command[] = [
       'dry-run': { type: 'boolean', description: '只统计不写库' },
     },
     notes: [
-      '身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；没有平台 id → local:<内容指纹>',
+      '身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；同目录 .astra-comic.json → comic:<本子>_c<话>_p<页>；否则 local:<内容指纹>',
       '用内容指纹当 id 而不是路径：文件挪了不会变成两条',
       '只建记录，不动任何文件',
     ],
