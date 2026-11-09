@@ -168,15 +168,17 @@ export const SQLITE_LADDER: string[] = [
   `alter table subscriptions add column options text`,
   // 0.57.0：JM 本子域从 comic 改名 jm，comic 让给普通漫画。存量的 JM 订阅和任务改标签，
   // 否则 `jm subscribe list` / `jm jobs` 看不到它们，`comic` 域又会把它们当成自己的。
-  // 这一步之前 comic 域只有 JM 一家（普通漫画 0.56.0 才出现，那时叫 manga），所以按 domain=comic 改全部是对的。
-  // 拆成三条：阶梯按条执行（prepare 只认一条语句），一条一个 user_version。
-  `update subscriptions set kind = 'jm-album' where kind = 'comic-album'`,
-  `update jobs set meta = json_set(meta, '$.domain', 'jm') where json_extract(meta, '$.domain') = 'comic'`,
-  `update jobs set meta = json_set(meta, '$.domain', 'comic') where json_extract(meta, '$.domain') = 'manga'`,
+  // 这一步之前 comic 域只有 JM 一家（普通漫画 0.56.0 才出现，那时叫 manga），所以按 domain=comic 改全部是对的；
+  // 0.56.0 的 manga 任务一并改成 comic。
+  // **一级里三条语句，和 0.57.0 的 core/db.ts 一字不差**：线上老库已经按这个级数记过 user_version，
+  // 拆开会让级数错位、改名重跑一遍。执行时由 climbSqliteLadder 按分号拆开。
+  `update subscriptions set kind = 'jm-album' where kind = 'comic-album';
+   update jobs set meta = json_set(meta, '$.domain', 'jm') where json_extract(meta, '$.domain') = 'comic';
+   update jobs set meta = json_set(meta, '$.domain', 'comic') where json_extract(meta, '$.domain') = 'manga'`,
 ]
 
 /**
- * 阶梯上 0.57.0 JM 改名第一条的下标。user_version = N 表示前 N 条跑过，
+ * 阶梯上 0.57.0 JM 改名那一级的下标。user_version = N 表示前 N 级跑过，
  * 所以老库 `user_version <= JM_RENAME_LEVEL` 就说明改名还没跑、数据里的 JM 还叫 comic。
  */
 export const JM_RENAME_LEVEL = SQLITE_LADDER.findIndex((stmt) => stmt.includes("'jm-album'"))
@@ -322,6 +324,11 @@ export const STATE_KEYS: Record<(typeof STATE_TABLES)[number], string[]> = {
  * （`music get` 和 `bili get` 并行、cron 撞上手动命令），后到的那个阻塞到前一个提交，
  * 再读版本号就已经是最新的。早先版本号在事务外读，实测报 `duplicate column name: channels`。
  */
+/** 按「分号 + 换行」拆一级里的多条语句。阶梯里的语句都是手写的，不会在字符串里出现这个组合。 */
+export function splitStatements(sql: string): string[] {
+  return sql.split(/;\s*\n/).map((x) => x.trim()).filter(Boolean)
+}
+
 export async function climbSqliteLadder(conn: Conn): Promise<void> {
   const read = async (c: Conn): Promise<number> =>
     Number((await c.query<{ user_version: number }>('pragma user_version'))[0]?.user_version ?? 0)
@@ -329,7 +336,8 @@ export async function climbSqliteLadder(conn: Conn): Promise<void> {
   await conn.tx(async (tx) => {
     const current = await read(tx)
     for (let i = current; i < SQLITE_LADDER.length; i += 1) {
-      await tx.exec(SQLITE_LADDER[i]!)
+      // 一级可能是几条用分号隔开的语句（0.57.0 那一级）；连接层的 exec 一次只认一条
+      for (const stmt of splitStatements(SQLITE_LADDER[i]!)) await tx.exec(stmt)
       await tx.exec(`pragma user_version = ${i + 1}`)
     }
   })

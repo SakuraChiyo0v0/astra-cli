@@ -125,6 +125,13 @@ test('源停在 0.57 改名之前：JM 订阅 / 任务搬过来时补上 comic �
   }
 })
 
+test('阶梯级数和 0.57.0 的 core/db.ts 对齐：线上 0.57 老库 user_version=42 时不再重跑', async () => {
+  // 0.57.0 的阶梯共 42 级，JM 改名是最后一级（三条语句一级）。拆开过一次，级数变成 44，
+  // 线上 user_version=42 的库就会被当成「还差两级」、把改名重跑一遍
+  assert.equal(SQLITE_LADDER.length, 42)
+  assert.equal(JM_RENAME_LEVEL, 41)
+})
+
 test('当前库就是源文件时拒绝（本机 SQLite，本来就是同一个库）', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'astra-import-same-'))
   const file = legacyDb(dir)
