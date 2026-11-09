@@ -20,7 +20,7 @@ required_environment_variables:
 # Astra Library Skill
 
 用 `astra lib` 查「文件在哪、还在不在、是不是同一份」。
-它不下载。下载仍走 `music get` / `bili get` / `pixiv pull` / `comic get` / `novel get`，那些命令落盘后会自己登记
+它不下载。下载仍走 `music get` / `bili get` / `pixiv pull` / `jm get`（本子）/ `comic get`（普通漫画）/ `novel get`，那些命令落盘后会自己登记
 （前提是落盘目录在某个 root 里；不在的话结果里会有 warning，`lib root auto` 后再 `lib adopt`）。
 
 数据库本身的迁移、备份、切换 PostgreSQL 用 `astra db`，不在这里。
@@ -116,4 +116,4 @@ python3 /opt/data/scripts/pixiv_quality.py --report          # 低清样本
 - `scan` 的 `missing` 只报**刚刚丢失**的那一次；已经 missing 的记录不会每轮重复上报（要查全部缺口用
   `astra db query "select rel_path from files where state = 'missing'"`）。文件回来会自动 `revived`。
 - `lib root rm` 在还有文件记录时会拒绝。
-- 漫画下载若页是截断的，`comic get` 不会把它算成 already_have，也不会把坏图留在目录里。
+- 漫画下载若页是截断的，`jm get` / `comic get` 都不会把它算成 already_have，也不会把坏图留在目录里。
