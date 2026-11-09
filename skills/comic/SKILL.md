@@ -1,7 +1,7 @@
 ---
 name: astra-comic
 description: Download comics/manga albums to the NAS by album id or search, track ongoing series, and register pages in the asset library.
-version: 0.2.0
+version: 0.3.0
 author: SakuraChiyo0v0, Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -61,6 +61,10 @@ stdout 只有一个 JSON。`ok:true` 看 `data`，`ok:false` 看 `error.code` / 
 | 认领已有本子进资产库 | `astra lib root auto` → `astra lib adopt --root comic` |
 | 自检 | `astra comic doctor` |
 
+`get` 的选项只有 `--chapter` / `--background` / `--wait` / `--force` / `--concurrency`。
+`--out`、`--pages`、`--page-range` 都不存在（会报 `INVALID_INPUT: Unknown option`），
+落盘目录只能靠 `comic.dir` / `ASTRA_COMIC_DIR` 改——想临时换个地方存，先改配置再跑。
+
 ## Procedure
 
 1. 用户给车号或链接 → 直接 `astra comic get <...>`。
@@ -84,12 +88,59 @@ stdout 只有一个 JSON。`ok:true` 看 `data`，`ok:false` 看 `error.code` / 
 - 订阅按章节 id 求差判断新话；只有下成功的话才记为已下，失败的下一轮自动重试；上一轮任务没跑完时这一轮跳过
 - `--force` 只能当场下载时用（不能和 `--background` 一起）
 - 解混淆需要 ffmpeg；缺了用 `astra comic doctor` 看
+- **并发上限是上游给的**：`--concurrency 1` → 5 页/分钟，`6` → 10 页/分钟。单页 658KB、下载占 8–10 秒、
+  ffmpeg 解混淆只占 2 秒，瓶颈是图床按 IP 限速。默认 3–6 就够，别靠加并发救慢。
 
-## 发送预览：临时文件名必须带书号
+## 按作者/画师找作品（pixiv → JM 对齐）
 
-`send_comic_preview.py` 早期用「话号_页名」拼临时文件名（`01_001.webp.jpg`），
-而所有书的路径都一样。脚本又是「先把每本的预览全部转好，再一次性发相册」，
-于是相册每条都指向同一个文件，群里出现一串一模一样的图。
+用户给一个 pixiv 作者、要「他在 JM 上还有什么本」，不要直接拿 pixiv 昵称去搜就下结论：
 
-规则：**先转换后发送时，临时文件名必须唯一**（带上书号/作品 id）；
-发相册前对 `items[*].path` 做一次去重 + 哈希校验，比事后看群里的图更早发现问题。
+- **JM 的标题以汉化组前缀开头**（`[某某汉化组] [作者] 标题 (作品)`），`--scope author` 匹配的是
+  `author` 字段，pixiv 昵称、社团名（`ヤン年金サン組`）、X 账号（`sunchdayo`）都常常 0 条——
+  **搜不到不等于没有，也不能当成已确认没有**，只能说“按这些名字没找到”。
+- **日文假名角色名经常 0 条**（实测 `アスイヴ` → 0），JM 用中文译名。改用中文角色名或作品中文名，
+  并用 `--scope actor` / `--scope work` 交叉找：`伊芙琳`、`阿斯特拉`、`绝区零`。
+- 结果里按 `author` 字段人工比对，别按标题里出现的角色名就认定是同一作者；
+  找到多个候选时把 `id / title / author` 列给用户选，**不要替他挑**。
+- pixiv 上的是同人志 **sample（试读页）**，完整本在场贩/蜜瓜/虎穴；pixiv 没有全本不代表 JM 也没有，
+  两件事分开说。
+
+## 下载很慢时，按这个顺序查
+
+1. **确认图片域名有没有被代理分流命中**。接口域名（`www.cdnhjk.net` 等）和图片域名
+   （`cdn-msp.jmapiproxy1.cc` / `jmapiproxy2.cc` / `jmapinodeudzn.net`）是两批，
+   只给接口域名写规则 = 图片流量落到 `MATCH` 随机挑节点 → 同一本书时快时慢。
+   详见 skill `nas-proxy-ops`。
+2. **看单页实际耗时**：`astra comic get <id> --concurrency 1` 跑 60 秒数页数。
+   12 秒/页正常，50 秒/页是网络被限速或截断。
+3. **别用延迟测速当判据**，图床对非法路径会秒回 51 字节 JSON，TTFB 骗人；
+   用 `scripts/node_pick.py`（靶子是真图，由 `scripts/comic_probe.py` 生成）。
+4. `TIMEOUT` / 「操作超时」是 astra 自己的整体超时，不是上游错误——换节点后重跑即可，已下的页会跳过。
+
+## 先查重：库里有的、预览过的，都不要重下 / 重发
+
+两处都要查，缺一处就会让用户看到重复内容：
+
+1. **库里已有的车号** —— 扫 `comic.dir` 的目录名，车号在开头的 `^(\d{4,})`。
+2. **已经发过预览的车号** —— `cache/comic-previewed.json`（`send_comic_preview.py` 里
+   `already_sent()` / `mark_sent()` 维护，默认跳过，`--force` 才重发）。
+
+`scripts/comic_find.py <关键词...>` 把「搜索 → 排掉库里已有 → 排掉预览过 → 按汉化/非 AI 排序」一次做完：
+
+```bash
+python3 scripts/comic_find.py 绝区零 ゼンレスゾーンゼロ --limit 8
+```
+
+**目录存在 ≠ 这本是新的**：目录在但页数少于 `astra comic info` 的 `pageCount`，说明是以前下漏的，
+补页 `get` 一遍就完整了。补页是维护动作，**不要按新书发预览**——用户上次已经看过了。
+判断「新本」只看目录名（车号）在本次操作前是否存在，不看文件修改时间。
+订阅补下的新话同理：是追更，不是新书，不要当新本发预览。
+
+## 发预览到群里（敏感本子）
+
+- 一律走 `media_router` 的 `guard()` / `send_album_guarded()`，只发 `SENSITIVE_CHAT_ID`；
+  本子内容按敏感处理，**不要用识图工具去看这些图**，按文件/日志核对即可。
+- **先转换后发送时，临时文件名必须唯一**（带上书号）：早期脚本把预览存成 `{话号}_{页名}.jpg`，
+  所有书都写到同一个文件，相册里 N 张全指向最后一张 → 群里出现一串一模一样的图。
+- 发之前对 `items[*].path` 做一次去重 + 哈希校验；重复是「同一路径被写多次」的典型征兆，
+  不是用户看错。

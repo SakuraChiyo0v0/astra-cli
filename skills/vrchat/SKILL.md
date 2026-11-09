@@ -87,8 +87,43 @@ stdout 只有一个 JSON，`ok: false` 时看 `error.code` / `error.hint`。
 | 加群 | `astra vr groups join <grp_xxx>` |
 | 退群 | `astra vr groups leave <grp_xxx>` |
 
+## 好友在线情况的汇报形状
+
+用户问“谁在线”时，直接给分组清单，不要贴原始 JSON。固定做法：
+
+1. `astra vr friends --online` 拿全量，`location` 里 `~group(` / `~hidden(` / `region(` 分别对应
+   群组实例 / 私密实例 / 公开区服。
+2. **worldId 去重后**逐个 `astra vr world <id>` 换世界名（十几个好友通常只对应十个左右世界，
+   别一人一次请求）。
+3. 输出顺序：先 **`join me` 的人单独一栏**（用户最关心的就是能直接进的那个），
+   再按世界分组列出同世界的人（一个世界多人时，用户能看出“这俩在一起”），最后是各自单独的人。
+   每行 = 名字 + 世界名 + 实例类型（群组 / 区服 / 私密）+ 签名。
+4. **`platform` 是 `standalonewindows` 只能说明是 PC 客户端**，分不出桌面还是 PCVR，别写成“他戴头显”；
+   全员都是这个值时可以说一句“都在 PC”。
+5. 收尾问一句“要帮你进哪个世界吗”——进世界/邀请是写操作，确认流程见上文。
+
 ## Pitfalls
 
+- **两步验证**：`needs_2fa` 返回的 `next` 提示写的是 `astra vr login 2fa <code>`，这个写法**跑不通**（会报
+  `INVALID_INPUT 参数太多`）。正确写法是 `astra vr login --code <验证码>`；没有待验证状态时它会报
+  `VRCHAT_NO_PENDING_2FA`，这时必须让用户重新跑一次带账号密码的完整登录（中间态只活 5 分钟，且存在
+  发起登录那个 ASTRA_HOME 里——用户在宿主机另一个 home 登录时，容器内补验证码是补不上的）。
+- 多词状态值要加引号：`astra vr status set "ask me" --description "..."`，不加引号会被当成多余参数。
+- **密码绝不经过聊天**，即使用户主动授权也不行：聊天记录会永久落盘。让用户在宿主机终端自己跑登录，
+  或自己在 NAS 上写临时 env 文件后用 `source` 方式读取（命令里只出现变量名，不回显），用完立即删。
+  邮箱 2FA 验证码可以走聊天（5 分钟过期，泄露风险极小）。
+- 用户在宿主机侧登录后，会话文件（`vr-session.json` 等）属主常变成 `root:root 600`，容器内 hermes 用户
+  读会报 `EACCES`。修复：`docker run --rm -v <ASTRA_HOME宿主路径>:/fix alpine sh -c 'chown 1000:10 /fix/*-session.json'`
+  （1000:10 = hermes:uucp），然后重新验证 `account`。这个坑对 netease/bili/vr 所有 `-session.json` 都适用。
+- **好友没有"最近活动"可查**：VRChat 上游不提供好友历史轨迹（去过哪些世界、玩了多久都没有）。
+  只能看到此刻的 `status` / `worldId` / `location` / `platform`。用户问"某某最近都干了啥"时，
+  直接说清这个限制，然后给当前快照（在哪个世界、PC 还是 VR、公开还是私密实例），不要猜或编造历史。
+  真想跟踪就提"定时快照成日志"，让用户决定。
+- **`vr world` 的字段在 `data.world` 下面**（`id` / `name` / `authorName` / `description`），
+  直接取 `data.name` 会拿到 `None`。批量把好友的 `worldId` 换成世界名时，先对 worldId 去重再循环查，
+  别一个好友一次请求。
+- 好友在 `hidden(usr_xxx)` 私密实例里时，实例详情查不到（带完整 location 会报 HTTP 400 `malformed url`，
+  而且本来也只有受邀者可见）。汇报就说"在私密实例里，看不到还有谁"，不要反复重试。
 - 好友的 `location` 是 `wrld_xxx:12345~region(us)` 这种格式，`worldId` 只是前半段；
   邀请时要用**完整的 location**。
 - `offline` / `private` 表示不在公开实例里，不是"没有这个世界"。

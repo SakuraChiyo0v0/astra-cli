@@ -1,7 +1,7 @@
 ---
 name: astra-deploy
 description: Deploy astra CLI updates to the NAS (Hermes container) and verify them.
-version: 0.1.0
+version: 0.2.0
 author: SakuraChiyo0v0
 license: MIT
 platforms: [linux, macos, windows]
@@ -18,7 +18,19 @@ metadata:
 
 ## When to Use
 
+> **先看这一条：Hermes 现在跑在 NAS 的容器里，部署走 `docker run -v`，不走 WebDAV。**
+> 本文下半部分（WebDAV / Kura 中继 / `127.0.0.1:18006`）是**从宿主机器部署**的老路子，
+> 容器内根本连不到那个端口，别照抄。容器内的完整链路（构建 → 部署 → md5 → 实测）见技能
+> `astra-cli-dev` 的「部署」一节，核心就一条：
+>
+> ```bash
+> docker run --rm -v /volume1/docker/astra/bin:/b \
+>   -v /volume1/docker/hermes/data/astra-src/dist:/d \
+>   alpine sh -c 'cp /d/astra.mjs /b/astra.mjs && chmod 755 /b/astra.mjs && md5sum /b/astra.mjs'
+> ```
+
 - 发版之后要把新 `astra.mjs` 推到 NAS
+- **要自己改 astra 源码**（需求清单里的条目）→ 看「在容器内改源码」一节：代理、密钥、bin 权限都在那里
 - 改了 `skills/` 下给 Hermes 读的说明书
 - 线上 `astra version` 和仓库 tag 对不上
 
@@ -157,6 +169,29 @@ docker exec hermes astra bili get BV1xxx --audio-only
 
 ## Pitfalls
 
+- **单文件产物只内联「静态」require，动态依赖要自己放到 `bin/node_modules/`**。
+  esbuild 把依赖打成一个 `astra.mjs`，但 `require('lzma')` 这类**动态**调用会原样留在产物里，
+  运行时按 `astra.mjs` 所在目录往上找 `node_modules`。`bin/` 是只读挂载、又没有 `node_modules`，
+  于是某些命令直接 `INTERNAL: Cannot find module 'lzma'`（典型：`steam idle start` 这类要起会话的），
+  而 `version` / `status` 照常 —— 极容易误判成上游掉线。
+  装法（docker 看不见容器内 `/opt/data`，要先落到 NAS 路径）：
+
+  ```bash
+  cd /opt/data/cache/scratch && npm i lzma --no-save && tar czf lzma.tgz -C node_modules lzma
+  cp lzma.tgz /host-root/volume1/docker/astra/tmp/
+  docker run --rm -v /volume1/docker/astra:/a alpine \
+    sh -c 'mkdir -p /a/bin/node_modules && tar xzf /a/tmp/lzma.tgz -C /a/bin/node_modules'
+  node -e "console.log(require.resolve('lzma',{paths:['/opt/astra/bin']}))"   # 能解析才算成
+  ```
+
+  用 tar 而不是 `cp -r <源目录> <目标>`：跨 bind mount 直接 cp 会静默建出空目录。
+- **验收必须跑一条「起会话」的命令**。`version` / `status` 只读，测不出上面那类运行时缺依赖；
+  改了挂机、登录、下载相关的代码，就跑 `astra steam idle stop && astra steam idle start VRChat --wait 45`
+  看 `status: online`。只跑 version 等于没测。
+- **多个 agent 同时改这个仓库时，push 被拒后必须重 build**。`git pull --rebase` 后冲突通常在
+  `CHANGELOG.md` / `package.json`：保留对方条目，自己的版本号取下一号（对方已占的不抢）。
+  rebase 完成后 `dist/astra.mjs` 还是旧的（里面没有对方的新代码），**必须重新 `npm run build` 再部署**，
+  否则一部署就把对方刚上的功能回滚了；部署后 `astra version` 要能同时包含双方改动。
 - **版本号不会自己变**。只换文件不重新打包，`astra version` 还是旧的，
   会误以为部署失败。
 - **传完不校验**。WebDAV 半截上传不报错，容器里报的错却是语法错，很难联想到这里。
@@ -172,6 +207,93 @@ docker exec hermes astra bili get BV1xxx --audio-only
 - **会话文件属主**：宿主机以 root 跑 astra 登录过，会把 `*-session.json` 变成 `root:root 600`，
   容器里 uid 1000 读不到（`EACCES`）。修：
   `docker run --rm -v /volume1/docker/astra/home:/fix alpine chown 1000:10 /fix/*-session.json`
+
+## 发版后逐条验收（需求清单驱动）
+
+维护者每发一版都会说“升级了 / 应该升级了吧”，期待的是**逐条实测验收**，不是一句“收到了”。
+固定流程：
+
+1. **先看清单还剩什么**：`grep -n '^### ' <需求文档> | grep -v '✅'`。没勾的才是这轮要验的；
+   已勾的不用重跑（用户要求“验证通过的条目删掉，只留未完成”）。
+2. **三处 diff 定位新功能**，比读 changelog 快且不会漏：
+   - `astra version` —— 版本号对不对
+   - `astra config list | grep bili.` —— **新出现的配置键就是上线了的功能**（如 `bili.audio-dir`）
+   - `astra help <组>` —— 新子命令、新选项、`routing` 字段的变化
+3. **按清单里的“复现”命令原样跑**，不要自己另编验证方式。写盘/写标签类必须**读回**：
+   `mutagen` 读 `TIT2`/`TALB`/`TXXX:BILIBILI_BVID`、`ffprobe` 读 `format_tags`、`ls` 数文件——
+   返回 `ok:true` 只证明命令没报错，不证明落点与标签对。
+4. **增量类功能靠复跑验收**：同一批第二次跑必须 `downloaded=0 / skipped=N`；
+   只看第一次 `failed:0` 不能证明幂等。
+5. **测试改过的 config 当场还原**（`bili.dir` / `bili.audio-dir` / 两个 template），
+   并把测试下载的目录从正式库移进 `.hermes-trash/<日期>/`，不要留在库里等用户发现。
+6. **标记与汇报**：清单条目改成 `✅ 已实现（vX.Y.Z）：<一句话结论>`，写清复测数据与遗留小问题；
+   回复用表格（条目 / 结论 / 证据），不要贴大段日志。
+7. **新发现的问题写成新条目**，格式固定为 现象 / 复现命令 / 期望 / 验收——用户会直接把它转给开发。
+   先确认是真缺陷再写：测下来没收益的（如并发提速）标“关闭（不是缺陷）”，不要挂在那里当 TODO。
+
+**不要再把 NAS 上的 `astra.mjs` 当补丁文件改**：那是打包产物，下次部署就被覆盖。
+改代码只能改**源码**再重新打包（见下节）。
+
+## 在容器内改源码（Hermes 自己实现 → 部署 → 验收）
+
+维护者已经授权 Hermes 直接改源码，不再“Hermes 提需求、维护者转述给开发”两边问。
+默认工作流变成：读需求清单 → 改源码 → 补测试 → 全量测试 → 打包 → 部署 → 真库验收 → 报结果。
+需求文档照写（现象 / 复现 / 期望 / 验收），但它是**我自己的任务单**，不是等别人实现的工单。
+清单放在 `/opt/data/requirements/astra-requirements-*.md`，同步一份到 `/volume1/docker/astra/REQUIREMENTS-*.md`。
+用户已经明确：**碰到真问题就直接加条目，不用先问**；验证通过的条目删掉，只留未完成。
+
+### 容器里的构建环境（实测）
+
+```
+node v26.7.0   npm 12.0.2   git 2.47.3   无 pnpm（可 npm i -g pnpm）
+源码目录：/opt/data/astra-src（容器内可写）
+```
+
+### 出网：GitHub 必须走 mihomo 代理
+
+```
+https://github.com 直连      → 超时（curl 20s 返回 000，git ls-remote 60s exit 124）
+http://mihomo:7890 作代理    → 200  ✅（mihomo 与 hermes 同在 proxy-net，直接用容器名）
+registry.npmjs.org 直连      → 200  ✅（装依赖不用代理）
+ssh github.com:22 直连       → 通（返回 Permission denied (publickey) 说明链路没问题）
+```
+
+已写进 git 全局配置：`http.proxy` / `https.proxy` = `http://mihomo:7890`。
+密钥在 `/opt/data/.ssh/id_ed25519`，`~/.ssh/config` 已指定 `github.com` 用这把钥匙 + keepalive。
+**公钥必须先由用户加到 GitHub**（Settings → SSH keys，或仓库 Deploy keys 只读即可），
+否则 clone 一律 `Permission denied (publickey)`；别自己反复重试。
+
+### 部署：bin 目录是 root 属主，hermes 写不进去
+
+`/opt/astra/bin` 与宿主 `/volume1/docker/astra/bin` 都是 `root:root 755`，
+`touch` 直接失败。产物落地要用 docker 以 root 身份写（sock 可用）：
+
+```bash
+docker run --rm -v /volume1/docker/astra/bin:/b \
+  -v /volume1/docker/hermes/data/astra-src/dist:/d alpine \
+  sh -c 'cp /b/astra.mjs /b/astra.mjs.bak-<旧版本> 2>/dev/null; cp /d/astra.mjs /b/astra.mjs && chmod 755 /b/astra.mjs && md5sum /b/astra.mjs'
+```
+
+**挂载源必须写宿主路径 `/volume1/docker/hermes/data/...`，不能写容器内的 `/opt/data/...`。**
+docker 守护进程跑在宿主上，容器里的路径它看不见 —— 写成 `/opt/data/astra-src/dist` 会报
+`cp: can't stat '/d/astra.mjs': No such file or directory`，看起来像打包没产物。
+
+写前先备份成 `astra.mjs.bak-<版本>`（目录里已有这个惯例），出问题能立刻换回去。
+`bin/` 是只读挂载，换完文件下次调用就是新版本，**不用重启容器**。
+
+验证：`md5sum dist/astra.mjs` 与上面 docker 里输出的 MD5 必须一致；
+`astra` 不在 PATH 上，用全路径 `/opt/data/.local/bin/astra version` 查（它是只读挂载的 wrapper，
+指向 `/opt/astra/bin/astra.mjs`）。
+
+> 「clone → npm i → npm test → 打包 → docker 复制」整条链路已实测跑通（含 `bili dyn` /
+> `bili album` 两个新命令的上线），可直接照做。
+
+### 改完的验收（和发版验收同一套）
+
+1. `astra version` 必须是新版本号（版本号在打包时写死，文件不换就不会变）
+2. 按需求条目的“复现命令”原样跑，写盘类必须读回（`mutagen` / `ffprobe` / `ls` 数数）
+3. 增量类功能复跑一次，断言 `downloaded=0 / skipped=N`
+4. 测试用的 `bili.dir` / `bili.audio-dir` / template 当场还原，测试产物移进 `.hermes-trash`
 
 ## 部署完的清单
 
