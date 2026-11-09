@@ -31,7 +31,7 @@ import { albumArtistsFor, isCompilation, primaryArtist } from './album-artist.ts
 import { templateFor } from './download.ts'
 import { getConfig, musicRoot } from '../core/config.ts'
 import { renderTemplate, resolveInside } from './paths.ts'
-import { audioPayload, extractCoverArt, readTags, writeTags, type TagData } from './tags.ts'
+import { audioPayload, extractCoverArt, readTags, writeTags, type TagData } from '../core/audio-tags.ts'
 import { albumInfo, songDetail, type AlbumInfo } from './netease.ts'
 import { updateTrackPath, type LibraryTrack } from './library.ts'
 import { probeFile } from './audio.ts'

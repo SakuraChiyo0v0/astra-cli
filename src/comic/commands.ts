@@ -12,7 +12,7 @@ import { comicClient, searchMainTag, type SearchScope } from './client.ts'
 import { downloadAlbum } from './download.ts'
 import { comicRoot } from './paths.ts'
 import { parseComicTarget } from './target.ts'
-import { ffmpegPath, runBinary } from '../media/run.ts'
+import { ffmpegPath, runBinary } from '../core/ffmpeg.ts'
 
 function albumView(album: Awaited<ReturnType<ReturnType<typeof comicClient>['getAlbum']>>) {
   return {

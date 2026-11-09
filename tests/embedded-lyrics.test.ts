@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { decodeKrc, parseKrc, toEnhancedLrc } from '../src/music/kugou-lyric.ts'
 import { embedsLyric, writesLrcFile, pickEmbeddedLyrics, lyricText } from '../src/music/download.ts'
-import { retagFlac, retagMp3, parseFlacBlocks, id3v2End, audioPayload } from '../src/music/tags.ts'
+import { retagFlac, retagMp3, parseFlacBlocks, id3v2End, audioPayload } from '../src/core/audio-tags.ts'
 
 /** 写标签用的最小 TagData（不带封面 / 歌词）。 */
 const BASE = {

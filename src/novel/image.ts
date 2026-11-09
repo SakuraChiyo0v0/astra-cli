@@ -8,7 +8,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { getConfig } from '../core/config.ts'
-import { runFfmpeg } from '../media/run.ts'
+import { runFfmpeg } from '../core/ffmpeg.ts'
 import type { EpubImage } from './epub.ts'
 
 export function sniff(data: Buffer): 'jpeg' | 'png' | 'gif' | 'webp' | 'html' | 'other' {

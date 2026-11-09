@@ -13,8 +13,8 @@ import { mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { getConfig } from '../core/config.ts'
-import { probe, type ProbeResult } from '../bili/ffmpeg.ts'
-import { runFfmpeg, runFfprobe } from './run.ts'
+import { probe, type ProbeResult } from '../core/ffmpeg.ts'
+import { runFfmpeg, runFfprobe } from '../core/ffmpeg.ts'
 
 export interface MediaInfo extends ProbeResult {
   path: string

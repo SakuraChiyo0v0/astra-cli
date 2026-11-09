@@ -7,8 +7,8 @@
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'node:fs'
 import path from 'node:path'
-import { ensureDir, homePath } from '../core/paths.ts'
-import { AstraError, invalidInput } from '../core/errors.ts'
+import { ensureDir, homePath } from '../../core/paths.ts'
+import { AstraError, invalidInput } from '../../core/errors.ts'
 import { loadLxSource, parseScriptMeta, type LoadedLxSource } from './host.ts'
 
 export interface LxSourceRecord {

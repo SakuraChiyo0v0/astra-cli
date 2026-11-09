@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { getConfig } from '../core/config.ts'
-import { runFfmpeg } from './run.ts'
+import { runFfmpeg } from '../core/ffmpeg.ts'
 import { mediaInfo, type MediaInfo } from './tools.ts'
 
 /** 找得到的中文字体。找不到就让调用方显式传 --font。 */

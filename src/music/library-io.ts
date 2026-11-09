@@ -13,7 +13,7 @@ import path from 'node:path'
 import { AstraError } from '../core/errors.ts'
 import { musicRoot } from '../core/config.ts'
 import { allTracks, type LibraryTrack } from './library.ts'
-import { extractCoverArt } from './tags.ts'
+import { extractCoverArt } from '../core/audio-tags.ts'
 
 /** 扫描时认作"音频文件"的扩展名。 */
 const AUDIO_EXT = new Set(['.flac', '.mp3', '.m4a', '.ogg', '.opus', '.wav', '.aac', '.wma'])

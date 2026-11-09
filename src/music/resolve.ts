@@ -13,9 +13,9 @@
  */
 import { AstraError } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
-import { loadEnabledSources } from '../lx/store.ts'
-import type { LoadedLxSource, LxMusicInfo } from '../lx/host.ts'
-import type { LxSourceRecord } from '../lx/store.ts'
+import { loadEnabledSources } from './lx/store.ts'
+import type { LoadedLxSource, LxMusicInfo } from './lx/host.ts'
+import type { LxSourceRecord } from './lx/store.ts'
 import { probeUrl, qualityRank, qualitySatisfied, type Probe, type Quality } from './audio.ts'
 import { findOnKuwo } from './kuwo.ts'
 import { normalize } from './match.ts'

@@ -1,0 +1,4034 @@
+{
+  "conventions": [
+    "stdout 只有一个 JSON：ok=true 看 data（和 warnings），ok=false 看 error.code / error.message / error.hint",
+    "error.hint 是下一步建议；retryable=true 表示稍后重试可能成功",
+    "stderr 是进度日志，不要当结果解析",
+    "含空格的关键词可以不加引号（get / search 会把剩余参数拼起来）",
+    "status 分两层，但成功都用 downloaded：单次操作看 data.status（downloaded / already_have / ambiguous / job_started）；后台任务的每项看 data.items[].status（downloaded / skipped / failed / queued / running）。",
+    "  曲库里已有而跳过用 skipped；用 status == \"downloaded\" 过滤时记得把 skipped 也算成功",
+    "会起后台任务的命令统一返回 data.job.id（`data.status: \"job_started\"`）；要等它跑完用 `astra job <data.job.id> --wait <秒>`。同步完成的看 data.status: \"downloaded\""
+  ],
+  "commands": [
+    {
+      "command": "help",
+      "summary": "列出所有命令（给 AI 读的说明书）",
+      "usage": "astra help [命令前缀]",
+      "options": {}
+    },
+    {
+      "command": "version",
+      "summary": "版本号",
+      "usage": "astra version",
+      "options": {}
+    },
+    {
+      "command": "doctor",
+      "summary": "自检：硬依赖、两个域的音源/登录/目录、可选通知",
+      "usage": "astra doctor",
+      "options": {},
+      "notes": [
+        "按三类列出：required（缺了直接不可用）/ domain（缺了某个能力不可用）/ optional（少了只是不方便）",
+        "会真的往目录写一个临时文件来验证可写性 —— 权限位对了但挂载只读的情况也能发现"
+      ]
+    },
+    {
+      "command": "jobs",
+      "summary": "所有域的后台任务，一次列全（音乐 / B 站 …）",
+      "usage": "astra jobs [--active] [--domain music|bili] [--limit 10]",
+      "options": {
+        "--active": "只看进行中的",
+        "--domain <name>": "只看某个域",
+        "--limit <n>": "默认 10"
+      },
+      "notes": [
+        "各域也有自己的 `music jobs` / `bili jobs`，内容一样；这个是不用记域名的入口",
+        "任务 id 在所有域里唯一，`astra job <id>` 可以直接查任意域的任务"
+      ]
+    },
+    {
+      "command": "job",
+      "summary": "看任意域的任务进度 / 取消 / 继续（不用记域名）",
+      "usage": "astra job <id> | astra job cancel <id> | astra job resume <id> [--items] [--wait 60]",
+      "options": {
+        "--items": "列出每一项的状态",
+        "--failed": "只列失败的",
+        "--wait <s>": "最多等待秒数（≤600）"
+      },
+      "notes": [
+        "任务 id 跨域唯一。加 --items 看每一项，--wait 阻塞等待完成"
+      ]
+    },
+    {
+      "command": "config",
+      "summary": "查看 / 修改配置",
+      "usage": "astra config [get <key> | set <key> <value> | unset <key>]",
+      "options": {},
+      "notes": [
+        "music.dir：音乐根目录（绝对路径）；环境变量 ASTRA_MUSIC_DIR 优先",
+        "music.quality：默认请求音质：128k / 320k / flac / 24bit（实际以文件实测为准）",
+        "music.template：落盘路径模板，变量 {artist}（逗号分隔全部）{artist_list}（分号分隔）{primary_artist}（第一位）{albumartist} {album} {title} {year} {track} {disc} {source} {ext}，支持 {track:02}",
+        "music.compilation-dir：合辑（专辑歌手是「群星」）的落盘目录，代替模板里的歌手一层；设成 Various Artists 可让播放器按惯例归类",
+        "music.lyric：歌词怎么存：embed（写进标签，带时间戳）/ embed-plain（写纯文本，不认时间戳的老播放器用）/ embed-synced（同 embed）/ lrc（另存 .lrc）/ both / none",
+        "music.wordLyric：逐字歌词：auto（从酷狗取，时长对不上就跳过）/ off",
+        "music.ffmpeg：ffmpeg 可执行文件路径（B 站合并音视频也用它）；留空则从 PATH 查找",
+        "bili.dir：视频根目录（绝对路径）；环境变量 ASTRA_VIDEO_DIR 优先",
+        "quark.dir：夸克分享的落盘根目录（绝对路径）；留空则 `quark get` 必须给 --out",
+        "quark.concurrency：夸克下载并发数 1..3；默认 1（实测 >1 因单账号带宽封顶不提速，且转存偶尔失败）",
+        "pixiv.dir：Pixiv 图片根目录（绝对路径）；留空则 `pixiv pull` 必须给 --out",
+        "pixiv.transport：Pixiv 请求通道：auto（有 cookie 用 curl，否则 fetch）/ fetch / curl",
+        "pixiv.sensitive-dir：敏感作品的落盘根目录（如 /host-root/volume1/@home/KAngel/.../pixiv）；留空则与 pixiv.dir 相同",
+        "pixiv.r18：是否允许下载 R-18 作品（true / false）；命令行 --r18 可临时覆盖",
+        "bili.video-template：视频落盘模板，变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}",
+        "bili.template：（已弃用，改用 bili.video-template）视频落盘模板",
+        "bili.quality：默认请求画质：4k / 1080p60 / 1080p / 720p / 480p / 360p（未登录会被服务端封顶 360P）",
+        "bili.audio-format：--audio-only 的输出格式：mp3（默认，能写标签）/ flac / m4a（不能写标签）",
+        "bili.audio-bitrate：转 mp3 时的码率（kbps）",
+        "bili.tag：--audio-only 是否自动写标签并内嵌封面：true / false",
+        "bili.sidecar：下载视频时顺带生成的伴生文件，逗号分隔：nfo / cover / danmaku / all（默认空 = 不生成）",
+        "bili.subscribe.pages：订阅下载哪些分 P：all（默认，完整拿到）/ first（只下 P1，返回 partial: true）",
+        "bili.audio-template：B 站音频的落盘模板（留空用 music.template）；变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}，如 Bilibili/{uploader}/{title}.{ext}",
+        "bili.audio-dir：B 站音频的根目录（绝对路径）；留空用 ASTRA_MUSIC_DIR。与 bili.audio-template 组合出完整落点",
+        "proxy.url：HTTP 代理地址（如 http://mihomo:7890）；留空则不用代理",
+        "proxy.include：走代理的域名后缀，逗号分隔（如 steampowered.com,steamcommunity.com）；留空 = 全部走代理",
+        "proxy.exclude：不走代理的域名后缀，逗号分隔（优先级高于 include）；留空 = 不排除",
+        "bili.concurrency：B 站批量任务并发数 1..3",
+        "music.concurrency：批量下载并发数 1..4",
+        "douyin.dir：抖音下载根目录（绝对路径）；留空则必须给 --out",
+        "x.dir：X 媒体根目录（绝对路径）；留空 = /host-root/volume1/素材/twitter，没有 NAS 时落 <ASTRA_HOME>/x-media",
+        "x.bin：twitter-cli / gallery-dl 所在目录；留空 = /opt/data/venvs/x/bin",
+        "lol.saveScript：单局入库脚本（如 lol_save_match.sh）；留空则用内置默认位置，找不到会明确报未配置",
+        "lol.pc：跑英雄联盟客户端的 PC 的 ssh 主机名（同 ~/.ssh/config）；留空用 \"pc\"",
+        "lol.pc-dump-dir：PC 上存放采集脚本和 JSON 的目录（正斜杠写法，scp 用）",
+        "comic.dir：漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先",
+        "comic.template：漫画落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}",
+        "comic.concurrency：单话内图片下载并发 1..6",
+        "novel.dir：小说（EPUB）根目录（绝对路径）；环境变量 ASTRA_NOVEL_DIR 优先；留空 = <ASTRA_HOME>/novel/books",
+        "novel.template：EPUB 落盘模板，变量 {title} {author} {source}",
+        "novel.concurrency：抓章并发 1..6",
+        "notify.telegram_chat：Telegram 通知目标 chat_id（如 -1001234567890）；令牌放 ASTRA_TELEGRAM_TOKEN 或 notify.telegram_token",
+        "notify.telegram_token：Telegram bot 令牌（建议改用环境变量 ASTRA_TELEGRAM_TOKEN）",
+        "notify.webhook_url：通用 webhook：POST JSON {\"text\": \"...\"}；可用于 Slack/钉钉/自建服务",
+        "notify.feishu_webhook：后台任务结束时推送到飞书群机器人的 webhook 地址；环境变量 ASTRA_FEISHU_WEBHOOK 优先",
+        "notify.feishu_secret：飞书机器人开了签名校验时的密钥；环境变量 ASTRA_FEISHU_SECRET 优先"
+      ]
+    },
+    {
+      "command": "login",
+      "summary": "看所有能力域的登录状态，或清理坏掉的会话",
+      "usage": "astra login | astra login clear [netease|bili|vrchat]",
+      "options": {},
+      "notes": [
+        "不带参数：只读，列出谁登了、谁过期了、怎么登。三个域都会列",
+        "state 有三种：logged_in / not_logged_in / stale_file（文件在但读不出来，通常是权限或格式坏了）",
+        "`login clear`：删本地会话文件，不调上游登出。会话文件坏了、正常 logout 都进不去时用它",
+        "`login clear` 不带域名就清全部；正常登出请用各域的 `logout` 命令"
+      ]
+    },
+    {
+      "command": "backup",
+      "summary": "备份曲库数据库与会话，或用备份恢复",
+      "usage": "astra backup | astra backup list | astra backup restore <备份目录>",
+      "options": {},
+      "notes": [
+        "只备份 astra.db（曲库与任务历史）和三个会话文件；**不备份**音乐/视频文件本身",
+        "数据库用 SQLite 的 VACUUM INTO 生成一致快照，不会因为那一刻有写入而损坏",
+        "默认保留最近 7 份；备份目录可用环境变量 ASTRA_BACKUP_DIR 指到别的盘",
+        "`restore` 会覆盖当前曲库，但会先把当前库改名保留；有任务在跑时会拒绝"
+      ]
+    },
+    {
+      "command": "audit",
+      "summary": "写操作审计：什么时候改了什么、成功没",
+      "usage": "astra audit [--domain music|vr] [--failed] [--since 2026-10-01] [--limit 50] | astra audit prune",
+      "options": {
+        "--domain <name>": "只看某个域：music / bili / vr",
+        "--failed": "只看失败的",
+        "--since <date>": "只看这个时间之后的（ISO 日期，如 2026-10-01）",
+        "--limit <n>": "默认 50，最多 500"
+      },
+      "notes": [
+        "只记写操作（红心、退群、收藏、删订阅），读操作不留痕",
+        "不记 cookie，也不记完整上游响应；只记动作、对象名字、结果",
+        "`audit prune` 只保留最近 1000 条"
+      ]
+    },
+    {
+      "command": "notify test",
+      "summary": "往所有已配置通道发一条测试消息",
+      "usage": "astra notify test [文字]",
+      "options": {}
+    },
+    {
+      "command": "notify providers",
+      "summary": "看哪些通知通道可用",
+      "usage": "astra notify providers",
+      "options": {}
+    },
+    {
+      "command": "music get",
+      "summary": "下载一首歌（或一整张专辑 / 歌单）：给关键词、网易云链接或 ref 都行",
+      "usage": "astra music get <关键词|链接|ref> [--quality flac] [--force] [--reassign]",
+      "options": {
+        "--quality <q>": "请求音质：128k / 320k / flac / 24bit（默认取配置 music.quality）",
+        "--force": "曲库里已有也重新下载",
+        "--reassign": "允许把精选集里的重复曲目归位到原专辑（默认不动已有文件）",
+        "--limit <n>": "候选数量上限，默认 5"
+      },
+      "notes": [
+        "结果 data.status：downloaded（下好了）/ already_have（曲库里已有，没重复下）/ ambiguous（拿不准，需要用户选）/ job_started（批量任务已在后台开始）",
+        "ambiguous 时把 candidates 列给用户（标题、歌手、专辑、时长、flags），用户选定后用该项的 ref 再调一次 get；不要自己替用户挑",
+        "downloaded 时如果 downgraded=true，要告诉用户实际音质（比如请求无损只拿到 128k）",
+        "链接是专辑 / 歌单 / 歌手时会直接开后台任务，用 `astra music job <id>` 查进度",
+        "**文件默认永不移动**：同一首歌已在库里别处时只记 already_have（带 duplicateOf 说明在哪），不搬文件",
+        "--reassign 才允许把\"精选集里的重复曲目\"归位到录音室原专辑（先下后删，只走这一个方向）"
+      ]
+    },
+    {
+      "command": "music search",
+      "summary": "只搜索不下载：歌曲（默认）/ 专辑 / 歌单 / 歌手",
+      "usage": "astra music search <关键词> [--type song|album|playlist|artist] [--limit 10]",
+      "options": {
+        "--type <type>": "song（默认）/ album / playlist / artist",
+        "--limit <n>": "1..30，默认 10",
+        "--page <n>": "页码，默认 1"
+      },
+      "notes": [
+        "每项都带 ref，可以直接交给 `astra music get <ref>`",
+        "列表按 total / returned / truncated 读：returned 是本次返回条数，不是总数"
+      ]
+    },
+    {
+      "command": "music info",
+      "summary": "查看歌曲 / 专辑 / 歌单 / 歌手的曲目，不下载",
+      "usage": "astra music info <链接|ref>",
+      "options": {
+        "--limit <n>": "列表最多显示几首，默认 50"
+      },
+      "notes": [
+        "曲目列表给 total / returned / truncated；报数用 total，别说成 returned"
+      ]
+    },
+    {
+      "command": "music batch",
+      "summary": "一次下载多首指定的歌（后台任务）",
+      "usage": "astra music batch <ref> [ref...] [--quality flac]",
+      "options": {
+        "--quality <q>": "请求音质",
+        "--title <text>": "任务名，默认\"N 首歌\""
+      },
+      "notes": [
+        "只接受明确的 ref / 歌曲链接；关键词要先用 get 或 search 确认版本"
+      ]
+    },
+    {
+      "command": "music have",
+      "summary": "查曲库：有没有某首歌 / 最近下了什么 / 统计 / 哪些还能升级",
+      "usage": "astra music have [关键词] [--limit 20] [--low] [--refresh]",
+      "options": {
+        "--limit <n>": "默认 20",
+        "--low": "只列有损或低于 24bit 的",
+        "--refresh": "回读文件补齐规格字段（会读文件头，几秒）"
+      },
+      "notes": [
+        "不带关键词时列出最近下载的歌和统计；missing=true 表示记录还在但文件已被删除或移动",
+        "--low 只列不是无损或低于 24bit 的（问\"哪些还能升级\"时用）",
+        "--refresh 重新读一遍文件头部，回填老记录缺的采样率 / 位深与配套文件状态"
+      ]
+    },
+    {
+      "command": "music forget",
+      "summary": "从曲库记录里移除一首歌（不删文件），之后 get 会重新下载",
+      "usage": "astra music forget <ref>",
+      "options": {}
+    },
+    {
+      "command": "music template",
+      "summary": "列出落盘模板的全部变量和取值示例",
+      "usage": "astra music template [--set 模板] [--preview <歌曲ref>]",
+      "options": {
+        "--set <模板>": "把 music.template 改成这个值",
+        "--preview <ref>": "用一首歌试算落盘路径（关键词或 ref）"
+      },
+      "notes": [
+        "当前模板和合辑目录从 config 读（music.template / music.compilation-dir），下面列出可用变量",
+        "--preview 会用真实歌曲算一遍，看到实际的落盘路径"
+      ]
+    },
+    {
+      "command": "music lyric",
+      "summary": "只取歌词，不下载音频（库里已有音频、想补歌词时用这个）",
+      "usage": "astra music lyric <关键词|ref> [--word] [--out <路径>] [--duration <秒>] [--json]",
+      "options": {
+        "--word": "同时取逐字增强 LRC（从酷狗，带逐字时间戳）",
+        "--out <path>": "写进这个路径（自动按 .lrc / .line.lrc 约定拆成两份）",
+        "--duration <sec>": "用这个时长（秒）做校验，代替网易云记录；B 站音频必填",
+        "--json": "把歌词正文也放进 data（默认只给行数，避免超长输出）"
+      },
+      "notes": [
+        "**不会下载音频**，也不会动曲库记录 —— 只取歌词",
+        "默认返回逐行 LRC（[mm:ss.xx]文本）；--word 额外取逐字增强 LRC（[mm:ss.xx]<mm:ss.xx>字…）",
+        "--out 直接写文件，后缀按约定：.lrc 放逐字，.line.lrc 放逐行；只取逐行时只写 .lrc",
+        "库里是 B 站音频（不是网易云记录）时用 --duration <秒> 传实际时长，逐字歌词靠它校验",
+        "逐字取不到不算失败：返回里 word=null 并给 wordUnavailableReason，逐行照常返回",
+        "时长对不上的候选一律丢弃（报 LYRIC_NO_MATCH），宁可没有也不给错的歌词"
+      ]
+    },
+    {
+      "command": "music job",
+      "summary": "查看后台任务进度（可只写 id 前几位）",
+      "usage": "astra music job <id> [--items] [--wait 60]",
+      "options": {
+        "--items": "列出每一首的状态",
+        "--failed": "只列失败的",
+        "--wait <s>": "最多等待秒数（≤600）"
+      },
+      "notes": [
+        "--wait 会阻塞最多 N 秒直到任务结束；status 为 interrupted 表示进程意外退出，可 `astra music job resume <id>`"
+      ]
+    },
+    {
+      "command": "music jobs",
+      "summary": "最近的后台任务",
+      "usage": "astra music jobs [--active] [--limit 10]",
+      "options": {
+        "--active": "只看进行中的",
+        "--limit <n>": "默认 10"
+      }
+    },
+    {
+      "command": "music job cancel",
+      "summary": "取消后台任务（已下好的保留）",
+      "usage": "astra music job cancel <id>",
+      "options": {}
+    },
+    {
+      "command": "music job resume",
+      "summary": "继续 / 重试一个中断、取消或部分失败的任务",
+      "usage": "astra music job resume <id>",
+      "options": {}
+    },
+    {
+      "command": "music login",
+      "summary": "扫码登录（等同 `login start`）",
+      "usage": "astra music login",
+      "options": {}
+    },
+    {
+      "command": "music login start",
+      "summary": "开始网易云扫码登录：返回二维码（终端可直接显示）和后续轮询方法",
+      "usage": "astra music login start",
+      "options": {},
+      "notes": [
+        "命令立刻返回，不会等扫码。data.qrArt 是二维码文本，原样发给用户（等宽代码块），data.qrContent 是它编码的内容",
+        "拿到后每隔 2~3 秒调一次 `astra music login poll`，直到 status 变成 done / expired",
+        "二维码 5 分钟内有效；过期就重新 start"
+      ]
+    },
+    {
+      "command": "music login poll",
+      "summary": "查一次扫码状态（不阻塞）",
+      "usage": "astra music login poll",
+      "options": {},
+      "notes": [
+        "status: pending（继续等）/ done（成功，已在 data.account）/ expired（二维码过期，重新 start）"
+      ]
+    },
+    {
+      "command": "music login wait",
+      "summary": "阻塞等待扫码完成（给人用，最多 3 分钟）",
+      "usage": "astra music login wait [--timeout 180]",
+      "options": {
+        "--timeout <s>": "最多等多少秒，默认 180，最大 600"
+      }
+    },
+    {
+      "command": "music account",
+      "summary": "看登录状态：账号、会员、会话是否还有效",
+      "usage": "astra music account",
+      "options": {}
+    },
+    {
+      "command": "music logout",
+      "summary": "清除本地会话（不影响网易云账号本身）",
+      "usage": "astra music logout",
+      "options": {}
+    },
+    {
+      "command": "music playlists",
+      "summary": "我的歌单（含收藏的），需要登录",
+      "usage": "astra music playlists [--limit 50]",
+      "options": {
+        "--limit <n>": "默认 50"
+      },
+      "notes": [
+        "每项带 ref（playlist:<id>），可以直接 `astra music info <ref>` 看曲目或 `astra music get <ref>` 下载"
+      ]
+    },
+    {
+      "command": "music daily",
+      "summary": "每日推荐（需要登录）：直接列出今天推给你的歌",
+      "usage": "astra music daily [--limit 33] [--download]",
+      "options": {
+        "--limit <n>": "最多显示几首，默认全部",
+        "--download": "顺手把今天的推荐开成下载任务",
+        "--quality <q>": "配合 --download 的请求音质"
+      },
+      "notes": [
+        "不带 --download 只列出来；带 --download 会开一个后台任务把这些歌下下来",
+        "推荐每天都会变；数据来自网易云自己的推荐，不是我们算的"
+      ]
+    },
+    {
+      "command": "music liked",
+      "summary": "我喜欢的音乐（需要登录）：列出 / 下载 / 查红心 / 点红心（写操作需二次确认）",
+      "usage": "astra music liked [--limit 50] [--download] [--check <ref>...] [--like <ref>...] [--unlike <ref>...] [--confirm <token>]",
+      "options": {
+        "--limit <n>": "显示几首，默认 50；0 表示不列曲目",
+        "--download": "把喜欢的歌开成下载任务",
+        "--quality <q>": "配合 --download 的请求音质",
+        "--check": "把位置参数当作歌曲 ref，查它们是否已红心",
+        "--like": "把位置参数当作歌曲 ref，准备「点红心」（需 --confirm 确认）",
+        "--unlike": "把位置参数当作歌曲 ref，准备「取消红心」（需 --confirm 确认）",
+        "--confirm <token>": "执行之前预览生成的令牌"
+      },
+      "notes": [
+        "不带参数时列出红心歌单；--check 查某几首是否已红心",
+        "--like / --unlike 是**写操作**，会改动用户真实的网易云歌单。它不直接执行，只返回预览和一次性令牌；",
+        "  把预览给用户看过、用户同意后，再用 `--confirm <token>` 执行。令牌 5 分钟有效、只能用一次",
+        "已经是目标状态的歌会自动跳过（重复点红心是幂等的，但没必要发请求）",
+        "--download 把红心歌单开成后台任务"
+      ]
+    },
+    {
+      "command": "music upgrade",
+      "summary": "找出真正能升级音质的歌，并可批量重下",
+      "usage": "astra music upgrade [--scan 20] [--apply] [--limit 20]",
+      "options": {
+        "--scan <n>": "最多扫多少首，默认 20",
+        "--apply": "把找到的开成下载任务",
+        "--limit <n>": "最多列几条，默认 20",
+        "--quality <q>": "配合 --apply 的请求音质"
+      },
+      "notes": [
+        "与 `have --low` 的区别：`--low` 只按库里的规格列（会被\"母带本来就是 16bit\"误导），",
+        "这里会真的问一次\"现在能拿到什么\"，确实更好才算可升级",
+        "扫描每首要打一次接口（不下载），所以 --scan 控制最多查几首",
+        "--apply 把找到的候选开成后台任务重下；不加只列清单"
+      ]
+    },
+    {
+      "command": "music subscribe add",
+      "summary": "订阅歌单 / 专辑 / 歌手 / 我的红心：定时检查，出新歌自动下",
+      "usage": "astra music subscribe add <链接|ref> [--every 24] [--quality flac] [--download-existing] [--base 5] [--max 640] [--factor 2]",
+      "options": {
+        "--every <h>": "检查间隔小时数，1..720，默认 24；开了 --base 之后不用它",
+        "--quality <q>": "新歌用哪个音质档位下载",
+        "--download-existing": "第一次就把现有曲目也下了",
+        "--liked": "订阅我的红心（我喜欢的音乐）",
+        "--base <min>": "自适应基准间隔分钟，默认 5（仅 --liked 或搭配使用）",
+        "--max <min>": "自适应封顶分钟，默认 640",
+        "--factor <n>": "没新歌时的增长倍数，2..10，默认 2"
+      },
+      "notes": [
+        "第一次只记当前曲目作为基线，**不会**把已有的全下一遍；要连已有的也下就加 --download-existing",
+        "之后每次检查只下\"上次没见过的曲目\"，已经在曲库里的跳过",
+        "实际执行靠定时任务调 `astra music subscribe run`，本工具不常驻",
+        "`--liked` 订阅「我喜欢的音乐」（红心）：不用给链接，自动带自适应退避（5 分钟起步，没新歌翻倍，封顶 640 分钟）",
+        "自适应靠 cron 勤调：`*/5 * * * * astra music subscribe run`，没到点它自己会立刻退出，不发请求"
+      ]
+    },
+    {
+      "command": "music subscribe list",
+      "summary": "列出订阅及其状态",
+      "usage": "astra music subscribe list [--runs]",
+      "options": {
+        "--runs": "附上最近 5 次运行记录"
+      }
+    },
+    {
+      "command": "music subscribe set",
+      "summary": "改订阅：间隔 / 启停 / 音质",
+      "usage": "astra music subscribe set <id> [--every 24] [--enable] [--disable] [--quality flac] [--base 5] [--max 640] [--factor 2]",
+      "options": {
+        "--every <h>": "检查间隔小时数",
+        "--enable": "启用",
+        "--disable": "停用",
+        "--quality <q>": "音质档位",
+        "--base <min>": "自适应基准分钟（>0 开启退避）",
+        "--max <min>": "自适应封顶分钟",
+        "--factor <n>": "增长倍数 2..10"
+      }
+    },
+    {
+      "command": "music subscribe remove",
+      "summary": "删除订阅（已下载的文件不动）",
+      "usage": "astra music subscribe remove <id>",
+      "options": {}
+    },
+    {
+      "command": "music subscribe run",
+      "summary": "检查到点的订阅并下载新歌（给定时任务调）",
+      "usage": "astra music subscribe run [--all] [--id <id>]",
+      "options": {
+        "--all": "忽略间隔，全部检查一遍",
+        "--id <id>": "只跑指定订阅",
+        "--notify": "有新歌时发通知（走 notify 配置的通道）"
+      },
+      "notes": [
+        "不带参数时只处理\"到点的\"（上次检查超过间隔的）；--all 强制全部检查一遍",
+        "--id 只跑指定的一个（不看是否到点）",
+        "建议 cron 每小时调一次：`0 * * * * astra music subscribe run`"
+      ]
+    },
+    {
+      "command": "music source list",
+      "summary": "列出已导入的洛雪音源",
+      "usage": "astra music source list",
+      "options": {}
+    },
+    {
+      "command": "music source add",
+      "summary": "导入洛雪自定义音源脚本（.js），导入前会试加载",
+      "usage": "astra music source add <文件> [--id 名字]",
+      "options": {
+        "--id <id>": "自定义 id，默认取文件名"
+      }
+    },
+    {
+      "command": "music source remove",
+      "summary": "删除一个已导入的音源",
+      "usage": "astra music source remove <id>",
+      "options": {}
+    },
+    {
+      "command": "music source enable",
+      "summary": "启用音源",
+      "usage": "astra music source enable <id>",
+      "options": {}
+    },
+    {
+      "command": "music source disable",
+      "summary": "停用音源（不删除）",
+      "usage": "astra music source disable <id>",
+      "options": {}
+    },
+    {
+      "command": "music source test",
+      "summary": "用一首歌测试每个音源能不能出直链、实际音质是多少",
+      "usage": "astra music source test [ref] [--quality flac]",
+      "options": {
+        "--quality <q>": "请求音质"
+      }
+    },
+    {
+      "command": "music covers",
+      "summary": "给每张专辑目录补一张 cover.jpg（从文件内嵌封面提取，不联网）",
+      "usage": "astra music covers [--dir <路径>] [--verify]",
+      "options": {
+        "--dir <path>": "只处理这个目录下的专辑（默认音乐根目录）",
+        "--verify": "只检查不写，列出缺 cover.jpg 的目录"
+      },
+      "notes": [
+        "**以目录为准，不看曲库记录** —— 手动放进来的、下载后没入库的专辑也会覆盖到",
+        "已有 cover.jpg 的跳过；一个目录里有多首歌时挨个试，直到抠出封面",
+        "`dirs` = 扫到多少专辑目录，`hasCover` = 跑完确实有 cover.jpg 的目录数（含原有的）",
+        "**`missing` 是判断有没有漏的判据**：跑完之后仍然没有 cover.jpg 的目录（带原因）",
+        "`failed` 说\"这一张为什么没写成\"；`missing` 说\"库里还有哪些目录是空封面\"",
+        "--verify 只自检不写：列出所有没有 cover.jpg 的目录"
+      ]
+    },
+    {
+      "command": "music m3u",
+      "summary": "把曲库导出成 M3U8 播放列表",
+      "usage": "astra music m3u <输出路径> [--keyword 关键词] [--relative]",
+      "options": {
+        "--keyword <kw>": "只导出匹配的曲目",
+        "--relative": "写相对路径"
+      },
+      "notes": [
+        "用 M3U8（UTF-8）而不是 M3U：中文路径在 M3U 里常被按本地编码读成乱码",
+        "--relative 写相对路径（播放列表和音乐目录一起搬走时用）"
+      ]
+    },
+    {
+      "command": "music retag",
+      "summary": "按当前规则重写已下好的歌：标签 + 落盘路径（先预览，确认后才动）",
+      "usage": "astra music retag [--keyword 关键词] [--dry-run] [--confirm <token>]",
+      "options": {
+        "--keyword <kw>": "只处理匹配的曲目（同 `have` 的模糊匹配）",
+        "--dry-run": "只算计划，不生成确认令牌",
+        "--confirm <token>": "执行之前预览生成的令牌"
+      },
+      "notes": [
+        "用于把落盘规则的历史改动补到存量文件上（合作曲归主艺术家、群星合辑归到合辑目录）",
+        "**第一次调用不会动任何文件**，只返回「哪些要改、改到哪」和一次性令牌；",
+        "  把预览给用户看过、用户同意后，再用 `--confirm <token>` 执行。令牌 5 分钟有效",
+        "有冲突就整批拒绝（目标被占用 / 两首歌算出同一路径），不做\"改了一半\"",
+        "写标签前后比对音频哈希，改到音频字节就中止；原文件里的歌词和封面会保留",
+        "搬文件时同名的 .lrc / .line.lrc 跟着走，曲库记录同步更新",
+        "--dry-run 只看计划，不生成令牌（适合先估一下影响面）"
+      ]
+    },
+    {
+      "command": "bili get",
+      "summary": "下载 B 站视频：BV 号 / 链接 / 短链都行，多分 P 用 --page 指定",
+      "usage": "astra bili get <BV号|链接> [--page 1,3-5|all] [--quality 1080p] [--audio-only] [--to music|bili] [--album <专辑>] [--sidecar nfo,cover,danmaku] [--concurrency <n>]",
+      "options": {
+        "--page <pages>": "分 P：1 / 2,5 / 3-8 / all",
+        "--quality <q>": "画质：4k / 1080p60 / 1080p / 720p / 480p / 360p",
+        "--audio-only": "只要音频，不下视频（格式见 bili.audio-format）",
+        "--to <where>": "音频落到哪儿：music（默认，音乐库）/ bili（视频目录）；只对 --audio-only 有效",
+        "--sidecar <kinds>": "伴生文件，逗号分隔：nfo / cover / danmaku / all / none",
+        "--album <name>": "音频的专辑名（TALB），默认 UP 主名",
+        "--concurrency <n>": "多分 P 时的并发数 1..8，默认 1"
+      },
+      "notes": [
+        "data.status 是 downloaded；多分 P 时 results 里每个分 P 一条结果",
+        "**partial=true 表示只下了一部分分 P** —— 多 P 视频默认只下 P1，要全下加 `--page all`",
+        "downgraded=true 表示服务端给的画质低于请求的——未登录时一定封顶 360P",
+        "短链（b23.tv）会先展开；带分 P 参数的链接会直接定位到那一 P",
+        "--audio-only 的输出格式看 `bili.audio-format`（默认 mp3，能写标签）；mp3 / flac 会自动写歌名、UP 主、封面与 BV 号",
+        "--audio-only **默认落音乐库**（music.dir + music.template），和订阅音频模式一致；要按视频模板归档用 `--to bili`",
+        "--sidecar 生成 .Metadata.nfo / .jpg / .Danmaku.ass（Emby/Jellyfin 自动刮削）；不给看配置 bili.sidecar",
+        "--album 指定音频的 TALB（默认 UP 主名）；把同一个 UP 的作品按大类分专辑时用",
+        "--concurrency 只影响**多分 P**（一命令下多个 P 时并行）；跨视频的批量请用 `bili audio`"
+      ]
+    },
+    {
+      "command": "bili info",
+      "summary": "看视频信息与分 P 列表，不下载",
+      "usage": "astra bili info <BV号|链接> [--probe]",
+      "options": {
+        "--probe": "查一下服务端实际给什么画质"
+      },
+      "notes": [
+        "加 --probe 会顺便查一次播放地址，看实际能拿到什么画质（不下载）"
+      ]
+    },
+    {
+      "command": "bili comments",
+      "summary": "看视频评论（热门 / 最新）",
+      "usage": "astra bili comments <BV号|链接> [--limit 20] [--sort hot|time] [--replies]",
+      "options": {
+        "--limit <n>": "最多几条，默认 20（上限 100）",
+        "--sort <mode>": "hot（默认）/ time",
+        "--replies": "展开二级回复（前 3 条）"
+      },
+      "notes": [
+        "默认按热门排；--sort time 按时间倒序",
+        "--limit 上限 100（接口单页最多 49 条，会自动翻页）",
+        "一条一级评论的二级回复默认只给前 3 条，加 --replies 才展开",
+        "未登录也能看，但条数不全；登录后更完整"
+      ]
+    },
+    {
+      "command": "bili subtitle",
+      "summary": "把某分 P 的字幕存成文件（需要登录；UP 主没传字幕就没有）",
+      "usage": "astra bili subtitle <BV号|链接> [--page 1] [--out 路径]",
+      "options": {
+        "--page <n>": "分 P，默认 1",
+        "--out <dir>": "输出目录，默认 <ASTRA_HOME>/video/subtitles"
+      },
+      "notes": [
+        "返回每份字幕的语言与文件路径；默认落在视频目录旁边的 .srt 不可用时退回 .json"
+      ]
+    },
+    {
+      "command": "bili danmaku",
+      "summary": "下载弹幕并存成 ASS 字幕（可跟着视频一起看）",
+      "usage": "astra bili danmaku <BV号|链接> [--page 1] [--out 路径] [--raw] [--max 3]",
+      "options": {
+        "--page <n>": "分 P，默认 1",
+        "--out <path>": "输出路径（.ass 或 .xml）",
+        "--raw": "存原始 XML 而不是 ASS",
+        "--max <n>": "每条字幕最多几条弹幕，默认 3",
+        "--all": "保留顶部/底部固定弹幕（默认只留滚动的）"
+      },
+      "notes": [
+        "默认转成 ASS（带颜色、描边、滚动效果），和视频放一起改成同名即被播放器自动加载",
+        "--raw 存原始 XML（不转换，体积更小但播放器不认）",
+        "默认只保留滚动弹幕，过滤底部/顶部固定弹幕；同一时间窗最多合并 3 条，避免刷屏"
+      ]
+    },
+    {
+      "command": "bili popular",
+      "summary": "综合热门：列出当前热门视频",
+      "usage": "astra bili popular [--limit 20]",
+      "options": {
+        "--limit <n>": "默认 20，最多 50"
+      },
+      "notes": [
+        "每项带 bvid，可以直接 `astra bili get <bvid>` 下载"
+      ]
+    },
+    {
+      "command": "bili weekly",
+      "summary": "每周必看：列出某一期（默认最新）的视频",
+      "usage": "astra bili weekly [--issue 394] [--list]",
+      "options": {
+        "--issue <n>": "期数编号",
+        "--list": "只列所有期数，不取具体视频"
+      },
+      "notes": [
+        "--list 只列期数；不给 --issue 时取最新一期"
+      ]
+    },
+    {
+      "command": "bili ranking",
+      "summary": "分区排行榜（全站 / 各分区）",
+      "usage": "astra bili ranking [--rid 全站|动画|游戏|知识|…|数字] [--limit 20] [--rookie]",
+      "options": {
+        "--rid <分区>": "分区名或分区 id，默认全站",
+        "--limit <n>": "最多几条，默认 20",
+        "--rookie": "看新人榜"
+      },
+      "notes": [
+        "--rid 收分区名或数字；不给默认全站。常用名：全站 动画 番剧 国创 音乐 舞蹈 游戏 知识 科技 运动 汽车 生活 美食 动物 鬼畜 时尚 影视 娱乐 电影 电视剧 纪录片",
+        "--rookie 看「新人」榜（B 站自己的 rookie 类型）",
+        "接口一次固定给约 100 条，--limit 只是本地截断，默认 20",
+        "免登录、免签名",
+        "**没有日榜 / 周榜 / 月榜**：老接口 `/x/web-interface/ranking?day=` 返回的是冻结快照——",
+        "实测 day=1 / day=30 给的是 2020 年的视频、day=3 停在 2025-04，全是死数据，不要接"
+      ]
+    },
+    {
+      "command": "bili search",
+      "summary": "搜索视频或 UP 主",
+      "usage": "astra bili search <关键词> [--type video|user] [--limit 20] [--page 1]",
+      "options": {
+        "--type <kind>": "video（默认）/ user",
+        "--limit <n>": "默认 20，最多 50",
+        "--page <n>": "页码，默认 1"
+      },
+      "notes": [
+        "视频结果每项带 bvid，可直接 `astra bili get <bvid>` 下载",
+        "**不给列出某 UP 的全部投稿**：那个接口（space/wbi/arc/search）即使带签名也返回 -352 风控",
+        "搜索本身也受风控，频繁调用会被拒（-352），冷却几分钟再试"
+      ]
+    },
+    {
+      "command": "bili space",
+      "summary": "看某个 UP：全部投稿 / 合集 / 系列",
+      "usage": "astra bili space <UP链接|mid:546195> [--videos] [--keyword 词] [--limit 50] [--download]",
+      "options": {
+        "--videos": "列全部投稿（而不是合集/系列）",
+        "--keyword <kw>": "按标题关键词筛选（配合 --videos）",
+        "--limit <n>": "最多列/下多少个，默认 50",
+        "--download": "把列出的视频开成下载任务",
+        "--quality <q>": "配合 --download 的画质"
+      },
+      "notes": [
+        "默认列合集与系列；加 --videos 列**全部投稿**",
+        "全部投稿走 `series/recArchivesByKeywords`（keywords 留空即全部），**免签名免登录**，实测稳定",
+        "B 站自己的投稿接口 `space/wbi/arc/search` 有风控（-352/-412），这个是它的可行替代",
+        "--keyword 按标题筛（B 站侧筛）；--download 把列出的开成下载任务"
+      ]
+    },
+    {
+      "command": "bili collection",
+      "summary": "列出合集 / 系列 / 收藏夹里的视频清单（只列不下载）",
+      "usage": "astra bili collection <合集链接|season:<sid>|fav:<id>> [--limit 50]",
+      "options": {
+        "--limit <n>": "默认 50，最多 500"
+      },
+      "notes": [
+        "和 `bili bulk` 用同一套输入解析，但只列清单、不建任务",
+        "想下载用 `astra bili bulk <同样的输入>`"
+      ]
+    },
+    {
+      "command": "bili later",
+      "summary": "稍后再看：列出或批量下载（需登录）",
+      "usage": "astra bili later [--download] [--quality 1080p]",
+      "options": {
+        "--download": "把整个稍后再看开成下载任务",
+        "--quality <q>": "配合 --download 的画质"
+      },
+      "notes": [
+        "不带 --download 只列出来；带上就开后台任务全下",
+        "每项带 bvid，也可单独 `astra bili get <bvid>`"
+      ]
+    },
+    {
+      "command": "bili history",
+      "summary": "观看历史：列出最近的（需登录）",
+      "usage": "astra bili history [--limit 20] [--download]",
+      "options": {
+        "--limit <n>": "默认 20，最多 100",
+        "--download": "把列出的这些开成下载任务",
+        "--quality <q>": "配合 --download 的画质"
+      },
+      "notes": [
+        "只要视频，不含直播和专栏；--download 开后台任务批量下"
+      ]
+    },
+    {
+      "command": "bili bulk",
+      "summary": "批量下载：收藏夹 / 视频合集 / 一个视频的多个分 P",
+      "usage": "astra bili bulk <fav:id|收藏夹链接|合集链接|视频链接> [--limit 50] [--quality 1080p] [--all-pages | --pages 1,3-5]",
+      "options": {
+        "--limit <n>": "最多取几个视频，默认 50",
+        "--quality <q>": "画质",
+        "--all-pages": "普通视频：把所有分 P 都加进任务",
+        "--pages <list>": "普通视频：只下这些分 P，如 1,3-5（P 号从 1 开始，可与 --all-pages 二选一）"
+      },
+      "notes": [
+        "收藏夹：`fav:<id>` 或 favlist 链接（需登录看私密收藏夹）",
+        "合集：collectiondetail?sid=<id> 链接，或 `season:<sid>` / `collection:<sid>`",
+        "系列：seriesdetail?sid=<id> 链接，或 `series:<mid>/<sid>`",
+        "给普通视频链接时，--all-pages 下全部分 P，--pages 1,3-5 只下指定的几个（P 号从 1 开始）",
+        "开的是后台任务，用 `astra bili job <id>` 看进度",
+        "**不支持按 UP 主主页批量**：B 站的 UP 投稿接口会返回风控页，硬啃只会一直失败"
+      ]
+    },
+    {
+      "command": "bili audio",
+      "summary": "把一个 UP / 合集整体转成音乐库（批量下音频，增量、可对账）",
+      "usage": "astra bili audio <mid|合集链接|season:<sid>|fav:<id>> [--exclude <正则>] [--album <专辑>] [--limit 2000] [--concurrency 4] [--dry]",
+      "options": {
+        "--exclude <regex>": "排除标题匹配这个正则的投稿（如 开票|巡演|vlog）",
+        "--album <name>": "专辑名（TALB），默认 UP 主名",
+        "--limit <n>": "最多取多少个投稿，默认 2000",
+        "--concurrency <n>": "并发数 1..8，默认 4",
+        "--dry": "只报计划，不下载"
+      },
+      "notes": [
+        "**先报数再下载**：返回里有 total / excluded / planned，--dry 只看计划",
+        "增量：已在库里（同 bvid）的跳过，所以连跑两次第二次 downloaded=0",
+        "同名按分 P 名 → bvid → 序号 消歧，不会静默覆盖（见 renamed）",
+        "落点由 `bili.audio-dir` + `bili.audio-template` 决定（都留空则同音乐库）",
+        "结束返回 downloaded / skipped / failed / renamed / missing，能直接对账",
+        "单首失败不中断整批；撞上风控（412）会自动把后续批次降到串行"
+      ]
+    },
+    {
+      "command": "bili relation",
+      "summary": "关系统计：关注 / 粉丝 / 黑名单（需登录）",
+      "usage": "astra bili relation [--mid 3493079625500884]",
+      "options": {
+        "--mid <mid>": "看谁的 uid（默认自己）"
+      },
+      "notes": [
+        "不带 --mid 看自己的；带 --mid 看别人的公开统计（这一项免登录也准）",
+        "黑名单数量只有自己看得到"
+      ]
+    },
+    {
+      "command": "bili following",
+      "summary": "关注列表：列出关注的人（需登录）",
+      "usage": "astra bili following [--limit 50] [--mid <mid>]",
+      "options": {
+        "--limit <n>": "默认 50，最多 500",
+        "--mid <mid>": "看谁的（默认自己）"
+      },
+      "notes": [
+        "默认 50 条，最多 500；每页 50，翻页之间会等 2 秒避免风控",
+        "顺序是「最近关注在前」，B 站不提供关注时间"
+      ]
+    },
+    {
+      "command": "bili fans",
+      "summary": "粉丝列表：列出关注你的人（需登录）",
+      "usage": "astra bili fans [--limit 50] [--mid <mid>]",
+      "options": {
+        "--limit <n>": "默认 50，最多 500",
+        "--mid <mid>": "看谁的（默认自己）"
+      },
+      "notes": [
+        "默认 50 条，最多 500",
+        "对方开了「粉丝列表仅自己可见」时会报 BILI_PRIVATE"
+      ]
+    },
+    {
+      "command": "bili groups",
+      "summary": "关注分组：列出所有分组和人数（需登录）",
+      "usage": "astra bili groups",
+      "options": {},
+      "notes": [
+        "tagid -10 是「特别关注」、0 是「默认分组」，B 站内置的，不能删",
+        "用 `astra bili group <名字>` 看某一组里都有谁"
+      ]
+    },
+    {
+      "command": "bili group",
+      "summary": "看某个关注分组里的人（需登录）",
+      "usage": "astra bili group 我的世界 [--limit 50]",
+      "options": {
+        "--limit <n>": "默认 50，最多 500"
+      },
+      "notes": [
+        "参数可以是分组名（支持部分匹配）或 tagid",
+        "同名多组时会报错让你选，不会自己挑一个"
+      ]
+    },
+    {
+      "command": "bili fav list",
+      "summary": "列出自己的收藏夹",
+      "usage": "astra bili fav list",
+      "options": {},
+      "notes": [
+        "需要登录（收藏夹属于账号）",
+        "返回 id / 名称 / 内含视频数；加/移用这个 id"
+      ]
+    },
+    {
+      "command": "bili fav add",
+      "summary": "把视频加进收藏夹",
+      "usage": "astra bili fav add <BV号|链接> --folder <收藏夹id>",
+      "options": {
+        "--folder <id>": "收藏夹 id（数字）"
+      },
+      "notes": [
+        "写操作：需要登录，且会话里要有 bili_jct（csrf）",
+        "收藏夹 id 用 `astra bili fav list` 查",
+        "B 站对写操作有频率限制，批量请自己控速"
+      ]
+    },
+    {
+      "command": "bili fav remove",
+      "summary": "把视频从收藏夹移出",
+      "usage": "astra bili fav remove <BV号|链接> --folder <收藏夹id>",
+      "options": {
+        "--folder <id>": "收藏夹 id（数字）"
+      },
+      "notes": [
+        "写操作，要求同 bili fav add",
+        "只移出指定收藏夹，不影响别的收藏夹"
+      ]
+    },
+    {
+      "command": "bili fav mkdir",
+      "summary": "新建收藏夹",
+      "usage": "astra bili fav mkdir <名称> [--private]",
+      "options": {
+        "--private": "建成私密收藏夹"
+      },
+      "notes": [
+        "写操作，需要登录",
+        "--private 建成私密收藏夹（默认公开）",
+        "返回新收藏夹 id，可直接给 fav add 用"
+      ]
+    },
+    {
+      "command": "bili fav rmdir",
+      "summary": "删除收藏夹",
+      "usage": "astra bili fav rmdir <收藏夹id>",
+      "options": {},
+      "notes": [
+        "写操作，需要登录",
+        "只删收藏夹本身；里面的视频不会被删，只是取消收藏关系",
+        "id 用 bili fav list 查"
+      ]
+    },
+    {
+      "command": "bili dyn",
+      "summary": "看某个 UP 的动态（图文），可把图存下来",
+      "usage": "astra bili dyn <UP链接|mid:546195> [--limit 20] [--images] [--out <目录>]",
+      "options": {
+        "--limit <n>": "最多取多少条，默认 20",
+        "--images": "把动态里的图下载到本地",
+        "--out <dir>": "图片保存目录（配合 --images）"
+      },
+      "notes": [
+        "返回正文 + 一张封面图（opus 接口只给 cover），要完整图集用 bili album",
+        "走 opus/feed/space（Node 下可用）；网页版那个 feed/space 在 Node 里恒返回空列表，改 header 也没用",
+        "**opus 接口不返回发布时间**，所以 date 为 null、存图文件名是 undated_<opusId>_<序号>；要日期用 bili album",
+        "每条只带一张封面图（官方号通常是主视觉），要完整图集用 `bili album`",
+        "--images 把图下到 --out（默认 <ASTRA_HOME>/bili-dyn），文件名 undated_<opusId>_<序号>"
+      ]
+    },
+    {
+      "command": "bili album",
+      "summary": "看某个 UP 的相簿（官方海报/立绘/表情包），可批量存图",
+      "usage": "astra bili album <UP链接|mid:1636034895> [--limit 40] [--images] [--out <目录>]",
+      "options": {
+        "--limit <n>": "最多取多少条相簿，默认 40",
+        "--images": "把相簿里的图下载到本地",
+        "--out <dir>": "图片保存目录（配合 --images）"
+      },
+      "notes": [
+        "相簿接口 `/x/dynamic/feed/draw/doc_list` **免签名免登录**，比动态流稳，实测没有风控",
+        "官方号的高清图基本都在这里（实测 1920×1080、1080×2853 的竖版海报）",
+        "返回里不含图片分辨率，需要就自己读文件（PIL / identify）",
+        "--images 把图下到 --out（默认 <ASTRA_HOME>/bili-album）"
+      ]
+    },
+    {
+      "command": "bili job",
+      "summary": "看 B 站批量任务进度",
+      "usage": "astra bili job <id> [--items] [--failed] [--wait 60]",
+      "options": {
+        "--items": "列出每一项",
+        "--failed": "只列失败的",
+        "--wait <s>": "最多等待秒数（≤600）"
+      }
+    },
+    {
+      "command": "bili jobs",
+      "summary": "最近的 B 站批量任务",
+      "usage": "astra bili jobs [--active] [--limit 10]",
+      "options": {
+        "--active": "只看进行中的",
+        "--limit <n>": "默认 10"
+      }
+    },
+    {
+      "command": "bili job cancel",
+      "summary": "取消 B 站批量任务",
+      "usage": "astra bili job cancel <id>",
+      "options": {}
+    },
+    {
+      "command": "bili job resume",
+      "summary": "继续 / 重试 B 站批量任务",
+      "usage": "astra bili job resume <id>",
+      "options": {}
+    },
+    {
+      "command": "bili login start",
+      "summary": "B 站扫码登录：返回二维码图片，登录后才能拿到高画质",
+      "usage": "astra bili login start",
+      "options": {},
+      "notes": [
+        "二维码用 data.qrImage（PNG 路径）发给用户；发不了图再用 data.qrText",
+        "然后每 2~3 秒调 `astra bili login poll`，直到 status 不是 pending",
+        "未登录也能下载，但画质封顶 360P；登录 + 大会员才可能到 1080P60 / 4K / HDR"
+      ]
+    },
+    {
+      "command": "bili login poll",
+      "summary": "查一次 B 站扫码状态（不阻塞）",
+      "usage": "astra bili login poll",
+      "options": {}
+    },
+    {
+      "command": "bili account",
+      "summary": "看 B 站登录状态与大会员",
+      "usage": "astra bili account",
+      "options": {}
+    },
+    {
+      "command": "bili logout",
+      "summary": "清除 B 站登录会话",
+      "usage": "astra bili logout",
+      "options": {}
+    },
+    {
+      "command": "bili doctor",
+      "summary": "B 站能力自检：网络、登录、ffmpeg",
+      "usage": "astra bili doctor",
+      "options": {}
+    },
+    {
+      "command": "bili subscribe add",
+      "summary": "订阅合集 / 系列 / 收藏夹：定时检查，出新视频自动下",
+      "usage": "astra bili subscribe add <合集链接|season:<sid>|fav:<id>> [--every 24] [--quality 1080p] [--audio-only] [--pages all|first]",
+      "options": {
+        "--every <h>": "每隔几小时检查一次，默认 24",
+        "--quality <q>": "下载画质，默认取 bili.quality",
+        "--audio-only": "只下音频（mp3 进音乐库，带完整标签）",
+        "--audio-album <name>": "音频的专辑名（TALB），默认 UP 主名",
+        "--pages <mode>": "下哪些分 P：all（默认）/ first（只 P1）"
+      },
+      "notes": [
+        "建订阅时会把**当前已有的一批记为基线**，第一次检查不会把整个合集重下一遍",
+        "新视频靠\"上次见到的 bvid + 已下分 P\"求差判断，不依赖发布时间（B 站时间字段不可靠）",
+        "**默认下全部分 P**（--pages all）：订阅的语义是完整拿到，漏 P 是静默丢内容",
+        "只想要 P1 加 --pages first，此时运行结果里会给 partial: true",
+        "--audio-only 时落音乐库（ASTRA_MUSIC_DIR + music.template），和 `bili get --audio-only` 一致",
+        "**不支持订阅 UP 主**：UP 投稿列表接口带签名也返回 -352 风控（实测）"
+      ]
+    },
+    {
+      "command": "bili subscribe list",
+      "summary": "列出 B 站订阅及状态",
+      "usage": "astra bili subscribe list",
+      "options": {}
+    },
+    {
+      "command": "bili subscribe set",
+      "summary": "改订阅：间隔 / 启停 / 画质",
+      "usage": "astra bili subscribe set <id> [--every 12] [--enable|--disable] [--quality 1080p] [--audio-only on|off] [--pages all|first]",
+      "options": {
+        "--every <h>": "每隔几小时",
+        "--enable": "启用",
+        "--disable": "停用",
+        "--quality <q>": "画质",
+        "--audio-only <mode>": "on / off：只下音频",
+        "--audio-album <name>": "音频的专辑名（TALB）；空字符串 = 用 UP 名",
+        "--pages <mode>": "all / first：下哪些分 P"
+      },
+      "notes": [
+        "--audio-only on|off 切换\"只下音频\"",
+        "想补历史遗漏的分 P 用 `astra bili subscribe run --rescan-pages`（只读核对，只补缺的）"
+      ]
+    },
+    {
+      "command": "bili subscribe remove",
+      "summary": "删除订阅（已下载的文件不动）",
+      "usage": "astra bili subscribe remove <id>",
+      "options": {}
+    },
+    {
+      "command": "bili subscribe run",
+      "summary": "检查到点的订阅并下载新视频（给定时任务调）",
+      "usage": "astra bili subscribe run [--id <id>] [--force] [--rescan-pages]",
+      "options": {
+        "--id <id>": "只跑这一个订阅",
+        "--notify": "有新视频时发通知",
+        "--force": "忽略间隔，立刻检查",
+        "--rescan-pages": "只读核对：按磁盘实际文件判断哪些分 P 没下，只补缺的"
+      },
+      "notes": [
+        "不带 --id 时只跑到点的；--force 不管间隔强制检查",
+        "**按 bvid + 已下分 P 求差**：视频后来补的分 P 也能被发现并补下",
+        "--rescan-pages 对存量基线重新核对（老数据只有 bvid 没有分 P 记录）",
+        "在 Hermes 里配一条 cron 定时调这个命令即可（比如每 6 小时）"
+      ]
+    },
+    {
+      "command": "media shrink",
+      "summary": "按目标体积压缩视频（默认 28MB，够飞书单条上限），可指定设备",
+      "usage": "astra media shrink <文件> [--target-mb 28] [--out 路径] [--device auto|名字] [--max-height 1080]",
+      "options": {
+        "--target-mb <mb>": "目标体积 MB，默认 28",
+        "--out <path>": "输出路径，默认 <原名>.small.mp4",
+        "--device <name>": "auto（默认）/ 设备名",
+        "--max-height <px>": "起始高度，默认 1080"
+      },
+      "notes": [
+        "按目标体积自动挑码率；一档压不下就降高度（1080→720→480）。",
+        "--device auto：能力匹配 + 在线 + 实测倍率，PC 优先；远端失败自动回本机。",
+        "本地默认 veryfast + 码率上限，适合“发出去能看”而不是收藏级画质。"
+      ]
+    },
+    {
+      "command": "media info",
+      "summary": "看一个本地音视频文件的实际情况（时长、编码、分辨率、码率）",
+      "usage": "astra media info <文件>",
+      "options": {},
+      "notes": [
+        "这是后面所有 media 命令的基础：先看清楚是什么，再决定怎么处理"
+      ]
+    },
+    {
+      "command": "media audio",
+      "summary": "抽音轨：从视频里取音频（源是 aac 且没指定码率时直接 copy，不二次有损）",
+      "usage": "astra media audio <视频> [--format aac|mp3|flac] [--bitrate 320] [--out 路径] [--overwrite]",
+      "options": {
+        "--format <fmt>": "aac（默认）/ mp3 / flac",
+        "--bitrate <k>": "码率 kbps，aac 默认 192、mp3 默认 320",
+        "--out <path>": "输出路径",
+        "--overwrite": "覆盖已有文件"
+      },
+      "notes": [
+        "默认输出到原文件旁边，同名换扩展名；已存在时默认报错，不覆盖"
+      ]
+    },
+    {
+      "command": "media cut",
+      "summary": "裁剪一段：按起点/终点或起点+时长",
+      "usage": "astra media cut <文件> [--start 12.5] [--end 30] [--duration 10] [--copy] [--out 路径]",
+      "options": {
+        "--start <t>": "起点",
+        "--end <t>": "终点（与 --duration 二选一）",
+        "--duration <t>": "时长",
+        "--copy": "不重编码（快，但切点不精确）",
+        "--out <path>": "输出路径",
+        "--overwrite": "覆盖已有文件"
+      },
+      "notes": [
+        "默认重新编码（切点精确）；加 --copy 不重编码但切点会对齐关键帧",
+        "时间支持 12.5 / 1:30 / 00:01:30.5 三种写法"
+      ]
+    },
+    {
+      "command": "media transcode",
+      "summary": "转码或换容器：改格式、改分辨率、改码率",
+      "usage": "astra media transcode <文件> [--format mp4|mkv|webm] [--width 1280] [--bitrate 2000] [--out 路径]",
+      "options": {
+        "--format <fmt>": "mp4（默认）/ mkv / webm",
+        "--width <px>": "目标宽度，高度按比例（偶数对齐）",
+        "--bitrate <k>": "视频码率 kbps；不给则用 CRF",
+        "--out <path>": "输出路径",
+        "--overwrite": "覆盖已有文件"
+      },
+      "notes": [
+        "不给 --width / --bitrate、且容器兼容时只换容器不重编码",
+        "webm 走 VP9 + Opus，体积小但编码慢"
+      ]
+    },
+    {
+      "command": "media thumbnail",
+      "summary": "截一帧当封面",
+      "usage": "astra media thumbnail <视频> [--at 30] [--width 1280] [--out 路径]",
+      "options": {
+        "--at <t>": "取哪一秒",
+        "--width <px>": "输出宽度（像素）",
+        "--out <path>": "输出路径",
+        "--overwrite": "覆盖已有文件"
+      },
+      "notes": [
+        "不给 --at 时取 1/3 处 —— 开头常是黑屏或片头"
+      ]
+    },
+    {
+      "command": "media concat",
+      "summary": "按顺序拼接多个音视频文件",
+      "usage": "astra media concat <文件1> <文件2> [文件3...] [--out 路径] [--reencode] [--overwrite]",
+      "options": {
+        "--out <path>": "输出路径",
+        "--reencode": "强制重编码",
+        "--overwrite": "覆盖已有文件"
+      },
+      "notes": [
+        "输入参数一致时直接拷贝流（快、无损）；不一致时自动重编码并提示",
+        "--reencode 可强制重编码，即便参数一致"
+      ]
+    },
+    {
+      "command": "media watermark",
+      "summary": "加文字或图片水印",
+      "usage": "astra media watermark <视频> --text \"文字\" | --image <图片> [--position bottom-right] [--opacity 0.8]",
+      "options": {
+        "--text <text>": "文字水印内容",
+        "--image <path>": "图片水印路径（与 --text 二选一）",
+        "--position <pos>": "位置，默认 bottom-right",
+        "--opacity <n>": "透明度 0..1，默认 0.8",
+        "--font-size <px>": "字号（像素），默认按画面高度估算",
+        "--font <path>": "字体文件路径",
+        "--out <path>": "输出路径",
+        "--overwrite": "覆盖已有文件"
+      },
+      "notes": [
+        "位置：top-left / top-right / bottom-left / bottom-right",
+        "文字水印默认自带半透明底框；找不到系统字体时用 --font 指定 .ttf/.ttc"
+      ]
+    },
+    {
+      "command": "steam auth",
+      "summary": "看 Steam 凭据状态（key 只显示指纹）",
+      "usage": "astra steam auth",
+      "options": {},
+      "notes": [
+        "愿望单不需要 key；玩家资料、大部分 ISteamUser 接口需要"
+      ]
+    },
+    {
+      "command": "steam auth set-user",
+      "summary": "设置默认 SteamID64",
+      "usage": "astra steam auth set-user <7656...>",
+      "options": {}
+    },
+    {
+      "command": "steam auth set-key",
+      "summary": "保存 Steam Web API key（存在本机，权限 600，不回显）",
+      "usage": "astra steam auth set-key <key>",
+      "options": {},
+      "notes": [
+        "在 https://steamcommunity.com/dev/apikey 申请，免费",
+        "只有需要 key 的接口（玩家资料等）才用得上；愿望单不需要"
+      ]
+    },
+    {
+      "command": "steam auth clear",
+      "summary": "清除 Steam 凭据",
+      "usage": "astra steam auth clear",
+      "options": {}
+    },
+    {
+      "command": "steam me",
+      "summary": "看自己的 Steam 资料（需要 key）",
+      "usage": "astra steam me [--user 7656...]",
+      "options": {
+        "--user <id>": "SteamID64，默认用已设置的"
+      },
+      "notes": [
+        "visibility: 1=私密 2=仅好友 3=公开。不是 3 的话愿望单和库存都读不到"
+      ]
+    },
+    {
+      "command": "steam wishlist",
+      "summary": "愿望单：列出想买的游戏、价格和折扣",
+      "usage": "astra steam wishlist [--limit 50] [--user 7656...] [--no-details] [--sort discount|price|added]",
+      "options": {
+        "--limit <n>": "最多返回几个，默认 50",
+        "--user <id>": "SteamID64",
+        "--no-details": "只列 appid，不查名字价格",
+        "--sort <by>": "discount（折扣优先）/ price（价格降序）/ added（最近加入）"
+      },
+      "notes": [
+        "appid 列表**不需要 key**，只要有公开愿望单",
+        "补名字和价格要查商店详情，那个域名必须走代理（`proxy.include` 含 steampowered.com）",
+        "--no-details 只列 appid，快但不带名字价格",
+        "返回里 total 是愿望单总数，returned 是本次返回的"
+      ]
+    },
+    {
+      "command": "steam inventory",
+      "summary": "公开库存：看看某个游戏里有什么（CS2 饰品、Steam 卡牌等）",
+      "usage": "astra steam inventory [--app 730] [--context 2] [--limit 100] [--user 7656...]",
+      "options": {
+        "--app <id>": "游戏 appid，默认 730（CS2）",
+        "--context <id>": "库存上下文，默认 2",
+        "--limit <n>": "最多列几个，默认 100",
+        "--user <id>": "SteamID64"
+      },
+      "notes": [
+        "走 steamcommunity.com，这个域名必须走代理",
+        "只有公开库存能读；私密库存会明确报错而不是返回空",
+        "常见 app：730=CS2，753=Steam 社区物品（卡牌/背景），570=Dota2，440=TF2"
+      ]
+    },
+    {
+      "command": "steam library",
+      "summary": "我 Steam 库里有哪些游戏（挂时长用名字对应）",
+      "usage": "astra steam library [--search 关键词] [--limit 50]",
+      "options": {
+        "--search <text>": "只看名字包含这个词的",
+        "--limit <n>": "默认 50"
+      },
+      "notes": [
+        "需要 Web API key + 账号「游戏详情」公开",
+        "带 minutes，是总时长（分钟）"
+      ]
+    },
+    {
+      "command": "steam doctor",
+      "summary": "Steam 能力自检：网络、代理、凭据",
+      "usage": "astra steam doctor",
+      "options": {}
+    },
+    {
+      "command": "steam login",
+      "summary": "扫码登录 Steam（拿到 refreshToken，之后挂时长不用再登）",
+      "usage": "astra steam login [账号名] [--wait 20] [--timeout 600] [--force]",
+      "options": {
+        "--wait <s>": "等二维码生成最多几秒，默认 20",
+        "--timeout <s>": "二维码有效期（秒），默认 600",
+        "--force": "打断上一次还没扫的登录",
+        "--user <name>": "账号名（配合 --password-stdin）",
+        "--password-stdin": "从终端读密码（不回显、不进 argv），需要 --user"
+      },
+      "notes": [
+        "`astra steam login <账号名>`：直接走账号密码登录，密码从终端读（不回显、不进 argv、不落盘）",
+        "`astra steam login`：不给账号名就走扫码，返回 qrPng + qrContent",
+        "只存 refreshToken 到 <ASTRA_HOME>/steam-credentials.json（600），不存密码",
+        "扫码有效期默认 10 分钟（--timeout 可调）；--force 打断上一次没扫的登录重来"
+      ]
+    },
+    {
+      "command": "steam login status",
+      "summary": "看扫码登录的结果（done / waiting_scan / failed）",
+      "usage": "astra steam login status",
+      "options": {},
+      "notes": [
+        "status=done 表示 refreshToken 已落盘，可以挂时长了"
+      ]
+    },
+    {
+      "command": "steam login cancel",
+      "summary": "取消正在等的扫码登录",
+      "usage": "astra steam login cancel",
+      "options": {}
+    },
+    {
+      "command": "steam idle start",
+      "summary": "挂时长：常驻在线并在玩指定游戏（按名字或 AppID）",
+      "usage": "astra steam idle start <游戏...> [--wait 30] [--proxy http://mihomo:7890] [--force]",
+      "options": {
+        "--wait <s>": "等上线最多几秒，默认 30",
+        "--proxy <url>": "走 HTTP 代理，如 http://mihomo:7890；默认直连 CM",
+        "--force": "已经在挂就重启它"
+      },
+      "notes": [
+        "游戏名要能在你的库里对上（用 `astra steam library` 看名字）；纯数字当 AppID 直接挂",
+        "命令会等「真的上线」再返回（默认最多 30 秒），超时会返回 status=starting，用 `steam idle status` 跟",
+        "进程常驻；同一账号在别处登录会把这边踢下线（ASF 也会），所以两边不能同时用",
+        "单账号最多同时挂 32 个游戏（Steam 限制）"
+      ]
+    },
+    {
+      "command": "steam idle status",
+      "summary": "现在在挂什么、连着没、重连了几次",
+      "usage": "astra steam idle status",
+      "options": {}
+    },
+    {
+      "command": "steam idle stop",
+      "summary": "停止挂时长（关掉常驻进程，退出「正在玩」）",
+      "usage": "astra steam idle stop",
+      "options": {}
+    },
+    {
+      "command": "steam up",
+      "summary": "挂时长（`steam idle start` 的简写）",
+      "usage": "astra steam up <游戏...> [--wait 30] [--proxy url] [--force]",
+      "options": {
+        "--wait <s>": "等上线最多几秒，默认 30",
+        "--proxy <url>": "走 HTTP 代理，如 http://mihomo:7890；默认直连 CM",
+        "--force": "已经在挂就重启它"
+      },
+      "notes": [
+        "等价于 `astra steam idle start`；还没登录就先 `astra steam login <账号>`"
+      ]
+    },
+    {
+      "command": "steam down",
+      "summary": "停止挂时长（`steam idle stop` 的简写）",
+      "usage": "astra steam down",
+      "options": {},
+      "notes": [
+        "会写一个 steam-idle.off 标记，探活任务就不会自动补挂了；下次 `steam up` 自动清掉"
+      ]
+    },
+    {
+      "command": "steam status",
+      "summary": "登录态和挂时长状态，一次看全",
+      "usage": "astra steam status",
+      "options": {}
+    },
+    {
+      "command": "vr login",
+      "summary": "登录 VRChat（账号密码，支持两步验证）",
+      "usage": "astra vr login --username <账号> --password <密码> [--code <验证码>]",
+      "options": {
+        "--username <text>": "邮箱或用户名",
+        "--password <text>": "密码",
+        "--code <code>": "两步验证码（已有待验证状态时用它）"
+      },
+      "notes": [
+        "开了两步验证时会返回 status: needs_2fa 和可用的方式；把验证码用 --code 传回来即可",
+        "账号密码只用于这一次请求，不会落盘；落盘的是会话 cookie（600）",
+        "两步验证的中间态 5 分钟有效"
+      ]
+    },
+    {
+      "command": "vr account",
+      "summary": "看登录状态与自己的资料",
+      "usage": "astra vr account",
+      "options": {}
+    },
+    {
+      "command": "vr logout",
+      "summary": "退出登录（清本地会话）",
+      "usage": "astra vr logout",
+      "options": {}
+    },
+    {
+      "command": "vr doctor",
+      "summary": "自检：会话、API 连通、好友/通知能否读到",
+      "usage": "astra vr doctor",
+      "options": {}
+    },
+    {
+      "command": "vr friends",
+      "summary": "好友列表；只看在线的加 --online",
+      "usage": "astra vr friends [--online]",
+      "options": {
+        "--online": "只看在线的"
+      },
+      "notes": [
+        "在线的好友会带 worldId 与 location，可以直接 `astra vr world <id>` 看他们在哪"
+      ]
+    },
+    {
+      "command": "vr friends request",
+      "summary": "给某人发好友请求（需要确认）",
+      "usage": "astra vr friends request <usr_xxx> [--confirm <token>]",
+      "options": {
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr friends remove",
+      "summary": "删除好友（需要确认）",
+      "usage": "astra vr friends remove <usr_xxx> [--confirm <token>]",
+      "options": {
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr notifications",
+      "summary": "通知列表（好友请求、邀请、群公告等）",
+      "usage": "astra vr notifications [--unread] [--limit 50]",
+      "options": {
+        "--unread": "只看未读",
+        "--limit <n>": "默认 50"
+      }
+    },
+    {
+      "command": "vr notifications read",
+      "summary": "把通知标记为已读（需要确认）",
+      "usage": "astra vr notifications read <通知id> | --all [--confirm <token>]",
+      "options": {
+        "--all": "全部标为已读",
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr world",
+      "summary": "世界详情，或列它的当前实例",
+      "usage": "astra vr world <wrld_xxx> [--instances]",
+      "options": {
+        "--instances": "顺便列出当前实例与人数"
+      }
+    },
+    {
+      "command": "vr worlds search",
+      "summary": "搜索世界",
+      "usage": "astra vr worlds search <关键词> [--limit 20]",
+      "options": {
+        "--limit <n>": "默认 20"
+      }
+    },
+    {
+      "command": "vr instance",
+      "summary": "实例详情（谁在里面）",
+      "usage": "astra vr instance <wrld_xxx:instanceId>",
+      "options": {}
+    },
+    {
+      "command": "vr groups",
+      "summary": "我加入的群组",
+      "usage": "astra vr groups [--limit 50]",
+      "options": {
+        "--limit <n>": "默认 50"
+      }
+    },
+    {
+      "command": "vr groups search",
+      "summary": "搜索群组",
+      "usage": "astra vr groups search <关键词> [--limit 20]",
+      "options": {
+        "--limit <n>": "默认 20"
+      }
+    },
+    {
+      "command": "vr avatars",
+      "summary": "我的头像列表与当前头像",
+      "usage": "astra vr avatars [--limit 50]",
+      "options": {
+        "--limit <n>": "默认 50"
+      }
+    },
+    {
+      "command": "vr favorites",
+      "summary": "收藏列表与分组",
+      "usage": "astra vr favorites [--type world|avatar|friend]",
+      "options": {
+        "--type <type>": "world（默认）/ avatar / friend"
+      }
+    },
+    {
+      "command": "vr favorites add",
+      "summary": "收藏世界 / 头像 / 好友（需要确认）",
+      "usage": "astra vr favorites add <id> [--type world|avatar|friend] [--group <分组名>] [--confirm <token>]",
+      "options": {
+        "--type <type>": "world（默认）/ avatar / friend",
+        "--group <name>": "收藏分组名，默认 VRChat 的第一个分组",
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr favorites remove",
+      "summary": "取消收藏（需要确认，参数是收藏记录 id 不是世界 id）",
+      "usage": "astra vr favorites remove <fvrt_xxx> [--confirm <token>]",
+      "options": {
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr economy",
+      "summary": "余额与订阅状态",
+      "usage": "astra vr economy",
+      "options": {},
+      "notes": [
+        "只读。上游没给余额时是 null，不是 0 —— 两者含义不同，别把 null 说成\"没余额\""
+      ]
+    },
+    {
+      "command": "vr transactions",
+      "summary": "交易明细（只读，不发起任何交易）",
+      "usage": "astra vr transactions [--limit 20] [--offset 0]",
+      "options": {
+        "--limit <n>": "1..100，默认 20",
+        "--offset <n>": "跳过多少条，默认 0"
+      },
+      "notes": [
+        "status 已知取值：active / failed / succeeded / cancelled；出现新值就原样转述，不要自己解释成成功或失败",
+        "只读，不会买东西、不会退款"
+      ]
+    },
+    {
+      "command": "vr status set",
+      "summary": "改自己的状态（需要确认）",
+      "usage": "astra vr status set <offline|active|busy|join me|ask me> [--description 文字] [--confirm <token>]",
+      "options": {
+        "--description <text>": "状态说明文字",
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr invites send",
+      "summary": "邀请好友来某个实例（需要确认）",
+      "usage": "astra vr invites send <usr_xxx> <wrld_xxx:instance> [--confirm <token>]",
+      "options": {
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr favorites groups create",
+      "summary": "创建收藏分组（需要确认）",
+      "usage": "astra vr favorites groups create <分组名> [--type world|avatar|friend] [--private] [--confirm <token>]",
+      "options": {
+        "--type <type>": "world（默认）/ avatar / friend",
+        "--private": "只有自己可见",
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr favorites groups delete",
+      "summary": "删除收藏分组（需要确认；分组里的收藏会一起没）",
+      "usage": "astra vr favorites groups delete <分组名> [--type world|avatar|friend] [--confirm <token>]",
+      "options": {
+        "--type <type>": "world（默认）/ avatar / friend",
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr avatars select",
+      "summary": "切换当前头像（需要确认）",
+      "usage": "astra vr avatars select <avtr_xxx> [--confirm <token>]",
+      "options": {
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr avatars fallback",
+      "summary": "设置回退头像（掉线时用，需要确认）",
+      "usage": "astra vr avatars fallback <avtr_xxx> [--confirm <token>]",
+      "options": {
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr system",
+      "summary": "VRChat 平台信息：在线人数、上游时间（都不用登录）",
+      "usage": "astra vr system",
+      "options": {}
+    },
+    {
+      "command": "vr permissions",
+      "summary": "平台的权限位清单（需要登录）",
+      "usage": "astra vr permissions [--id <权限id>]",
+      "options": {
+        "--id <id>": "按 id 取单个"
+      },
+      "notes": [
+        "这是 **VRChat 定义了哪些权限**，不是\"我这个账号有哪些权限\"",
+        "--id 按 id 精确取一条"
+      ]
+    },
+    {
+      "command": "vr groups info",
+      "summary": "群组详情、成员、角色、启用权限与公告（一次拿全）",
+      "usage": "astra vr groups info <grp_xxx> [--members 50] [--no-roles]",
+      "options": {
+        "--members <n>": "列多少个成员，0 表示不列，默认 50",
+        "--no-roles": "不查角色列表"
+      },
+      "notes": [
+        "群组权限（这个群开了哪些）和 `vr permissions`（平台定义了哪些）**不是一回事**，别混着说",
+        "公告只读；发布公告不在这里"
+      ]
+    },
+    {
+      "command": "vr groups member",
+      "summary": "查某人在这个群里的身份（不在群里返回 inGroup: false）",
+      "usage": "astra vr groups member <grp_xxx> <usr_xxx>",
+      "options": {}
+    },
+    {
+      "command": "vr groups join",
+      "summary": "加入群组（需要确认；需审批的群只会变成\"申请中\"）",
+      "usage": "astra vr groups join <grp_xxx> [--confirm <token>]",
+      "options": {
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "vr groups leave",
+      "summary": "退出群组（需要确认）",
+      "usage": "astra vr groups leave <grp_xxx> [--confirm <token>]",
+      "options": {
+        "--confirm <token>": "执行之前预览生成的令牌"
+      }
+    },
+    {
+      "command": "model token set",
+      "summary": "保存 Civitai API token（下载用）",
+      "usage": "astra model token set <token>",
+      "options": {},
+      "notes": [
+        "token 存在 <ASTRA_HOME>/civitai.json，权限 600；环境变量 CIVITAI_TOKEN 优先",
+        "只显示前后各 4 位，不会回显完整 token"
+      ]
+    },
+    {
+      "command": "model token show",
+      "summary": "看 token 状态（不回显完整值）",
+      "usage": "astra model token show",
+      "options": {}
+    },
+    {
+      "command": "model token clear",
+      "summary": "删掉保存的 token",
+      "usage": "astra model token clear",
+      "options": {}
+    },
+    {
+      "command": "model find",
+      "summary": "按关键词搜 Civitai 模型（按下载量排序）",
+      "usage": "astra model find <关键词> [--type Checkpoint|LORA] [--limit 10] [--period Month|AllTime]",
+      "options": {
+        "--type <kind>": "Checkpoint 或 LORA",
+        "--limit <n>": "返回条数，默认 10，最多 50",
+        "--period <p>": "Month / Week / AllTime，默认 Month"
+      }
+    },
+    {
+      "command": "model info",
+      "summary": "看某个模型的全部版本与文件（下载前先确认）",
+      "usage": "astra model info <modelId>",
+      "options": {}
+    },
+    {
+      "command": "model pull",
+      "summary": "下载模型文件（Civitai / HuggingFace / 直链），分段并发 + 断点续传",
+      "usage": "astra model pull <civitai:版本号|hf:org/repo/文件|url> --out <路径> [--threads 6] [--sha256 <值>]",
+      "options": {
+        "--out <path>": "输出路径（目录或文件名）",
+        "--threads <n>": "并发分片数，默认 6，最大 16",
+        "--sha256 <hex>": "校验值（不给则用上游提供的）"
+      },
+      "notes": [
+        "`--out` 给目录时自动用上游文件名；给文件路径则按路径落盘",
+        "中断后重跑同一条命令会续传（分片文件 .partN 留在原地）",
+        "Civitai 下载需要 token：`astra model token set <token>`"
+      ]
+    },
+    {
+      "command": "model list",
+      "summary": "列某个模型目录里有什么（按大小排序）",
+      "usage": "astra model list <目录> [--limit 50]",
+      "options": {
+        "--limit <n>": "最多列多少个，默认 50"
+      }
+    },
+    {
+      "command": "db ping",
+      "summary": "检查数据库连通性",
+      "usage": "astra db ping",
+      "options": {},
+      "notes": [
+        "不设 ASTRA_DB_URL 时查的是本机 SQLite（<ASTRA_HOME>/astra.db）"
+      ]
+    },
+    {
+      "command": "db status",
+      "summary": "看迁移状态（已应用 / 待应用）",
+      "usage": "astra db status",
+      "options": {}
+    },
+    {
+      "command": "db migrate",
+      "summary": "执行待应用的迁移（建表/加列）",
+      "usage": "astra db migrate [--dry-run]",
+      "options": {
+        "--dry-run": "只报告会执行哪些迁移，不落库"
+      },
+      "notes": [
+        "不会自动执行：启动时只提示有待应用的迁移",
+        "已应用的迁移 SQL 被改动会直接报错（checksum 校验）"
+      ]
+    },
+    {
+      "command": "db backup",
+      "summary": "原生备份数据库（SQLite: VACUUM INTO / PG: pg_dump）",
+      "usage": "astra db backup [--dir <目录>] [--logical]",
+      "options": {
+        "--dir <目录>": "备份输出目录，默认 $ASTRA_BACKUP_DIR/db 或 ./db",
+        "--logical": "用逻辑导出（JSON）代替原生备份，跨方言可恢复"
+      },
+      "notes": [
+        "PG 原生备份需要本机有 pg_dump；没有就用 --logical（JSON，任何方言都能导回去）"
+      ]
+    },
+    {
+      "command": "db export",
+      "summary": "逻辑导出（JSON，可跨方言导入）",
+      "usage": "astra db export [--out <文件>]",
+      "options": {
+        "--out <文件>": "输出路径，默认 ./astra-export-<时间>.json"
+      },
+      "notes": [
+        "SQLite → PostgreSQL 迁移就用它：export 之后 import 到新库"
+      ]
+    },
+    {
+      "command": "db import",
+      "summary": "逻辑导入（JSON），会覆盖同名主键",
+      "usage": "astra db import <文件> [--truncate] [--token <令牌>]",
+      "options": {
+        "--truncate": "导入前清空目标表（需要二次确认）",
+        "--token <令牌>": "第一次不传，拿预览和令牌；带令牌再调一次才执行"
+      }
+    },
+    {
+      "command": "db restore",
+      "summary": "从原生备份恢复（覆盖当前库）",
+      "usage": "astra db restore <备份文件> [--token <令牌>]",
+      "options": {
+        "--token <令牌>": "第一次不传，拿预览和令牌；带令牌再调一次才执行"
+      },
+      "notes": [
+        "会覆盖当前数据库。SQLite 直接替换文件，PG 用 pg_restore --clean"
+      ]
+    },
+    {
+      "command": "db query",
+      "summary": "执行自定义 SQL（默认只读，写操作要显式 --write）",
+      "usage": "astra db query \"<sql>\" [--limit <行数>] [--param 值 ...] [--write]",
+      "options": {
+        "--limit <行数>": "最多返回多少行，默认 100，上限 1000",
+        "--param <值>": "位置参数，可重复：--param a --param b 对应 ? 占位符",
+        "--write": "允许 insert/update/delete 等写语句（默认拒绝）"
+      },
+      "notes": [
+        "默认只允许 select / with / explain / pragma，其他语句一律拒绝，防止手滑改库",
+        "select 没写 limit 时会自动补上 --limit，返回 truncated=true 说明还有更多行",
+        "占位符统一写 ?，PG 的 $1 由适配层自动转换",
+        "改库前先 astra db backup --logical 做一份备份"
+      ]
+    },
+    {
+      "command": "db doctor",
+      "summary": "体检：连通性、各表行数、孤儿记录、重复内容",
+      "usage": "astra db doctor",
+      "options": {},
+      "notes": [
+        "orphanFiles > 0 说明 files 指向了不存在的 asset；duplicateHashes > 0 说明同一内容有多份副本"
+      ]
+    },
+    {
+      "command": "db url",
+      "summary": "显示当前用的数据库连接串（密码已打码）",
+      "usage": "astra db url",
+      "options": {}
+    },
+    {
+      "command": "db use",
+      "summary": "切换数据库：写进 <ASTRA_HOME>/db-url（600 权限），不用改环境变量",
+      "usage": "astra db use <连接串> | astra db use --sqlite",
+      "options": {
+        "--sqlite": "回到本机 SQLite（删掉 db-url 文件）"
+      },
+      "notes": [
+        "会先 ping 一次，连不上就不写，避免把 CLI 切到一个坏库上",
+        "切过去之后别忘了 astra db migrate（新库还没有表）",
+        "环境变量 ASTRA_DB_URL 优先级更高；临时测试请用环境变量，别写文件"
+      ]
+    },
+    {
+      "command": "db exec",
+      "summary": "执行一个 .sql 文件（默认整包一个事务）",
+      "usage": "astra db exec <file.sql> [--write] [--no-tx] [--dry-run]",
+      "options": {
+        "--write": "允许文件里出现写语句 / DDL（默认只放行只读语句）",
+        "--no-tx": "不用事务，逐条自动提交（出错时前面的已生效）",
+        "--dry-run": "只列出会执行哪些语句，不连库"
+      },
+      "notes": [
+        "按分号切语句时会跳过字符串、引号标识符、注释和 $$ 引用里的分号",
+        "默认整包一个事务：任何一条失败全回滚，不会留下半套表",
+        "文件里有写语句才需要 --write；纯 select 的文件不用",
+        "大文件建议配合 db schema apply 用版本管理，而不是手跑"
+      ]
+    },
+    {
+      "command": "db schema init",
+      "summary": "初始化用户表的迁移记录表（_astra_schema）",
+      "usage": "astra db schema init",
+      "options": {},
+      "notes": [
+        "只建记录表，不动你的业务表",
+        "迁移文件放 <ASTRA_HOME>/db/migrations/*.sql，按文件名排序执行"
+      ]
+    },
+    {
+      "command": "db schema status",
+      "summary": "看用户迁移的状态（已应用 / 待应用 / 被改过）",
+      "usage": "astra db schema status [--dir <目录>]",
+      "options": {
+        "--dir <目录>": "迁移目录，默认 <ASTRA_HOME>/db/migrations"
+      },
+      "notes": [
+        "state=pending 待应用；applied 已应用；drift 文件内容跟记录不一致；missing 记录在但文件没了",
+        "drift 一般是有人改了历史迁移文件，别改历史，加新文件"
+      ]
+    },
+    {
+      "command": "db schema apply",
+      "summary": "应用待执行的用户迁移（每个文件一个事务）",
+      "usage": "astra db schema apply [--dir <目录>] [--dry-run] [--force]",
+      "options": {
+        "--dir <目录>": "迁移目录，默认 <ASTRA_HOME>/db/migrations",
+        "--dry-run": "只报会应用哪些，不执行",
+        "--force": "有 drift（历史文件被改过）也继续"
+      },
+      "notes": [
+        "按文件名升序应用，建议 01_xxx.sql / 02_xxx.sql 这种前缀",
+        "每个文件包在一个事务里：失败整体回滚，不会留下半套表",
+        "默认发现 drift 就停（防偷偷改历史迁移）；确认没事再加 --force"
+      ]
+    },
+    {
+      "command": "lib root",
+      "summary": "管理存储根：add / list / rm / auto（按配置自动注册）",
+      "usage": "astra lib root <add|list|rm|auto> [标签] [绝对路径] [--note <说明>]",
+      "options": {
+        "--note <说明>": "给人看的备注（如「NAS 视角是 /volume1」）"
+      },
+      "notes": [
+        "root 是「位置」的基准：files 只存相对 root 的路径，换挂载点只改这里一行",
+        "rm 在有 file 引用时会拒绝，避免制造孤儿记录"
+      ]
+    },
+    {
+      "command": "lib scan",
+      "summary": "对账：修正移动/丢失，可选把新文件自动入库",
+      "usage": "astra lib scan [--root <标签>] [--adopt]",
+      "options": {
+        "--root <标签>": "只扫某个 root，默认全部",
+        "--adopt": "发现孤儿时直接按 adopt 规则入库（默认只报告）",
+        "--notify": "有移动/丢失/新收编时发一条摘要（走 notify 通道）"
+      },
+      "notes": [
+        "身份三层：rel_path → dev:ino → 内容指纹；都命中不了才认领/报孤儿",
+        "扫不到的标 missing（不删记录），只报「刚刚丢失」，不会每轮复读",
+        "--adopt 适合放进 cron：外部工具写进来的新文件会被自动收编"
+      ]
+    },
+    {
+      "command": "lib adopt",
+      "summary": "认领孤儿文件：给盘上有、库里没有的媒体建 asset",
+      "usage": "astra lib adopt [--root <标签>] [--kind video,audio,image,ebook] [--limit N] [--dry-run]",
+      "options": {
+        "--root <标签>": "只处理某个 root，默认全部",
+        "--kind <类型>": "video / audio / image / ebook，逗号分隔",
+        "--limit <条数>": "最多认领几个，默认全部",
+        "--dry-run": "只统计不写库"
+      },
+      "notes": [
+        "身份规则：同名 .nfo 里有 BV 号 → bili:<BV>_p1；没有平台 id → local:<内容指纹>",
+        "用内容指纹当 id 而不是路径：文件挪了不会变成两条",
+        "只建记录，不动任何文件"
+      ]
+    },
+    {
+      "command": "lib find",
+      "summary": "按标题/歌手/专辑/平台 id/路径 搜资产",
+      "usage": "astra lib find <关键词> [--limit <条数>]",
+      "options": {
+        "--limit <条数>": "默认 20"
+      }
+    },
+    {
+      "command": "lib where",
+      "summary": "查某个资产在哪些位置（查的时候顺手核对磁盘）",
+      "usage": "astra lib where <资产id>",
+      "options": {},
+      "notes": [
+        "读时自愈：查到的那一刻会 lstat 每个位置，存在就修回 present，不存在就立刻标 missing",
+        "文件被挪走了这里只会标 missing —— 找新位置要靠 lib scan（它用 inode / 指纹认回）"
+      ]
+    },
+    {
+      "command": "lib events",
+      "summary": "看某个资产的事件历史（下载/移动/丢失）",
+      "usage": "astra lib events <资产id> [--limit <条数>]",
+      "options": {
+        "--limit <条数>": "默认 30"
+      }
+    },
+    {
+      "command": "lib verify",
+      "summary": "抽样校验：确认盘上内容和库里记录一致",
+      "usage": "astra lib verify [--sample <条数>] [--root <标签>] [--max-mb <上限>]",
+      "options": {
+        "--sample <条数>": "每个 root 只查前 N 条，默认全查",
+        "--root <标签>": "只查某个 root",
+        "--max-mb <MB>": "超过这个大小的文件跳过，默认 512"
+      },
+      "notes": [
+        "算整文件 sha256，比 scan 的「size + 前 1MB」更严；能发现同大小文件被替换",
+        "库里没有 sha256 的文件会被补上（结果里的 filled）"
+      ]
+    },
+    {
+      "command": "lib dupes",
+      "summary": "找重复内容（同一份内容在多个位置）—— 只报告，不删",
+      "usage": "astra lib dupes [--limit <组数>]",
+      "options": {
+        "--limit <组数>": "最多返回几组，默认 50"
+      },
+      "notes": [
+        "优先按整文件 sha256 分组；没有 sha256 的用快速指纹（可信度低一档）",
+        "不会删任何文件，删不删由人决定"
+      ]
+    },
+    {
+      "command": "lib stats",
+      "summary": "资产库概览：数量、丢失数、总大小、按平台分布",
+      "usage": "astra lib stats",
+      "options": {}
+    },
+    {
+      "command": "quark ls",
+      "summary": "列出夸克分享的目录（不需要登录）",
+      "usage": "astra quark ls <分享链接|id> [--tree] [--extract 提取码]",
+      "options": {
+        "--tree": "递归列出完整树",
+        "--depth <n>": "递归深度：默认 3，--tree 时默认 8",
+        "--extract <code>": "提取码（链接里没带时用）"
+      },
+      "notes": [
+        "data.files[] 每项含 path / size / sizeText；--tree 时带 dir 节点",
+        "列目录不需要 cookie；只有下载才要"
+      ]
+    },
+    {
+      "command": "quark get",
+      "summary": "下载夸克分享里的文件（转存 → 直链 → 落盘 → 删副本）",
+      "usage": "astra quark get <分享链接> [--out <目录>] [--only 关键词1,关键词2] [--force] [--dry]",
+      "options": {
+        "--out <dir>": "落盘目录（绝对路径）",
+        "--only <k1,k2>": "只下路径里含这些关键词的文件，逗号分隔",
+        "--force": "已有同尺寸文件也重下",
+        "--dry": "只列要下什么，不真下",
+        "--extract <code>": "提取码",
+        "--concurrency <n>": "并发下载数 1..3，默认看 quark.concurrency"
+      },
+      "notes": [
+        "data.status：downloaded / nothing / dry_run",
+        "落盘保留分享里的相对路径；目录看 quark.dir 或 --out",
+        "下载需要 cookie（`astra quark cookie set`），且会员才有正常速度",
+        "转存副本下载完立即删除；进程被杀时可能残留在网盘根目录，手工删掉即可"
+      ]
+    },
+    {
+      "command": "quark tree",
+      "summary": "看网盘目录树（实时读盘，带体积和文件数）",
+      "usage": "astra quark tree [目录] [--depth 2] [--full] [--by ext]",
+      "options": {
+        "--depth <n>": "展开层数，默认 2",
+        "--by <ext>": "额外维度：ext",
+        "--full": "递归统计每个目录的体积（慢）"
+      },
+      "notes": [
+        "实时读盘，不用索引，所以刚移动/删除过的目录也是准的",
+        "不传目录就是根目录",
+        "默认只展开、不递归统计（快）；--full 递归统计体积，大目录会慢很多",
+        "--by ext 额外给一棵子树的扩展名分布"
+      ]
+    },
+    {
+      "command": "quark mkdir",
+      "summary": "建目录（父级不存在会自动建）",
+      "usage": "astra quark mkdir <路径>",
+      "options": {}
+    },
+    {
+      "command": "quark mv",
+      "summary": "移动文件或目录到目标目录",
+      "usage": "astra quark mv <源...> <目标目录>",
+      "options": {},
+      "notes": [
+        "目标目录不存在会自动创建",
+        "源可以是路径，也可以是多个"
+      ]
+    },
+    {
+      "command": "quark rm",
+      "summary": "删除文件或目录（进回收站，可恢复）",
+      "usage": "astra quark rm <路径...> [--yes]",
+      "options": {
+        "--yes": "确认删除",
+        "--dry": "只列出将删除什么"
+      },
+      "notes": [
+        "删除进夸克回收站，不是永久删",
+        "非交互环境必须带 --yes"
+      ]
+    },
+    {
+      "command": "quark du",
+      "summary": "空间体检：按顶层目录 / 扩展名 / 大小区间看谁最占地方",
+      "usage": "astra quark du [--path 目录] [--depth 2] [--deep] [--refresh] [--top 12] [--by dir|ext|size]",
+      "options": {
+        "--refresh": "强制重建索引",
+        "--deep": "扫全树（默认只下钻 2 层）",
+        "--concurrency <n>": "并发列目录数 1..6，默认 3；被限流时用 1",
+        "--path <目录>": "只扫这个目录（相对网盘根）",
+        "--depth <n>": "自定义下钻层数",
+        "--top <n>": "每类显示前 N 条，默认 12",
+        "--by <dim>": "只看某一维：dir / ext / size"
+      },
+      "notes": [
+        "只读，不动任何文件",
+        "默认只下钻 2 层，几秒出结果；--deep 扫全树（3.5 万条目要几分钟，带断点续建）",
+        "可以只扫某个目录：astra quark du --path \"来自：分享\"（位置参数写法也支持）",
+        "索引缓存在 <ASTRA_HOME>/quark-index.json，范围/深度变了会自动重建",
+        "data.totals / data.byTop / data.byExt / data.bySize"
+      ]
+    },
+    {
+      "command": "quark find",
+      "summary": "在网盘索引里搜文件（名称 / 扩展名 / 大小 / 时间）",
+      "usage": "astra quark find <关键词> [--ext zip,mp4] [--min 1GB] [--limit 30] [--refresh]",
+      "options": {
+        "--ext <zip,mp4>": "扩展名过滤，逗号分隔",
+        "--min <size>": "最小体积，如 100MB / 1GB",
+        "--max <size>": "最大体积",
+        "--limit <n>": "最多返回条数，默认 30",
+        "--refresh": "强制重建索引",
+        "--dirs": "只列目录"
+      },
+      "notes": [
+        "读本地索引（24 小时内有效），秒回；--refresh 强制重建",
+        "data.matches[] 含 path / sizeText / updatedAt"
+      ]
+    },
+    {
+      "command": "quark dup",
+      "summary": "找重复文件（同体积 + 同名），算出能省多少空间",
+      "usage": "astra quark dup [--min 100MB] [--limit 20] [--plan] [--keep shortest|oldest|关键词]",
+      "options": {
+        "--min <size>": "只统计大于该体积的文件，默认 10MB",
+        "--limit <n>": "最多返回多少组，默认 20",
+        "--plan": "生成去重清单（供 apply 执行），不显示明细",
+        "--keep <策略>": "保留策略：shortest(默认)/oldest/路径关键词",
+        "--out <file>": "清单输出路径",
+        "--refresh": "强制重建索引"
+      },
+      "notes": [
+        "夸克列表接口的 md5 恒为 null，所以只能按「体积 + 归一化文件名」判定，属于**保守近似**：",
+        "同体积同名的才算重复，宁漏不误杀",
+        "data.groups[] 每项含 keep（建议保留）与 duplicates[]"
+      ]
+    },
+    {
+      "command": "quark clean",
+      "summary": "找出（并可选删除）递归没有文件的空目录",
+      "usage": "astra quark clean <目录> [--apply]",
+      "options": {
+        "--apply": "真删除（默认只列出来）"
+      },
+      "notes": [
+        "只判断「递归后文件数为 0」，不是「子项为空」",
+        "删除进回收站"
+      ]
+    },
+    {
+      "command": "quark tidy",
+      "summary": "把目录下的子目录按类型归档（AI模型/影视/游戏/软件/素材/文档）",
+      "usage": "astra quark tidy <目录> [--apply]",
+      "options": {
+        "--apply": "真移动（默认只预览）"
+      },
+      "notes": [
+        "关键词白名单：只动认得出来的子目录，认不出的保持原位",
+        "--apply 才真移动；默认只打印归位计划",
+        "分类目录自身不会被再次归类（避免「移动到自身」）"
+      ]
+    },
+    {
+      "command": "quark plan",
+      "summary": "生成网盘整理清单（只读，不改任何文件）",
+      "usage": "astra quark plan [--path 目录] [--depth 2] [--deep] [--out 文件] [--refresh]",
+      "options": {
+        "--path <目录>": "整理这个目录（默认全盘根）",
+        "--depth <n>": "下钻层数，默认 2",
+        "--deep": "扫全树",
+        "--out <file>": "清单输出路径",
+        "--dup-min <size>": "重复文件最小体积，默认 100MB",
+        "--no-empty": "不包含空目录清理建议",
+        "--refresh": "强制重建索引"
+      },
+      "notes": [
+        "**只输出建议，不动文件**；确认后用 `astra quark apply <清单>` 执行",
+        "规则：散文件按类型归档 / 重复文件只提示（无 md5，不自动删）/ 空目录建议清理",
+        "清单默认写到 <ASTRA_HOME>/quark-plan.json"
+      ]
+    },
+    {
+      "command": "quark apply",
+      "summary": "执行整理清单（move 会真移动；删除只在加 --purge-empty 时进回收站）",
+      "usage": "astra quark apply [清单文件] [--dry] [--purge-empty] [--yes]",
+      "options": {
+        "--dry": "只打印，不执行",
+        "--purge-empty": "连空目录清理建议一起执行",
+        "--yes": "跳过确认（非交互环境必须带）"
+      },
+      "notes": [
+        "默认只执行 mkdir + move；空目录删除需要显式 --purge-empty",
+        "--dry 只打印将执行什么",
+        "所有删除都进夸克回收站（不是永久删除），可恢复",
+        "操作间隔 300ms，避免触发风控"
+      ]
+    },
+    {
+      "command": "quark cookie",
+      "summary": "管理夸克登录态：set / show / clear",
+      "usage": "astra quark cookie <set|show|clear> [cookie 串]",
+      "options": {},
+      "notes": [
+        "存 <ASTRA_HOME>/quark.json（600）；只需要 pan.quark.cn 这个域的 cookie"
+      ]
+    },
+    {
+      "command": "quark doctor",
+      "summary": "检查 cookie 是否有效、会员等级、接口连通性",
+      "usage": "astra quark doctor",
+      "options": {}
+    },
+    {
+      "command": "cloud auth-url",
+      "summary": "生成百度授权链接（写成 .url 文件 + 二维码 PNG，不进聊天文本）",
+      "usage": "astra cloud auth-url [--out-dir 目录]",
+      "options": {
+        "--out-dir <dir>": "产物目录，默认 scratch 目录"
+      },
+      "notes": [
+        "AppKey 要先存：`astra cloud login baidu <token|cookie> --app-key <AppKey>`。",
+        "产物：<dir>/baidu-auth.url（Windows 双击打开）和 <dir>/baidu-auth.png（手机扫码）。",
+        "为什么这么绕：Hermes 网关对聊天正文强制打码，链接里的 client_id 会被盖成星号；文件/图片不受影响。"
+      ]
+    },
+    {
+      "command": "cloud ls",
+      "summary": "列网盘目录（夸克 / 百度通用）",
+      "usage": "astra cloud ls [路径] [--drive quark|baidu] [--table]",
+      "options": {
+        "--drive <name>": "哪个网盘：quark / baidu"
+      },
+      "notes": [
+        "--drive 不给就走夸克（本机主力盘）；百度要先用 `cloud login baidu <token>` 配 access_token。",
+        "路径按 `/` 分隔，根目录写 `/` 或省略。"
+      ]
+    },
+    {
+      "command": "cloud stat",
+      "summary": "查单个文件/目录是否存在及大小",
+      "usage": "astra cloud stat <路径> [--drive quark|baidu]",
+      "options": {
+        "--drive <name>": "哪个网盘：quark / baidu"
+      }
+    },
+    {
+      "command": "cloud mkdir",
+      "summary": "建目录（父级不存在自动建）",
+      "usage": "astra cloud mkdir <路径> [--drive quark|baidu]",
+      "options": {
+        "--drive <name>": "哪个网盘：quark / baidu"
+      }
+    },
+    {
+      "command": "cloud mv",
+      "summary": "移动文件/目录到目标目录",
+      "usage": "astra cloud mv <源...> <目标目录> [--drive quark|baidu]",
+      "options": {
+        "--drive <name>": "哪个网盘：quark / baidu"
+      }
+    },
+    {
+      "command": "cloud rm",
+      "summary": "删除（进回收站，可恢复）",
+      "usage": "astra cloud rm <路径...> [--drive quark|baidu] [--yes]",
+      "options": {
+        "--drive <name>": "哪个网盘：quark / baidu",
+        "--yes": "确认删除"
+      },
+      "notes": [
+        "两家网盘的删除都是进回收站，不是永久删。非交互环境必须带 --yes。"
+      ]
+    },
+    {
+      "command": "cloud get",
+      "summary": "下载网盘里的文件到本地",
+      "usage": "astra cloud get <路径> --out <本地文件或目录> [--drive quark|baidu]",
+      "options": {
+        "--drive <name>": "哪个网盘：quark / baidu",
+        "--out <path>": "落盘路径（文件或目录）"
+      },
+      "notes": [
+        "--out 给目录时用原文件名。",
+        "百度非会员限速很狠（几十 KB/s），这个域主要用来整理，不当作主力下载源。"
+      ]
+    },
+    {
+      "command": "cloud login",
+      "summary": "配置网盘凭证（夸克 cookie / 百度 access_token）",
+      "usage": "astra cloud login <quark|baidu> <凭证>",
+      "options": {
+        "--refresh <token>": "百度 refresh_token（可选，用于续期记录）",
+        "--cookie": "百度：把参数当 cookie 存（只能列目录/整理，不能下载直链）",
+        "--app-key <key>": "百度：开放平台 AppKey（存起来，供 cloud auth-url 生成授权链接）"
+      },
+      "notes": [
+        "夸克：整段 pan.quark.cn 的 cookie。",
+        "百度：OAuth2 的 access_token（30 天有效）；刷新令牌请用 `--refresh`。",
+        "凭证只落在 <ASTRA_HOME>/cloud-<id>.json（600），不会回显完整值。"
+      ]
+    },
+    {
+      "command": "cloud status",
+      "summary": "看各网盘凭证状态（不回显完整值）",
+      "usage": "astra cloud status",
+      "options": {}
+    },
+    {
+      "command": "cloud logout",
+      "summary": "清掉某个网盘的本地凭证",
+      "usage": "astra cloud logout <quark|baidu>",
+      "options": {}
+    },
+    {
+      "command": "pixiv info",
+      "summary": "看作品详情（作者、页数、尺寸、标签、分级 sl、是否 R-18）；可一次给多个 id",
+      "usage": "astra pixiv info <illustId> [更多 id...] [--concurrency 2]",
+      "options": {
+        "--concurrency <n>": "多 id 时的并发请求数 1..6，默认 2（重叠 TLS 握手，不提高请求频率）"
+      },
+      "notes": [
+        "只读，不下载。R-18 作品会照实返回 xRestrict=1，但 `pull` 默认跳过。",
+        "拿不到详情通常是作品已删除或仅登录可见（需要 `pixiv cookie set`）。",
+        "**一次给多个 id 时**返回 `{count, items:[…]}`（items 与单件调用的字段完全一致，顺序按传入顺序），并带 `--table`。",
+        "多 id 的耗时瓶颈是每条到 pixiv 的 TLS 握手（经代理 1–4 秒），`--concurrency` 只重叠等待、默认 2；",
+        "批量核验几百个 id 时用 4 左右比较稳，别拿它当爬虫刷（pixiv 会 429）。",
+        "单个 id 失败不会拖垮整批：该项返回 `{illustId, error}`，其余照常。"
+      ]
+    },
+    {
+      "command": "pixiv rank",
+      "summary": "排行榜作品 id 列表（daily / weekly / monthly / rookie …）",
+      "usage": "astra pixiv rank [--mode daily] [--pages 1] [--limit 50]",
+      "options": {
+        "--mode <m>": "榜种，默认 daily；可选 daily / weekly / monthly / rookie / original / male / female / daily_r18 / weekly_r18（_r18 需要 cookie）",
+        "--pages <n>": "翻几页（每页 50），默认 1",
+        "--limit <n>": "最多返回多少条，默认 50；上限 500（需配合 --pages，每页 50）"
+      },
+      "notes": [
+        "只返回 id 和作者，要看详情用 `pixiv info <id>`；要下载用 `pixiv pull <id>`。"
+      ]
+    },
+    {
+      "command": "pixiv top",
+      "summary": "按收藏数排序看某个关键词的热门作品（Pixiv 的「人気順」要会员，这里是本地排序）",
+      "usage": "astra pixiv top <关键词> [--pages 3] [--limit 20] [--r18]",
+      "options": {
+        "--pages <n>": "拉最近几页（每页 60），默认 3；要全量就写 lastPage 的数（几十页）",
+        "--also <kw>": "额外关键词，逗号分隔，合并进同一个候选池再排序（如 \"あめちゃん,ニディガ\"）",
+        "--limit <n>": "返回条数，默认 20",
+        "--type <t>": "分类：all / illust / manga / ugoira（本地过滤），默认 all",
+        "--r18": "包含 R-18 作品（默认过滤掉）",
+        "--sl <n>": "只要这些等级（逗号分隔）：2 一般 / 4 轻度 / 6 敏感，如 --sl 2 或 --sl 2,4",
+        "--min-sl <n>": "sl 下限（含），如 --min-sl 4 只看轻度以上",
+        "--max-sl <n>": "sl 上限（含），如 --max-sl 2 排除敏感内容"
+      },
+      "notes": [
+        "Pixiv 搜索的 `order=popular_d`（人気順）是会员功能，非会员调用会被静默忽略、返回的仍是新着順。",
+        "所以这里走「先拉最近 N 页新作 → 再逐个取 bookmarkCount → 本地倒序」，不需要会员。",
+        "代价：`--pages` 越大请求越多（每页 60 个作品、每个一次详情）。默认 3 页 = 180 个，约 20-40 秒。",
+        "只覆盖最近的作品——老作品收藏再高也不会出现在结果里，这是和新着順共用同一个候选池的必然结果。"
+      ]
+    },
+    {
+      "command": "pixiv user",
+      "summary": "看画师作品 id 列表；加 --pull 直接批量下载",
+      "usage": "astra pixiv user <userId> [--limit 20] [--pull] [--out 目录] [--quality regular] [--r18] [--dry]",
+      "options": {
+        "--limit <n>": "最多处理多少个作品，默认 20，--pull 时可放大到 500",
+        "--pull": "下载这些作品（不加只列 id）",
+        "--out <dir>": "落盘目录（覆盖 pixiv.dir）",
+        "--pages <n>": "每个作品最多下几页（只要首图写 1）",
+        "--quality <q>": "original（默认，原图）/ regular（1200px，快很多）",
+        "--r18": "允许下载 R-18 作品（默认跳过）",
+        "--dry": "配合 --pull：只打印会写哪些文件"
+      },
+      "notes": [
+        "不带 --pull 只列 id（新的在前）；带 --pull 会把这一批全下下来，落盘规则与 `pixiv pull` 一致。",
+        "目录优先 `--out`，其次 `pixiv.dir`；R-18 默认跳过（`--r18` 或 `pixiv.r18=true` 放行）。",
+        "配了 `pixiv.sensitive-dir` 时敏感作品（`xRestrict>0` 或 `sl>=4`）落该目录，`--out` 显式指定则不分流。",
+        "`--quality regular` 取 1200px（原图一张 4000×6000 实测要 138s，1200px 只要 20s）；批量预览建议开。"
+      ]
+    },
+    {
+      "command": "pixiv search",
+      "summary": "按关键词搜作品（按时间倒序；查不到会自动放宽 tag 匹配）",
+      "usage": "astra pixiv search <关键词> [--page 1] [--limit 20] [--type all]",
+      "options": {
+        "--page <n>": "页码，默认 1",
+        "--limit <n>": "最多返回多少条，默认 20",
+        "--type <t>": "分类：all / illust / manga / ugoira（本地过滤），默认 all",
+        "--sl <n>": "只要这些等级（逗号分隔）：2 一般 / 4 轻度 / 6 敏感，如 --sl 2 或 --sl 2,4",
+        "--min-sl <n>": "sl 下限（含），如 --min-sl 4 只看轻度以上",
+        "--max-sl <n>": "sl 上限（含），如 --max-sl 2 排除敏感内容"
+      },
+      "notes": [
+        "pixiv 的 tag 是**全词精确匹配**，角色全名常常查不到：绝区零凯撒的真实 tag 是 `キング・シーザー`，搜 `カエサル・キング` 是 0 条。",
+        "所以查不到会自动放宽：精确 tag → 部分 tag → 标题/说明 → 按 ・/空格 拆词逐个查。返回里的 `matchedBy` 告诉你最后用了哪种。",
+        "`--type` 是**本地过滤**：pixiv ajax 的 `type` 参数实测被忽略（`type=illust` 和 `type=manga` 返回同一批数据），只能按 `illustType` 自己筛。",
+        "`relatedTags` 是 pixiv 给出的真正标签，找别名/同义词看这个字段。"
+      ]
+    },
+    {
+      "command": "pixiv pull",
+      "summary": "下载单个作品的全部页（原图优先，失败回落 1200px）",
+      "usage": "astra pixiv pull <illustId> [--out 目录] [--pages N] [--r18] [--dry]",
+      "options": {
+        "--out <dir>": "落盘目录（覆盖 pixiv.dir）",
+        "--pages <n>": "每个作品最多下几页（多页作品只想要首图就写 1）",
+        "--quality <q>": "original（默认，原图）/ regular（1200px，快很多）",
+        "--r18": "允许下载 R-18 作品（默认跳过）",
+        "--dry": "只打印会写哪些文件，不真下"
+      },
+      "notes": [
+        "落盘 `<目录>/<userId>/<illustId>_p<N>.<ext>`，已存在的文件跳过（只认 id + 页号）。",
+        "R-18 作品默认跳过；`--r18` 或配置 `pixiv.r18=true` 放行。",
+        "目录优先 `--out`，其次 `pixiv.dir`；两者都没配会直接报错，不会瞎写到一个默认路径。",
+        "配了 `pixiv.sensitive-dir` 时按分级分流：`xRestrict>0` 或 `sl>=4` 的作品落该目录，其余落 `pixiv.dir`；`--out` 显式指定则不分流。"
+      ]
+    },
+    {
+      "command": "pixiv sub add",
+      "summary": "订阅画师：之后 `pixiv sub run` 只拉新作品",
+      "usage": "astra pixiv sub add <userId>",
+      "options": {},
+      "notes": [
+        "订阅表在 <ASTRA_HOME>/pixiv-subs.json（600），只记 userId、画师名、已见过的最大作品 id。",
+        "加入时会把当前最新作品 id 记为基线，所以第一次 run 不会把历史作品全下一遍。"
+      ]
+    },
+    {
+      "command": "pixiv sub remove",
+      "summary": "取消订阅画师",
+      "usage": "astra pixiv sub remove <userId>",
+      "options": {}
+    },
+    {
+      "command": "pixiv sub list",
+      "summary": "看订阅了哪些画师",
+      "usage": "astra pixiv sub list",
+      "options": {}
+    },
+    {
+      "command": "pixiv sub run",
+      "summary": "拉取所有订阅画师的新作品（配合定时任务用）",
+      "usage": "astra pixiv sub run [--out 目录] [--per-user 10] [--r18] [--dry]",
+      "options": {
+        "--out <dir>": "落盘目录（覆盖 pixiv.dir）",
+        "--per-user <n>": "每个画师最多处理多少个新作品，默认 10",
+        "--r18": "允许下载 R-18 作品（默认跳过）",
+        "--dry": "只打印会写哪些文件",
+        "--notify": "有新作品时发通知"
+      },
+      "notes": [
+        "只处理 id 大于「已见最大 id」的作品，所以重复跑不会重复下载。",
+        "给 cron 用：没有新作品时返回 newWorks: 0，不产生噪音。"
+      ]
+    },
+    {
+      "command": "pixiv cookie set",
+      "summary": "保存浏览器 cookie（可选，用于看登录可见的作品）",
+      "usage": "astra pixiv cookie set \"<cookie 字符串>\"",
+      "options": {},
+      "notes": [
+        "匿名就能查公开作品，cookie 只在需要看受限内容时才要。",
+        "存在 <ASTRA_HOME>/pixiv-cookie.txt，权限 600；只回显有没有 PHPSESSID，不回显值。"
+      ]
+    },
+    {
+      "command": "pixiv cookie show",
+      "summary": "看 cookie 状态（不回显值）",
+      "usage": "astra pixiv cookie show",
+      "options": {}
+    },
+    {
+      "command": "pixiv cookie check",
+      "summary": "验证存的 cookie 还能不能用（过期会让 pixiv 静默返回空结果）",
+      "usage": "astra pixiv cookie check",
+      "options": {},
+      "notes": [
+        "pixiv 对失效的 PHPSESSID **不报错**，而是返回 HTTP 200 + 空结果，看起来就像「这个词查不到」。",
+        "这条命令用一个固定关键词分别带 cookie / 不带 cookie 各搜一次，带 cookie 0 条而不带有条 → cookie 过期。"
+      ]
+    },
+    {
+      "command": "pixiv cookie clear",
+      "summary": "删掉保存的 cookie",
+      "usage": "astra pixiv cookie clear",
+      "options": {}
+    },
+    {
+      "command": "comic get",
+      "summary": "下载一本漫画：车号、JM 号或链接都行",
+      "usage": "astra comic get <车号|链接> [--chapter <n>] [--force] [--concurrency 3]",
+      "options": {
+        "--chapter <n>": "只下一话（从 1 开始的 sort）",
+        "--force": "已有也重新下",
+        "--concurrency <n>": "单话内图片并发 1..6，默认 3"
+      },
+      "notes": [
+        "data.status：downloaded / already_have",
+        "多话本默认全下；只要某一话加 `--chapter 3`",
+        "落盘目录看 `comic.dir` / `ASTRA_COMIC_DIR`，模板看 `comic.template`",
+        "解混淆需要 ffmpeg（和 B 站共用 `music.ffmpeg`）"
+      ]
+    },
+    {
+      "command": "comic info",
+      "summary": "看漫画信息与章节列表，不下载",
+      "usage": "astra comic info <车号|链接>",
+      "options": {}
+    },
+    {
+      "command": "comic search",
+      "summary": "按关键词搜漫画",
+      "usage": "astra comic search <关键词> [--scope site|work|author|tag|actor] [--page 1] [--limit 20]",
+      "options": {
+        "--scope <scope>": "搜索范围：site（默认）/ work / author / tag / actor",
+        "--page <n>": "页码，从 1 开始",
+        "--limit <n>": "最多返回几条，默认 20"
+      },
+      "notes": [
+        "默认 --scope site：站内全文，对标题和正文",
+        "--scope tag 按站内标签；author 作者；work 作品；actor 登场角色",
+        "搜到车号会直接 redirect 到那一本",
+        "拿不准时把 items 列给用户，让用户选 id 再 `comic get <id>`"
+      ]
+    },
+    {
+      "command": "comic doctor",
+      "summary": "漫画能力自检：目录、ffmpeg、上游连通",
+      "usage": "astra comic doctor",
+      "options": {}
+    },
+    {
+      "command": "douyin get",
+      "summary": "下载抖音作品：视频、图文都行，链接 / 短链 / 19 位 id 都可以",
+      "usage": "astra douyin get <链接|ID>... [--out <目录>] [--quality best|1080p|720p|540p|small] [--force] [--dry]",
+      "options": {
+        "--out <dir>": "落盘目录（覆盖 douyin.dir）",
+        "--quality <q>": "画质上限，默认 best",
+        "--force": "已存在也重下",
+        "--dry": "只解析、不下载"
+      },
+      "notes": [
+        "视频默认挑 h264 最高档（**h265 档没有音轨**，只有 h264 才能直接得到有声文件）",
+        "图文按原图下（不要 `download_url_list`，那是带水印的），顺序编号 01.jpg 起",
+        "落盘目录：`--out` > `douyin.dir`；文件名是「作品 id + 标题」，同一 id 已存在就跳过",
+        "`--dry` 只解析不下载，用来确认链接对不对"
+      ]
+    },
+    {
+      "command": "douyin info",
+      "summary": "只看元数据和可选档位，不下载",
+      "usage": "astra douyin info <链接|ID>",
+      "options": {},
+      "notes": [
+        "`gears[].audio` 为 false 表示这一档没有音轨（h265），下载时会跳过",
+        "`aweme_detail` 为空且带 `filter_detail` = 作品被删或不可见，重试没用"
+      ]
+    },
+    {
+      "command": "douyin hot",
+      "summary": "抖音热榜（免登录、免签名）",
+      "usage": "astra douyin hot [--limit 20]",
+      "options": {
+        "--limit <n>": "条数 1..50，默认 20"
+      },
+      "notes": [
+        "只有「此刻」的快照，没有历史；要历史得自己按天存"
+      ]
+    },
+    {
+      "command": "douyin related",
+      "summary": "给一条作品找相似推荐（免签名，不需要登录）",
+      "usage": "astra douyin related <链接|ID> [--limit 10]",
+      "options": {
+        "--limit <n>": "条数 1..20，默认 10"
+      },
+      "notes": [
+        "推荐流会掺进无关内容，按需自己筛；要精确的元数据用 `douyin info`"
+      ]
+    },
+    {
+      "command": "douyin comments",
+      "summary": "看一条作品的评论（只拿得到热门前约 20 条，翻不到全量）",
+      "usage": "astra douyin comments <链接|ID> [--cursor 0|10] [--limit 20]",
+      "options": {
+        "--cursor <n>": "0 或 10（两批不同的热门评论）",
+        "--limit <n>": "最多返回几条，默认 20"
+      },
+      "notes": [
+        "**拿不到全量**：Web 评论接口要 a_bogus（带登录也回空），移动端老接口只给热门前约 10 条（多打几次可能凑到 20）",
+        "`cursor` 0/10 两批内容会重叠，按 cid 去重后通常只剩 10 条左右",
+        "每条给：昵称 / 正文 / 点赞 / IP 属地 / 子评论数（子评论正文拿不到，回复接口已下线）",
+        "只读快照，不入库；要入库得另说（1358 个作品 ×2 次请求）"
+      ]
+    },
+    {
+      "command": "douyin likes",
+      "summary": "看（并可下载）你自己「喜欢」的作品，需要先登录",
+      "usage": "astra douyin likes [--limit 20] [--keyword <词>] [--download] [--quality q] [--out <目录>] [--cursor <n>]",
+      "options": {
+        "--limit <n>": "条数 1..100，默认 20",
+        "--cursor <n>": "起始游标（分页续取）",
+        "--keyword <text>": "只保留标题/作者含该词的",
+        "--download": "顺手下载筛出来的作品",
+        "--quality <q>": "下载画质上限，默认 best",
+        "--out <dir>": "下载目录（覆盖 douyin.dir）"
+      },
+      "notes": [
+        "不带 `--download` 只列清单（id / 类型 / 标题 / 作者 / 点赞）",
+        "`--keyword` 在标题与作者里做大小写不敏感的子串过滤，只筛当前取到的这一批",
+        "`--download` 会把筛出来的逐条下载，落盘规则和 `douyin get` 一样",
+        "每页约 13–20 条，`--limit` 超过一页会自动翻页",
+        "要把整份列表存进 PG 用 `scripts/douyin_crawl_list.py` + `douyin_ingest_pg.py`（crawl.douyin_list_view）"
+      ]
+    },
+    {
+      "command": "douyin collects",
+      "summary": "看（并可下载）你自己「收藏」的作品，需要先登录",
+      "usage": "astra douyin collects [--limit 20] [--keyword <词>] [--download] [--quality q] [--out <目录>] [--cursor <n>]",
+      "options": {
+        "--limit <n>": "条数 1..100，默认 20",
+        "--cursor <n>": "起始游标（分页续取）",
+        "--keyword <text>": "只保留标题/作者含该词的",
+        "--download": "顺手下载筛出来的作品",
+        "--quality <q>": "下载画质上限，默认 best",
+        "--out <dir>": "下载目录（覆盖 douyin.dir）"
+      },
+      "notes": [
+        "不带 `--download` 只列清单（id / 类型 / 标题 / 作者 / 点赞）",
+        "`--keyword` 在标题与作者里做大小写不敏感的子串过滤，只筛当前取到的这一批",
+        "`--download` 会把筛出来的逐条下载，落盘规则和 `douyin get` 一样",
+        "每页约 13–20 条，`--limit` 超过一页会自动翻页",
+        "要把整份列表存进 PG 用 `scripts/douyin_crawl_list.py` + `douyin_ingest_pg.py`（crawl.douyin_list_view）"
+      ]
+    },
+    {
+      "command": "douyin login",
+      "summary": "导入浏览器 cookie（扫码登录已不可用，只能粘 cookie）",
+      "usage": "astra douyin login < cookie.txt   ｜   astra douyin login '<cookie 串>'",
+      "options": {},
+      "notes": [
+        "浏览器打开 www.douyin.com 并登录 → F12 → Network → 任一请求 → 右键 Copy as cURL (bash) → 整段喂进来",
+        "`document.cookie` 拿不到 httpOnly 的 sessionid，所以必须用 Copy as cURL",
+        "优先从 stdin 读：cookie 出现在 argv 里会被 `ps` 和 shell 历史看见",
+        "成功后写 `<ASTRA_HOME>/douyin-session.json`（600）"
+      ]
+    },
+    {
+      "command": "douyin whoami",
+      "summary": "看当前登录的是谁（顺带验证 cookie 还有没有效）",
+      "usage": "astra douyin whoami",
+      "options": {},
+      "notes": [
+        "没登录会明确说 not_logged_in；cookie 过期会标出 status_code"
+      ]
+    },
+    {
+      "command": "douyin logout",
+      "summary": "删除本地保存的抖音 cookie",
+      "usage": "astra douyin logout",
+      "options": {},
+      "notes": [
+        "只删本地文件，不影响手机/浏览器里的登录状态"
+      ]
+    },
+    {
+      "command": "douyin doctor",
+      "summary": "自检：ttwid、签名、热榜、登录态、目录写权限",
+      "usage": "astra douyin doctor",
+      "options": {},
+      "notes": [
+        "四项里任何一项失败都会单独报出来，不会因为一项挂了就说全坏",
+        "`signature` 失败通常是 SALT 变了（SDK 升级），需要重抓 `runtime_bundler_34.js`"
+      ]
+    },
+    {
+      "command": "lol save",
+      "summary": "按 gameId 把指定对局抓进库（客户端在线时从 SGP 补）",
+      "usage": "astra lol save <gameId> [更多 gameId]",
+      "options": {},
+      "notes": [
+        "用于「刚才那把」这类还没被爬虫覆盖的对局；先 `lol player 名字#TAG` 拿 gameId。",
+        "gameId 可带 HN1_ 前缀；不带默认 HN1。",
+        "需要 PC 上 LoL 客户端在线（借它的 token），客户端没开时会失败。",
+        "入库后可直接用 social_sql / `lol history` 查；同 id 重复执行不会写重。"
+      ]
+    },
+    {
+      "command": "lol sync",
+      "summary": "从 PC 客户端（LCU）拉最近约 20 局战绩并入库",
+      "usage": "astra lol sync [--pc <host>]",
+      "options": {
+        "--pc <host>": "PC 的 ssh 主机名（默认取配置 lol.pc，或 \"pc\"）"
+      },
+      "notes": [
+        "国服没有公开战绩接口，只能借 PC 上开着的客户端；LCU 只监听 127.0.0.1，所以走 ssh。",
+        "LCU 的 `begIndex/endIndex` 无效，一次固定给最近约 21 局 —— 想要长历史就定时同步，慢慢累积。",
+        "客户端没开时报 LOL_CLIENT_NOT_RUNNING（退出码 3），不是数据丢了。"
+      ]
+    },
+    {
+      "command": "lol history",
+      "summary": "查已入库的最近对局",
+      "usage": "astra lol history [--limit 20] [--champion <英雄>] [--queue <id>] [--win|--loss]",
+      "options": {
+        "--limit <n>": "返回条数（默认 20，最多 200）",
+        "--champion <name>": "按英雄中文名模糊过滤",
+        "--queue <id>": "按 queueId 过滤",
+        "--win": "只看赢的",
+        "--loss": "只看输的"
+      },
+      "notes": [
+        "数据来自 `lol sync`，不是实时；PC 关着也能查。",
+        "--queue 用 LCU 的 queueId：420 单双排、440 灵活排、400 匹配、2400 极地大乱斗（国服 ARAM，map 12，带强化符文）。"
+      ]
+    },
+    {
+      "command": "lol stats",
+      "summary": "战绩统计（总胜率 / 英雄池 / 队列分布）",
+      "usage": "astra lol stats [--days 30] [--by champion|queue]",
+      "options": {
+        "--days <n>": "只统计最近 N 天",
+        "--by <field>": "champion 或 queue"
+      },
+      "notes": [
+        "按英雄或队列分组；不给 --by 就是整体一行。"
+      ]
+    },
+    {
+      "command": "lol rank",
+      "summary": "看自己的段位快照；给「名字#TAG」则实时查任意召唤师的当前段位",
+      "usage": "astra lol rank [名字#TAG] [--pc <host>]",
+      "options": {
+        "--pc <host>": "PC 的 ssh 主机名"
+      },
+      "notes": [
+        "不带参数：读库里自己的段位快照（每天一条，`lol sync` 时写入）。",
+        "带「名字#TAG」：实时打 LCU `/lol-ranked/v1/ranked-stats/{puuid}`，对任意 puuid 都有效（实测 2700 个全 200），需要客户端开着。",
+        "实时查到的段位**不入库** —— 别人的段位混进自己的快照会污染曲线。",
+        "一次只能查一个玩家，没有批量接口。"
+      ]
+    },
+    {
+      "command": "lol player",
+      "summary": "查任意召唤师（名字#TAG）的最近对局",
+      "usage": "astra lol player <名字#TAG> [--limit 20] [--pc <host>] [--table]",
+      "options": {
+        "--limit <n>": "取多少局，默认 20（LCU 最多约 21）",
+        "--pc <host>": "PC 的 ssh 主机名"
+      },
+      "notes": [
+        "必须写成「名字#TAG」：只给名字 LCU 会回 422 INVALID_EMPTY_REQUEST（实测）。",
+        "对方隐藏战绩时返回 hidden=true、games=[]，**不是没打过**，别当成 0 场。",
+        "这是实时读，不入库 —— 别人的战绩混进自己的统计会污染胜率。",
+        "需要 PC 客户端在跑（同 `lol sync`）。"
+      ]
+    },
+    {
+      "command": "lol champions",
+      "summary": "同步英雄 id→中文名（Data Dragon）",
+      "usage": "astra lol champions [--refresh]",
+      "options": {
+        "--refresh": "强制重新拉取（默认表非空就跳过）"
+      },
+      "notes": [
+        "不联网也能看战绩；表空了才需要跑这个。"
+      ]
+    },
+    {
+      "command": "lol doctor",
+      "summary": "自检：PC 可达 / 客户端在跑 / 库里有数据",
+      "usage": "astra lol doctor",
+      "options": {},
+      "notes": [
+        "排查「sync 没反应」先跑这个：能分清是 PC 不通、客户端没开，还是库空。"
+      ]
+    },
+    {
+      "command": "heybox feed",
+      "summary": "小黑盒首页信息流（帖子列表）",
+      "usage": "astra heybox feed [--limit 20] [--offset 0]",
+      "options": {
+        "--limit <n>": "取多少条，默认 20，上限 50",
+        "--offset <n>": "偏移，翻页用"
+      },
+      "notes": [
+        "匿名接口，不需要登录；返回 linkId / 标题 / 摘要 / 赞 / 评论数 / 话题。"
+      ]
+    },
+    {
+      "command": "heybox search",
+      "summary": "搜小黑盒社区帖子（攻略、评测、资讯）",
+      "usage": "astra heybox search <关键词> [--limit 20] [--offset 0]",
+      "options": {
+        "--limit <n>": "取多少条，默认 20，上限 50",
+        "--offset <n>": "偏移，翻页用"
+      },
+      "notes": [
+        "匿名接口。结果只保留帖子类，过滤掉「相关游戏 / 筛选器」这些占位块。",
+        "关键词可以是游戏名、攻略主题，中文直接传，不用转义。"
+      ]
+    },
+    {
+      "command": "heybox login",
+      "summary": "保存小黑盒登录 cookie（600 权限，供帖子详情/评论用）",
+      "usage": "astra heybox login <cookie 字符串>",
+      "options": {},
+      "notes": [
+        "整条 cookie 一起传（`k=v; k2=v2`），只存本机 ASTRA_HOME/heybox.json，权限 600。",
+        "从哪拿：浏览器打开 xiaoheihe.cn → F12 → Network → 任一请求的 Cookie 整条复制",
+        "存完会用「消息列表」这条最轻的接口验一次登录态。"
+      ]
+    },
+    {
+      "command": "heybox status",
+      "summary": "看小黑盒登录态",
+      "usage": "astra heybox status",
+      "options": {}
+    },
+    {
+      "command": "heybox logout",
+      "summary": "清除本机保存的小黑盒 cookie",
+      "usage": "astra heybox logout",
+      "options": {}
+    },
+    {
+      "command": "heybox post",
+      "summary": "看单个帖子：正文 + 图片 + 首屏评论（需登录）",
+      "usage": "astra heybox post <linkId> [--comments 10]",
+      "options": {
+        "--comments <n>": "带多少条评论，默认 10，0 表示只看正文",
+        "--refresh": "强制重新请求接口（默认库里有时直接读库）",
+        "--raw": "附上原始 link/comments 结构（调试字段映射用）"
+      },
+      "notes": [
+        "需要 `heybox login` 保存过 cookie；匿名调用会被人机验证拦下。",
+        "请求间自动限速 5 秒。"
+      ]
+    },
+    {
+      "command": "heybox comments",
+      "summary": "看帖子评论区（需登录）",
+      "usage": "astra heybox comments <linkId> [--limit 20] [--page 1]",
+      "options": {
+        "--limit <n>": "每页多少条，默认 20，上限 50",
+        "--page <n>": "页码，默认 1"
+      },
+      "notes": [
+        "需要 `heybox login`；分页从 1 开始，每页最多 50 条。"
+      ]
+    },
+    {
+      "command": "heybox find",
+      "summary": "在本地小黑盒库里搜已存过的帖子（不请求接口）",
+      "usage": "astra heybox find <关键词> [--limit 10]",
+      "options": {
+        "--limit <n>": "最多几条，默认 10，上限 50"
+      },
+      "notes": [
+        "只搜 `crawl.heybox_post`：标题 / 正文 / 作者模糊匹配。",
+        "想拉新帖子用 `heybox post <链接>`，它会入库。"
+      ]
+    },
+    {
+      "command": "heybox game",
+      "summary": "看游戏：评分、现价/史低、关注数、平台（小黑盒游戏库）",
+      "usage": "astra heybox game <游戏名 或 appid> [--refresh]",
+      "options": {
+        "--refresh": "强制重新抓取（默认 6 小时内读库）"
+      },
+      "notes": [
+        "名称会先搜一次再取详情；也可以直接给 steam appid（纯数字）。",
+        "价格 6 小时内直接用库里的，`--refresh` 强制重抓（价格波动不频繁，没必要每次都打接口）。"
+      ]
+    },
+    {
+      "command": "llm provider add",
+      "summary": "添加/更新一个 OpenAI 兼容端点（base-url + key + 模型名）",
+      "usage": "astra llm provider add <名字> --base-url <url> --key <key> [--model <文本模型>] [--image-model <生图模型>] [--edit-model <改图模型>] [--default] [--force]",
+      "options": {
+        "--base-url <url>": "端点地址，如 https://api.openai.com/v1",
+        "--key <key>": "API key（只落盘，不打日志）",
+        "--model <name>": "默认文本模型，如 gpt-4o-mini",
+        "--image-model <name>": "默认文生图模型，如 gpt-image-1",
+        "--edit-model <name>": "默认图生图模型（缺省用 image-model）",
+        "--default": "设为默认端点",
+        "--force": "覆盖同名端点"
+      },
+      "notes": [
+        "base-url 可以带 /v1 也可以不带，统一存成 …/v1。",
+        "key 只写进 <ASTRA_HOME>/llm-providers.json（600），输出里只显示前 4 位。",
+        "同名已存在要加 --force 才覆盖。第一条自动成为默认端点。"
+      ]
+    },
+    {
+      "command": "llm providers",
+      "summary": "列出已配置的端点（key 打码）",
+      "usage": "astra llm providers [--table]",
+      "options": {},
+      "notes": [
+        "不给 --table 时是 JSON；--table 直接看对照表。"
+      ]
+    },
+    {
+      "command": "llm provider remove",
+      "summary": "删掉一个端点配置",
+      "usage": "astra llm provider remove <名字>",
+      "options": {}
+    },
+    {
+      "command": "llm doctor",
+      "summary": "探活：打 /models，看端点通不通、配的模型在不在列表里",
+      "usage": "astra llm doctor [端点名字]",
+      "options": {},
+      "notes": [
+        "不通时返回 reachable=false 并把上游错误（已打码）带回来，不抛异常，便于一次看全部。",
+        "有些兼容层不实现 /models：列表为空不代表端点坏了，用 llm chat 再确认一次。"
+      ]
+    },
+    {
+      "command": "llm chat",
+      "summary": "调用文本模型，返回回答",
+      "usage": "astra llm chat \"<提示词>\" [--system <系统提示>] [--provider <名字>] [--model <模型>] [--temperature 0..2] [--max-tokens n]",
+      "options": {
+        "--system <text>": "系统提示词",
+        "--provider <name>": "端点名字，默认用 default",
+        "--model <name>": "覆盖文本模型",
+        "--temperature <n>": "0..2，缺省不传（用上游默认）",
+        "--max-tokens <n>": "最大输出 token"
+      },
+      "notes": [
+        "多段提示词直接当位置参数连写，记得整体加引号。",
+        "返回 text / model / usage / finishReason；长文不要用 --table。"
+      ]
+    },
+    {
+      "command": "llm image",
+      "summary": "文生图：给提示词，落一张 PNG 到磁盘",
+      "usage": "astra llm image \"<画什么>\" [--size 1024x1024|1536x1024|1024x1536] [--out 路径或目录] [--provider <名字>] [--model <模型>]",
+      "options": {
+        "--size <WxH>": "1024x1024（默认）/ 1536x1024 / 1024x1536",
+        "--out <path>": "输出文件或目录",
+        "--provider <name>": "端点名字，默认用 default",
+        "--model <name>": "覆盖生图模型"
+      },
+      "notes": [
+        "默认落在 <ASTRA_HOME>/llm-out/，文件名带时间戳和提示词摘要。",
+        "--out 给目录（或以 / 结尾）就自动起名；给 .png 路径就照用。",
+        "返回 path / bytes / contentType / size；要发到聊天里用 MEDIA:<path>。"
+      ]
+    },
+    {
+      "command": "llm edit",
+      "summary": "图生图：给一张图和修改要求，返回改好的图",
+      "usage": "astra llm edit <图片路径> \"<怎么改>\" [--size …] [--out 路径或目录] [--provider <名字>] [--model <模型>]",
+      "options": {
+        "--size <WxH>": "1024x1024（默认）/ 1536x1024 / 1024x1536",
+        "--out <path>": "输出文件或目录",
+        "--provider <name>": "端点名字，默认用 default",
+        "--model <name>": "覆盖改图模型"
+      },
+      "notes": [
+        "走 /v1/images/edits（multipart），需要端点支持该接口。",
+        "不是所有兼容层都实现 edits；报 404 就说明这个端点只做了 generations。"
+      ]
+    },
+    {
+      "command": "device add",
+      "summary": "登记一台设备（本机或 ssh 可达的机器）",
+      "usage": "astra device add <名字> --kind local|ssh [--host <host>] [--user <u>] [--caps ffmpeg,gpu] [--tmp <目录>] [--probe <命令>] [--map <NAS前缀>=<设备前缀>] [--note 说明]",
+      "options": {
+        "--kind <kind>": "local / ssh",
+        "--host <host>": "ssh 目标（别名或地址）",
+        "--user <u>": "ssh 用户",
+        "--caps <a,b>": "能力标签，逗号分隔，默认 ffmpeg",
+        "--tmp <dir>": "设备上的临时目录",
+        "--os <os>": "linux / windows（决定引号规则）",
+        "--ffmpeg <path>": "ffmpeg 可执行文件路径",
+        "--probe <cmd>": "自定义探活命令（ssh 上执行）",
+        "--busy <cmd>": "忙判定命令，输出含 BUSY 表示在忙",
+        "--map <from=to>": "路径映射 from=to，可重复",
+        "--note <text>": "备注",
+        "--force": "覆盖同名设备"
+      },
+      "notes": [
+        "kind=ssh 时 --host 必填；密码不走这里，用系统 ssh 密钥。",
+        "--caps 决定谁能接哪类任务（转码要 ffmpeg）。",
+        "--map 用于把 NAS 路径翻成设备路径，例如 --map /host-root/volume1/=Z:\\"
+      ]
+    },
+    {
+      "command": "device list",
+      "summary": "列出已登记设备",
+      "usage": "astra device list [--table]",
+      "options": {}
+    },
+    {
+      "command": "device remove",
+      "summary": "删掉一台设备",
+      "usage": "astra device remove <名字>",
+      "options": {}
+    },
+    {
+      "command": "device check",
+      "summary": "探活 + 编码基准（6 秒 720p x264），写回实测倍率",
+      "usage": "astra device check [名字]",
+      "options": {},
+      "notes": [
+        "不给名字就检查全部；远端不可达只标记 offline，不抛错。",
+        "倍率 = 视频时长 / 编码耗时，越大越快；1.0 表示实时。"
+      ]
+    },
+    {
+      "command": "x status",
+      "summary": "X 登录态 + 账号信息（探活）",
+      "usage": "astra x status",
+      "options": {},
+      "notes": [
+        "未登录也返回 ok=true，`data.authenticated=false`；要报错的那种判断用 `astra x doctor`。",
+        "cookie 只在 data.credential 里给脱敏值。"
+      ]
+    },
+    {
+      "command": "x login",
+      "summary": "导入 X 登录 cookie（cookies.txt 或 k=v 串）",
+      "usage": "astra x login [--cookie-file <文件>] [--cookie \"<auth_token=…; ct0=…>\"]",
+      "options": {
+        "--cookie-file <file>": "Netscape 格式 cookies.txt 路径",
+        "--cookie <text>": "直接给 `auth_token=…; ct0=…`"
+      },
+      "notes": [
+        "浏览器登录 x.com → F12 → Application → Cookies → https://x.com，导出 Netscape 格式 cookies.txt 最省事。",
+        "也可以 `astra x login < cookies.txt`；cookie 存 <ASTRA_HOME>/x.json（600），输出只回显脱敏值。",
+        "cookie 等价账号全权，别贴到群聊里；换了设备或改密码后要重新导一次。"
+      ]
+    },
+    {
+      "command": "x logout",
+      "summary": "删除本地保存的 X 登录态",
+      "usage": "astra x logout",
+      "options": {}
+    },
+    {
+      "command": "x user",
+      "summary": "查某个账号的资料",
+      "usage": "astra x user <账号>",
+      "options": {},
+      "notes": [
+        "账号不带 @。关注数/推文数来自 X 的实时返回。"
+      ]
+    },
+    {
+      "command": "x posts",
+      "summary": "某个账号的时间线（最新的 n 条）",
+      "usage": "astra x posts <账号> [--limit 20]",
+      "options": {
+        "--limit <n>": "取多少条，默认 20，上限 200"
+      },
+      "notes": [
+        "返回正文、作者、赞/转/回/看、媒体 URL 与推文链接；`returned >= limit` 说明可能还有更多。",
+        "转推会在 isRetweet=true，正文是原推内容。"
+      ]
+    },
+    {
+      "command": "x tweet",
+      "summary": "单条推文 + 回复",
+      "usage": "astra x tweet <推文ID|链接> [--limit 20]",
+      "options": {
+        "--limit <n>": "回复取多少条，默认 20"
+      },
+      "notes": [
+        "`--limit` 是回复条数；主推始终在第一条。链接里的数字 ID 也能直接用。"
+      ]
+    },
+    {
+      "command": "x feed",
+      "summary": "首页时间线（推荐 / 关注）",
+      "usage": "astra x feed [--type following] [--limit 20]",
+      "options": {
+        "--type <name>": "following（默认）或 for-you",
+        "--limit <n>": "取多少条，默认 20"
+      },
+      "notes": [
+        "默认 following（按时间）；`--type for-you` 是算法推荐流。"
+      ]
+    },
+    {
+      "command": "x bookmarks",
+      "summary": "我的书签",
+      "usage": "astra x bookmarks [--limit 20]",
+      "options": {
+        "--limit <n>": "取多少条，默认 20"
+      }
+    },
+    {
+      "command": "x search",
+      "summary": "搜索推文（关键词 + X 高级搜索过滤器）",
+      "usage": "astra x search [关键词] [--limit 20] [--type latest] [--from 账号] [--since 2026-01-01] [--until 2026-02-01] [--min-likes 100] [--has images] [--exclude replies]",
+      "options": {
+        "--limit <n>": "返回多少条推文，默认 20，上限 200",
+        "--type <name>": "top / latest（默认）/ photos / videos",
+        "--from <账号>": "只搜某个账号的推",
+        "--since <date>": "起始日期 YYYY-MM-DD",
+        "--until <date>": "截止日期 YYYY-MM-DD",
+        "--min-likes <n>": "最少点赞数",
+        "--has <kind>": "要求含 links/images/videos/media，可重复",
+        "--exclude <kind>": "排除 retweets/replies/links，可重复"
+      },
+      "notes": [
+        "不要指望翻到很久以前：X 搜索自己只给一个窗口，超出就是没有。",
+        "`--has` 可选 links / images / videos / media；`--exclude` 可选 retweets / replies / links，都可重复给。",
+        "返回的 createdAt 是 UTC（形如 2026-11-06 03:54:00），比北京时间少 8 小时。",
+        "搜索走的是 gallery-dl 的搜索接口（twitter-cli 的 search 在 0.8.5 已 404），纯文字推也在结果里。"
+      ]
+    },
+    {
+      "command": "x media",
+      "summary": "把推文里的图/视频原文件下到 NAS",
+      "usage": "astra x media <账号|推文链接|搜索链接> [--limit 50] [--out <目录>]",
+      "options": {
+        "--limit <n>": "最多下多少个文件，默认 50",
+        "--out <dir>": "本次落盘根目录（绝对路径）"
+      },
+      "notes": [
+        "账号=该号最近媒体；推文链接=那一条；搜索链接=搜索结果里的媒体。",
+        "默认落 `<素材根>/twitter/<账号>/<推文id>_<序号>.<ext>`，`--out` 换根目录，配置 `x.dir` 改默认。",
+        "重跑不重复下载（gallery-dl archive 记账）；`--limit` 是文件数上限，不是推文数。"
+      ]
+    },
+    {
+      "command": "x pause",
+      "summary": "暂停所有 X 抓取（写刹车文件）",
+      "usage": "astra x pause",
+      "options": {}
+    },
+    {
+      "command": "x resume",
+      "summary": "恢复 X 抓取",
+      "usage": "astra x resume",
+      "options": {}
+    },
+    {
+      "command": "x doctor",
+      "summary": "自检：工具/代理/登录态/目录，可一键补装",
+      "usage": "astra x doctor [--install]",
+      "options": {
+        "--install": "缺工具时自动建 venv 并装 twitter-cli / gallery-dl"
+      },
+      "notes": [
+        "工具装在 `venvs/x`（`x.bin` 可改）；容器重建后跑 `astra x doctor --install` 一句话补回来。",
+        "代理取 `proxy.url`，留空时回落 http://mihomo:7890（X 在本机必须走代理）。"
+      ]
+    },
+    {
+      "command": "auth whoami",
+      "summary": "当前身份（有令牌按令牌，没有则是本机 owner）",
+      "usage": "astra auth whoami",
+      "options": {}
+    },
+    {
+      "command": "auth owner-token",
+      "summary": "给本机 owner 发令牌并写到 <ASTRA_HOME>/token（600）",
+      "usage": "astra auth owner-token [--rotate]",
+      "options": {
+        "--rotate": "吊销已有 owner 令牌后重发"
+      },
+      "notes": [
+        "这是唯一的免令牌入口：没有它，本机就再也拿不到 owner 身份。",
+        "写入后本机所有脚本、cron 通过文件自动认成 owner，不需要改调用方。"
+      ]
+    },
+    {
+      "command": "auth status",
+      "summary": "账户机制状态（存储后端、主体数、令牌数）",
+      "usage": "astra auth status",
+      "options": {}
+    },
+    {
+      "command": "auth role add",
+      "summary": "新建角色",
+      "usage": "astra auth role add <名字> [--note 说明]",
+      "options": {
+        "--note <说明>": "备注"
+      }
+    },
+    {
+      "command": "auth role list",
+      "summary": "列出角色（含 scope 数与主体数）",
+      "usage": "astra auth role list",
+      "options": {}
+    },
+    {
+      "command": "auth role grant",
+      "summary": "给角色加 scope（可一次多条；支持 bili.* 通配）",
+      "usage": "astra auth role grant <角色> <scope...>",
+      "options": {},
+      "notes": [
+        "scope 就是命令名换点：`bili get` → `bili.get`，`x media` → `x.media`；`*` 表示全通。"
+      ]
+    },
+    {
+      "command": "auth role revoke",
+      "summary": "从角色删掉一个 scope",
+      "usage": "astra auth role revoke <角色> <scope>",
+      "options": {}
+    },
+    {
+      "command": "auth role grants",
+      "summary": "列出角色的 scope",
+      "usage": "astra auth role grants <角色>",
+      "options": {}
+    },
+    {
+      "command": "auth principal grant",
+      "summary": "把角色发给主体（或 --remove 收回）",
+      "usage": "astra auth principal grant <主体> <角色> [--remove]",
+      "options": {
+        "--remove": "收回这个角色"
+      }
+    },
+    {
+      "command": "auth principal roles",
+      "summary": "看主体有哪些角色与生效的 scope 模式",
+      "usage": "astra auth principal roles <主体>",
+      "options": {}
+    },
+    {
+      "command": "auth principal disable",
+      "summary": "停用主体（令牌立刻失效，记录保留）",
+      "usage": "astra auth principal disable <主体>",
+      "options": {}
+    },
+    {
+      "command": "auth principal purge",
+      "summary": "彻底删除主体（连带令牌与角色绑定），需 --yes",
+      "usage": "astra auth principal purge <主体> --yes",
+      "options": {
+        "--yes": "确认删除"
+      },
+      "notes": [
+        "没有外键级联，所以这是显式清理；日常建议用 disable 而不是 purge。"
+      ]
+    },
+    {
+      "command": "auth doctor",
+      "summary": "授权体检：未被任何角色覆盖的命令、匹配不到命令的授权模式",
+      "usage": "astra auth doctor",
+      "options": {},
+      "notes": [
+        "“未被覆盖”不等于出错：owner 本身不需要授权；这里列的是公开命令里没人授权的部分。",
+        "“未知授权”通常是命令改名后留下的旧 scope，会让授权面悄悄失效。"
+      ]
+    },
+    {
+      "command": "auth principal add",
+      "summary": "新建主体（人 / 机器人 / 服务）",
+      "usage": "astra auth principal add <名字> [--kind bot|user|service] [--note 说明]",
+      "options": {
+        "--kind <bot>": "主体类型，默认 bot",
+        "--note <说明>": "备注（谁在用这个主体）"
+      }
+    },
+    {
+      "command": "auth principal list",
+      "summary": "列出所有主体",
+      "usage": "astra auth principal list",
+      "options": {}
+    },
+    {
+      "command": "auth token create",
+      "summary": "给主体发令牌（明文只显示这一次）",
+      "usage": "astra auth token create <主体名> [--label 用途] [--days 90]",
+      "options": {
+        "--label <用途>": "用途标记，如 feishu / qq",
+        "--days <天数>": "有效天数，0 = 不过期"
+      },
+      "notes": [
+        "令牌只存 sha256，丢了只能重新发；`--days 0`（默认）表示不过期。"
+      ]
+    },
+    {
+      "command": "auth token list",
+      "summary": "列出令牌（不含明文）",
+      "usage": "astra auth token list [主体名]",
+      "options": {}
+    },
+    {
+      "command": "auth token revoke",
+      "summary": "吊销令牌（按 id 前缀）",
+      "usage": "astra auth token revoke <id前缀>",
+      "options": {}
+    },
+    {
+      "command": "schedule add",
+      "summary": "新建定时任务（间隔式）",
+      "usage": "astra schedule add <名字> --every 6h --cmd \"music subscribe run\"",
+      "options": {
+        "--every <间隔>": "间隔，如 30m / 6h / 1d",
+        "--cmd <命令>": "要执行的 astra 子命令（不含 astra）"
+      },
+      "notes": [
+        "`--every` 支持 30m / 6h / 1d，也可直接给分钟数。",
+        "不需要守护进程：`schedule tick` 跑到期任务，用 crontab 每分钟调一次即可。",
+        "`--cmd` 不写 astra 前缀。"
+      ]
+    },
+    {
+      "command": "schedule list",
+      "summary": "列出定时任务",
+      "usage": "astra schedule list",
+      "options": {}
+    },
+    {
+      "command": "schedule remove",
+      "summary": "删除定时任务",
+      "usage": "astra schedule remove <名字>",
+      "options": {}
+    },
+    {
+      "command": "schedule enable",
+      "summary": "启用定时任务",
+      "usage": "astra schedule enable <名字>",
+      "options": {}
+    },
+    {
+      "command": "schedule disable",
+      "summary": "停用定时任务",
+      "usage": "astra schedule disable <名字>",
+      "options": {}
+    },
+    {
+      "command": "schedule run",
+      "summary": "立刻跑一次（会重置下次时间）",
+      "usage": "astra schedule run <名字>",
+      "options": {}
+    },
+    {
+      "command": "schedule tick",
+      "summary": "跑所有到期的任务（给 crontab 调用）",
+      "usage": "astra schedule tick",
+      "options": {},
+      "notes": [
+        "每分钟调一次即可；没有到期任务时零输出、退出码 0，适合 cron 静默。"
+      ]
+    },
+    {
+      "command": "novel search",
+      "summary": "按书名搜小说（三个书源一起搜）",
+      "usage": "astra novel search <书名> [--source 8novel / lnovel / kanunu] [--limit 20]",
+      "options": {
+        "--source <name>": "只搜一个书源：8novel / lnovel / kanunu",
+        "--limit <n>": "最多返回几条，默认 20"
+      },
+      "notes": [
+        "排序：书名完全一致 > 以关键词开头 > 包含；繁简体互通（「活著」能搜到「活着」）",
+        "8novel / lnovel 是日轻（繁体），kanunu（努努书坊）是出版读物（简体，靠本地索引）",
+        "lnovel 不支持搜索，要给书号或链接",
+        "把 items 列给用户选，再 `astra novel get <书名> --pick <n>` 或直接给链接"
+      ]
+    },
+    {
+      "command": "novel info",
+      "summary": "看一本书的信息与分卷，不下载",
+      "usage": "astra novel info <书名|链接> [--pick n] [--source s]",
+      "options": {
+        "--pick <n>": "书名有多个候选时选第几个",
+        "--source <name>": "只在一个书源里找：8novel / lnovel / kanunu"
+      }
+    },
+    {
+      "command": "novel get",
+      "summary": "下载一本小说成 EPUB（后台任务）",
+      "usage": "astra novel get <书名|链接|lnovel 书号> [--pick n] [--volume n|all] [--source s] [--simplified] [--no-images] [--wait 300]",
+      "options": {
+        "--pick <n>": "书名有多个候选时选第几个",
+        "--volume <n|all>": "只出第 n 卷；all = 全部卷合成一本",
+        "--source <name>": "只在一个书源里找：8novel / lnovel / kanunu",
+        "--simplified": "整本繁转简",
+        "--no-images": "不要插图",
+        "--wait <s>": "等任务结束的最长秒数（≤600）"
+      },
+      "notes": [
+        "书名只在「完全同名且只有一条」时自动选；否则报 AMBIGUOUS，details.candidates 是候选，选好后加 --pick",
+        "日轻每卷单独成书：多卷不给 --volume 会报 AMBIGUOUS_VOLUME，details.volumes 是卷列表",
+        "立刻返回任务 id；`--wait 300` 等它跑完（最多 600 秒）。进度：`astra novel job <id>`",
+        "章节先进本地缓存，中断后 `astra novel job resume <id>` 只补缺的章；全部到齐才出书",
+        "--simplified：书名、章节名、正文整本繁转简（逐字 + 常用词组，个别多义字可能转错）",
+        "落盘 novel.dir / ASTRA_NOVEL_DIR，模板 novel.template；完成后登记进资产库（`astra lib find`）"
+      ]
+    },
+    {
+      "command": "novel job",
+      "summary": "看小说任务进度与产物",
+      "usage": "astra novel job <id> [--failed] [--wait 60]",
+      "options": {
+        "--failed": "列出失败的章",
+        "--wait <s>": "最多等待秒数（≤600）"
+      }
+    },
+    {
+      "command": "novel jobs",
+      "summary": "最近的小说任务",
+      "usage": "astra novel jobs [--active] [--limit 20]",
+      "options": {
+        "--active": "只看还在跑的",
+        "--limit <n>": "条数，默认 20"
+      }
+    },
+    {
+      "command": "novel job cancel",
+      "summary": "取消小说任务",
+      "usage": "astra novel job cancel <id>",
+      "options": {}
+    },
+    {
+      "command": "novel job resume",
+      "summary": "重试小说任务里失败 / 没跑完的章，补齐后自动出书",
+      "usage": "astra novel job resume <id>",
+      "options": {}
+    },
+    {
+      "command": "novel index",
+      "summary": "努努书坊书名索引：看状态，或后台重建",
+      "usage": "astra novel index [--rebuild]",
+      "options": {
+        "--rebuild": "重建（后台任务）"
+      },
+      "notes": [
+        "努努书坊没有站内搜索，按书名找书全靠这份索引（分类页 + 专题 + 约 1,800 个作家页）",
+        "--rebuild 开后台任务，约 10 分钟；失败页超过 1/5 时不覆盖旧索引"
+      ]
+    },
+    {
+      "command": "novel subscribe add",
+      "summary": "追更一本连载：有新章节就重出 EPUB",
+      "usage": "astra novel subscribe add <书名|链接> [--pick n] [--volume n] [--every 12] [--simplified] [--no-images]",
+      "options": {
+        "--pick <n>": "书名有多个候选时选第几个",
+        "--volume <n>": "盯哪一卷（日轻多卷时必填）",
+        "--source <name>": "只在一个书源里找：8novel / lnovel / kanunu",
+        "--every <h>": "检查间隔（小时），默认 12",
+        "--simplified": "出书时繁转简",
+        "--no-images": "不要插图"
+      },
+      "notes": [
+        "建订阅时把当前章节记为基线，第一次检查不会重下",
+        "要定时检查：`astra schedule add novel-sub --every 12h --cmd \"novel subscribe run --notify\"`"
+      ]
+    },
+    {
+      "command": "novel subscribe list",
+      "summary": "小说订阅列表",
+      "usage": "astra novel subscribe list",
+      "options": {}
+    },
+    {
+      "command": "novel subscribe remove",
+      "summary": "取消一条小说订阅（已出的 EPUB 不动）",
+      "usage": "astra novel subscribe remove <id>",
+      "options": {}
+    },
+    {
+      "command": "novel subscribe run",
+      "summary": "检查小说订阅有没有新章节（默认只查到点的）",
+      "usage": "astra novel subscribe run [id] [--all] [--notify]",
+      "options": {
+        "--all": "不管间隔，全部检查",
+        "--notify": "有新章节时发通知"
+      }
+    },
+    {
+      "command": "novel doctor",
+      "summary": "小说能力自检：目录、ffmpeg、各书源连通、索引",
+      "usage": "astra novel doctor",
+      "options": {}
+    }
+  ],
+  "hidden": [
+    "bili _worker",
+    "douyin fav",
+    "music _worker",
+    "novel _worker",
+    "steam _idle-worker",
+    "steam _login-worker"
+  ],
+  "configNotes": {
+    "command": "config",
+    "summary": "查看 / 修改配置",
+    "usage": "astra config [get <key> | set <key> <value> | unset <key>]",
+    "options": {},
+    "notes": [
+      "music.dir：音乐根目录（绝对路径）；环境变量 ASTRA_MUSIC_DIR 优先",
+      "music.quality：默认请求音质：128k / 320k / flac / 24bit（实际以文件实测为准）",
+      "music.template：落盘路径模板，变量 {artist}（逗号分隔全部）{artist_list}（分号分隔）{primary_artist}（第一位）{albumartist} {album} {title} {year} {track} {disc} {source} {ext}，支持 {track:02}",
+      "music.compilation-dir：合辑（专辑歌手是「群星」）的落盘目录，代替模板里的歌手一层；设成 Various Artists 可让播放器按惯例归类",
+      "music.lyric：歌词怎么存：embed（写进标签，带时间戳）/ embed-plain（写纯文本，不认时间戳的老播放器用）/ embed-synced（同 embed）/ lrc（另存 .lrc）/ both / none",
+      "music.wordLyric：逐字歌词：auto（从酷狗取，时长对不上就跳过）/ off",
+      "music.ffmpeg：ffmpeg 可执行文件路径（B 站合并音视频也用它）；留空则从 PATH 查找",
+      "bili.dir：视频根目录（绝对路径）；环境变量 ASTRA_VIDEO_DIR 优先",
+      "quark.dir：夸克分享的落盘根目录（绝对路径）；留空则 `quark get` 必须给 --out",
+      "quark.concurrency：夸克下载并发数 1..3；默认 1（实测 >1 因单账号带宽封顶不提速，且转存偶尔失败）",
+      "pixiv.dir：Pixiv 图片根目录（绝对路径）；留空则 `pixiv pull` 必须给 --out",
+      "pixiv.transport：Pixiv 请求通道：auto（有 cookie 用 curl，否则 fetch）/ fetch / curl",
+      "pixiv.sensitive-dir：敏感作品的落盘根目录（如 /host-root/volume1/@home/KAngel/.../pixiv）；留空则与 pixiv.dir 相同",
+      "pixiv.r18：是否允许下载 R-18 作品（true / false）；命令行 --r18 可临时覆盖",
+      "bili.video-template：视频落盘模板，变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}",
+      "bili.template：（已弃用，改用 bili.video-template）视频落盘模板",
+      "bili.quality：默认请求画质：4k / 1080p60 / 1080p / 720p / 480p / 360p（未登录会被服务端封顶 360P）",
+      "bili.audio-format：--audio-only 的输出格式：mp3（默认，能写标签）/ flac / m4a（不能写标签）",
+      "bili.audio-bitrate：转 mp3 时的码率（kbps）",
+      "bili.tag：--audio-only 是否自动写标签并内嵌封面：true / false",
+      "bili.sidecar：下载视频时顺带生成的伴生文件，逗号分隔：nfo / cover / danmaku / all（默认空 = 不生成）",
+      "bili.subscribe.pages：订阅下载哪些分 P：all（默认，完整拿到）/ first（只下 P1，返回 partial: true）",
+      "bili.audio-template：B 站音频的落盘模板（留空用 music.template）；变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}，如 Bilibili/{uploader}/{title}.{ext}",
+      "bili.audio-dir：B 站音频的根目录（绝对路径）；留空用 ASTRA_MUSIC_DIR。与 bili.audio-template 组合出完整落点",
+      "proxy.url：HTTP 代理地址（如 http://mihomo:7890）；留空则不用代理",
+      "proxy.include：走代理的域名后缀，逗号分隔（如 steampowered.com,steamcommunity.com）；留空 = 全部走代理",
+      "proxy.exclude：不走代理的域名后缀，逗号分隔（优先级高于 include）；留空 = 不排除",
+      "bili.concurrency：B 站批量任务并发数 1..3",
+      "music.concurrency：批量下载并发数 1..4",
+      "douyin.dir：抖音下载根目录（绝对路径）；留空则必须给 --out",
+      "x.dir：X 媒体根目录（绝对路径）；留空 = /host-root/volume1/素材/twitter，没有 NAS 时落 <ASTRA_HOME>/x-media",
+      "x.bin：twitter-cli / gallery-dl 所在目录；留空 = /opt/data/venvs/x/bin",
+      "lol.saveScript：单局入库脚本（如 lol_save_match.sh）；留空则用内置默认位置，找不到会明确报未配置",
+      "lol.pc：跑英雄联盟客户端的 PC 的 ssh 主机名（同 ~/.ssh/config）；留空用 \"pc\"",
+      "lol.pc-dump-dir：PC 上存放采集脚本和 JSON 的目录（正斜杠写法，scp 用）",
+      "comic.dir：漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先",
+      "comic.template：漫画落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}",
+      "comic.concurrency：单话内图片下载并发 1..6",
+      "novel.dir：小说（EPUB）根目录（绝对路径）；环境变量 ASTRA_NOVEL_DIR 优先；留空 = <ASTRA_HOME>/novel/books",
+      "novel.template：EPUB 落盘模板，变量 {title} {author} {source}",
+      "novel.concurrency：抓章并发 1..6",
+      "notify.telegram_chat：Telegram 通知目标 chat_id（如 -1001234567890）；令牌放 ASTRA_TELEGRAM_TOKEN 或 notify.telegram_token",
+      "notify.telegram_token：Telegram bot 令牌（建议改用环境变量 ASTRA_TELEGRAM_TOKEN）",
+      "notify.webhook_url：通用 webhook：POST JSON {\"text\": \"...\"}；可用于 Slack/钉钉/自建服务",
+      "notify.feishu_webhook：后台任务结束时推送到飞书群机器人的 webhook 地址；环境变量 ASTRA_FEISHU_WEBHOOK 优先",
+      "notify.feishu_secret：飞书机器人开了签名校验时的密钥；环境变量 ASTRA_FEISHU_SECRET 优先"
+    ]
+  },
+  "configKeys": [
+    {
+      "key": "music.dir",
+      "description": "音乐根目录（绝对路径）；环境变量 ASTRA_MUSIC_DIR 优先",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
+      ]
+    },
+    {
+      "key": "music.quality",
+      "description": "默认请求音质：128k / 320k / flac / 24bit（实际以文件实测为准）",
+      "default": "flac",
+      "secret": false,
+      "accepts": [
+        "128k",
+        "320k",
+        "flac",
+        "24bit"
+      ]
+    },
+    {
+      "key": "music.template",
+      "description": "落盘路径模板，变量 {artist}（逗号分隔全部）{artist_list}（分号分隔）{primary_artist}（第一位）{albumartist} {album} {title} {year} {track} {disc} {source} {ext}，支持 {track:02}",
+      "default": "{albumartist}/{album}/{track:02} {title}.{ext}",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "music.compilation-dir",
+      "description": "合辑（专辑歌手是「群星」）的落盘目录，代替模板里的歌手一层；设成 Various Artists 可让播放器按惯例归类",
+      "default": "合辑",
+      "secret": false,
+      "accepts": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "96",
+        "320",
+        "321",
+        "abc",
+        "true",
+        "false",
+        "yes",
+        "128k",
+        "320k",
+        "flac",
+        "24bit",
+        "lossless",
+        "1080p",
+        "1080P",
+        "4K",
+        "116",
+        "auto",
+        "off",
+        "fetch",
+        "curl",
+        "embed",
+        "lrc",
+        "both",
+        "none",
+        "all",
+        "first",
+        "nfo,cover",
+        "nfo;x",
+        "mp3",
+        "m4a",
+        "ogg",
+        "Various Artists"
+      ]
+    },
+    {
+      "key": "music.lyric",
+      "description": "歌词怎么存：embed（写进标签，带时间戳）/ embed-plain（写纯文本，不认时间戳的老播放器用）/ embed-synced（同 embed）/ lrc（另存 .lrc）/ both / none",
+      "default": "both",
+      "secret": false,
+      "accepts": [
+        "embed",
+        "lrc",
+        "both",
+        "none"
+      ]
+    },
+    {
+      "key": "music.wordLyric",
+      "description": "逐字歌词：auto（从酷狗取，时长对不上就跳过）/ off",
+      "default": "auto",
+      "secret": false,
+      "accepts": [
+        "auto",
+        "off"
+      ]
+    },
+    {
+      "key": "music.ffmpeg",
+      "description": "ffmpeg 可执行文件路径（B 站合并音视频也用它）；留空则从 PATH 查找",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "bili.dir",
+      "description": "视频根目录（绝对路径）；环境变量 ASTRA_VIDEO_DIR 优先",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
+      ]
+    },
+    {
+      "key": "quark.dir",
+      "description": "夸克分享的落盘根目录（绝对路径）；留空则 `quark get` 必须给 --out",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
+      ]
+    },
+    {
+      "key": "quark.concurrency",
+      "description": "夸克下载并发数 1..3；默认 1（实测 >1 因单账号带宽封顶不提速，且转存偶尔失败）",
+      "default": "1",
+      "secret": false,
+      "accepts": [
+        "1",
+        "2",
+        "3"
+      ]
+    },
+    {
+      "key": "pixiv.dir",
+      "description": "Pixiv 图片根目录（绝对路径）；留空则 `pixiv pull` 必须给 --out",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
+      ]
+    },
+    {
+      "key": "pixiv.transport",
+      "description": "Pixiv 请求通道：auto（有 cookie 用 curl，否则 fetch）/ fetch / curl",
+      "default": "auto",
+      "secret": false,
+      "accepts": [
+        "auto",
+        "fetch",
+        "curl"
+      ]
+    },
+    {
+      "key": "pixiv.sensitive-dir",
+      "description": "敏感作品的落盘根目录（如 /host-root/volume1/@home/KAngel/.../pixiv）；留空则与 pixiv.dir 相同",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "pixiv.r18",
+      "description": "是否允许下载 R-18 作品（true / false）；命令行 --r18 可临时覆盖",
+      "default": "false",
+      "secret": false,
+      "accepts": [
+        "true",
+        "false"
+      ]
+    },
+    {
+      "key": "bili.video-template",
+      "description": "视频落盘模板，变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}",
+      "default": "{uploader}/{title}/{page:02} {part}.{ext}",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "bili.template",
+      "description": "（已弃用，改用 bili.video-template）视频落盘模板",
+      "default": "{uploader}/{title}/{page:02} {part}.{ext}",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "bili.quality",
+      "description": "默认请求画质：4k / 1080p60 / 1080p / 720p / 480p / 360p（未登录会被服务端封顶 360P）",
+      "default": "1080p",
+      "secret": false,
+      "accepts": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "96",
+        "320",
+        "321",
+        "1080P",
+        "4K",
+        "116"
+      ]
+    },
+    {
+      "key": "bili.audio-format",
+      "description": "--audio-only 的输出格式：mp3（默认，能写标签）/ flac / m4a（不能写标签）",
+      "default": "mp3",
+      "secret": false,
+      "accepts": [
+        "flac",
+        "mp3",
+        "m4a"
+      ]
+    },
+    {
+      "key": "bili.audio-bitrate",
+      "description": "转 mp3 时的码率（kbps）",
+      "default": "320",
+      "secret": false,
+      "accepts": [
+        "96",
+        "320",
+        "116"
+      ]
+    },
+    {
+      "key": "bili.tag",
+      "description": "--audio-only 是否自动写标签并内嵌封面：true / false",
+      "default": "true",
+      "secret": false,
+      "accepts": [
+        "true",
+        "false"
+      ]
+    },
+    {
+      "key": "bili.sidecar",
+      "description": "下载视频时顺带生成的伴生文件，逗号分隔：nfo / cover / danmaku / all（默认空 = 不生成）",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        " ",
+        "abc",
+        "true",
+        "false",
+        "yes",
+        "flac",
+        "lossless",
+        "auto",
+        "off",
+        "fetch",
+        "curl",
+        "embed",
+        "lrc",
+        "both",
+        "none",
+        "all",
+        "first",
+        "nfo,cover",
+        "ogg",
+        "Various Artists"
+      ]
+    },
+    {
+      "key": "bili.subscribe.pages",
+      "description": "订阅下载哪些分 P：all（默认，完整拿到）/ first（只下 P1，返回 partial: true）",
+      "default": "all",
+      "secret": false,
+      "accepts": [
+        "all",
+        "first"
+      ]
+    },
+    {
+      "key": "bili.audio-template",
+      "description": "B 站音频的落盘模板（留空用 music.template）；变量 {uploader} {title} {part} {page} {bvid} {quality} {ext}，如 Bilibili/{uploader}/{title}.{ext}",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "bili.audio-dir",
+      "description": "B 站音频的根目录（绝对路径）；留空用 ASTRA_MUSIC_DIR。与 bili.audio-template 组合出完整落点",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
+      ]
+    },
+    {
+      "key": "proxy.url",
+      "description": "HTTP 代理地址（如 http://mihomo:7890）；留空则不用代理",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "http://mihomo:7890"
+      ]
+    },
+    {
+      "key": "proxy.include",
+      "description": "走代理的域名后缀，逗号分隔（如 steampowered.com,steamcommunity.com）；留空 = 全部走代理",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "proxy.exclude",
+      "description": "不走代理的域名后缀，逗号分隔（优先级高于 include）；留空 = 不排除",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "bili.concurrency",
+      "description": "B 站批量任务并发数 1..3",
+      "default": "1",
+      "secret": false,
+      "accepts": [
+        "1",
+        "2",
+        "3"
+      ]
+    },
+    {
+      "key": "music.concurrency",
+      "description": "批量下载并发数 1..4",
+      "default": "2",
+      "secret": false,
+      "accepts": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
+    },
+    {
+      "key": "douyin.dir",
+      "description": "抖音下载根目录（绝对路径）；留空则必须给 --out",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
+      ]
+    },
+    {
+      "key": "x.dir",
+      "description": "X 媒体根目录（绝对路径）；留空 = /host-root/volume1/素材/twitter，没有 NAS 时落 <ASTRA_HOME>/x-media",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
+      ]
+    },
+    {
+      "key": "x.bin",
+      "description": "twitter-cli / gallery-dl 所在目录；留空 = /opt/data/venvs/x/bin",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "lol.saveScript",
+      "description": "单局入库脚本（如 lol_save_match.sh）；留空则用内置默认位置，找不到会明确报未配置",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "lol.pc",
+      "description": "跑英雄联盟客户端的 PC 的 ssh 主机名（同 ~/.ssh/config）；留空用 \"pc\"",
+      "default": "pc",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "lol.pc-dump-dir",
+      "description": "PC 上存放采集脚本和 JSON 的目录（正斜杠写法，scp 用）",
+      "default": "C:/LocalSpace/lol-dump",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "comic.dir",
+      "description": "漫画根目录（绝对路径）；环境变量 ASTRA_COMIC_DIR 优先",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
+      ]
+    },
+    {
+      "key": "comic.template",
+      "description": "漫画落盘模板，变量 {id} {title} {author} {chapter} {chapter_title} {page} {ext}",
+      "default": "{id} {title}/{chapter:02}/{page:03}.{ext}",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "comic.concurrency",
+      "description": "单话内图片下载并发 1..6",
+      "default": "3",
+      "secret": false,
+      "accepts": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6"
+      ]
+    },
+    {
+      "key": "novel.dir",
+      "description": "小说（EPUB）根目录（绝对路径）；环境变量 ASTRA_NOVEL_DIR 优先；留空 = <ASTRA_HOME>/novel/books",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
+      ]
+    },
+    {
+      "key": "novel.template",
+      "description": "EPUB 落盘模板，变量 {title} {author} {source}",
+      "default": "{title}/{title}.epub",
+      "secret": false,
+      "accepts": [
+        "a/b.epub"
+      ]
+    },
+    {
+      "key": "novel.concurrency",
+      "description": "抓章并发 1..6",
+      "default": "3",
+      "secret": false,
+      "accepts": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6"
+      ]
+    },
+    {
+      "key": "notify.telegram_chat",
+      "description": "Telegram 通知目标 chat_id（如 -1001234567890）；令牌放 ASTRA_TELEGRAM_TOKEN 或 notify.telegram_token",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "notify.telegram_token",
+      "description": "Telegram bot 令牌（建议改用环境变量 ASTRA_TELEGRAM_TOKEN）",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "notify.webhook_url",
+      "description": "通用 webhook：POST JSON {\"text\": \"...\"}；可用于 Slack/钉钉/自建服务",
+      "default": "",
+      "secret": false,
+      "accepts": "any"
+    },
+    {
+      "key": "notify.feishu_webhook",
+      "description": "后台任务结束时推送到飞书群机器人的 webhook 地址；环境变量 ASTRA_FEISHU_WEBHOOK 优先",
+      "default": "",
+      "secret": true,
+      "accepts": [
+        "",
+        "https://open.feishu.cn/open-apis/bot/v2/hook/abc"
+      ]
+    },
+    {
+      "key": "notify.feishu_secret",
+      "description": "飞书机器人开了签名校验时的密钥；环境变量 ASTRA_FEISHU_SECRET 优先",
+      "default": "",
+      "secret": true,
+      "accepts": "any"
+    }
+  ]
+}

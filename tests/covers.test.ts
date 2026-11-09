@@ -16,7 +16,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { archiveAlbumCovers, findAlbumDirs } from '../src/music/library-io.ts'
 import { saveTrack } from '../src/music/library.ts'
-import { retagFlac } from '../src/music/tags.ts'
+import { retagFlac } from '../src/core/audio-tags.ts'
 
 const PNG = readFileSync(new URL('./fixtures/cover.png', import.meta.url))
 

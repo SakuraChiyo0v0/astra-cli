@@ -19,32 +19,13 @@ import { astraHome } from './core/paths.ts'
 import { closeDb } from './core/db.ts'
 import { runDoctor } from './core/doctor.ts'
 import { allSessions, clearSessions, type Domain } from './core/sessions.ts'
-import { musicCommands } from './music/commands.ts'
 import { dbCommands } from './core/db/commands.ts'
 import { libCommands } from './core/db/lib-commands.ts'
-import { biliCommands } from './bili/commands.ts'
-import { mediaCommands } from './media/commands.ts'
-import { steamCommands } from './steam/commands.ts'
-import { vrCommands } from './vr/commands.ts'
-import { modelCommands } from './model/commands.ts'
-import { pixivCommands } from './pixiv/commands.ts'
-import { heyboxCommands } from './heybox/commands.ts'
-import { comicCommands } from './comic/commands.ts'
-import { llmCommands } from './llm/commands.ts'
-import { deviceCommands } from './device/commands.ts'
-import { quarkCommands } from './quark/commands.ts'
-import { cloudCommands } from './cloud/commands.ts'
-import { douyinCommands } from './douyin/commands.ts'
-import { lolCommands } from './lol/commands.ts'
-import { xCommands } from './x/commands.ts'
-import { authCommands } from './auth/commands.ts'
-import { scheduleCommands } from './schedule/commands.ts'
-import { novelCommands } from './novel/commands.ts'
 import { allowedPatterns, authorize, openAuth, resolveToken, scopeOf } from './core/auth.ts'
 import { readToken, setIdentity, setToken } from './core/identity.ts'
 import { setCommandRegistry } from './core/registry.ts'
+import { DOMAINS } from './domains.ts'
 import { record as recordAudit } from './core/audit.ts'
-import { listSources } from './lx/store.ts'
 import { notify, notifyProviders } from './core/notify.ts'
 import { listJobs, statusLabel, getJob, cancelJob, resumeJob } from './core/jobs.ts'
 import { backup, listBackups, restore } from './core/backup.ts'
@@ -400,9 +381,8 @@ const auditCmd: Command = {
 const commands: Command[] = [
 
   help, versionCmd, doctor, jobsCmd, jobCmd, configCmd, loginCmd, backupCmd, auditCmd, notifyTest, notifyProvidersCmd,
-  ...musicCommands, ...biliCommands, ...mediaCommands, ...steamCommands, ...vrCommands, ...modelCommands,
-  ...dbCommands, ...libCommands, ...quarkCommands, ...cloudCommands,
-  ...pixivCommands, ...comicCommands, ...douyinCommands, ...lolCommands, ...heyboxCommands, ...llmCommands, ...deviceCommands, ...xCommands, ...authCommands, ...scheduleCommands, ...novelCommands,
+  // db / lib 是 core 自带的命令组，历史上排在 model 之后 —— 保持 help 输出顺序不变
+  ...DOMAINS.flatMap((d) => (d.name === 'model' ? [...d.commands, ...dbCommands, ...libCommands] : d.commands)),
 ]
 
 // 供 `astra auth doctor` 之类需要完整清单的命令读取（避免 import main 形成环）

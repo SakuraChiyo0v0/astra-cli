@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { audioPayload, parseFlacBlocks, retagFlac, retagMp3, writeTags, type TagData } from '../src/music/tags.ts'
+import { audioPayload, parseFlacBlocks, retagFlac, retagMp3, writeTags, type TagData } from '../src/core/audio-tags.ts'
 import { detectFormat, parseFlacStreamInfo, summarize } from '../src/music/audio.ts'
 
 const fixture = (name: string): Buffer => readFileSync(new URL(`./fixtures/${name}`, import.meta.url))

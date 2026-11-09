@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { createHash, randomBytes } from 'node:crypto'
 import { AstraError } from '../core/errors.ts'
 import { getConfig } from '../core/config.ts'
-import { runFfmpeg, runFfprobe } from '../media/run.ts'
+import { runFfmpeg, runFfprobe } from '../core/ffmpeg.ts'
 import { SCRAMBLE_268850, SCRAMBLE_421926 } from './constants.ts'
 
 /** 与公开实现同一套分割数公式。 */

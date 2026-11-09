@@ -9,7 +9,9 @@
  */
 import { readFile, writeFile, rename } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
-import type { AudioFormat } from './audio.ts'
+
+/** 音频容器格式。0.53.0 从 music/audio.ts 挪来（写标签要用，core 不能依赖 music）。 */
+export type AudioFormat = 'flac' | 'mp3' | 'm4a' | 'ogg' | 'unknown'
 
 export interface TagData {
   title: string

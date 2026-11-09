@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { progress } from '../core/output.ts'
 import { probeFile } from './audio.ts'
-import { hasCoverArt } from './tags.ts'
+import { hasCoverArt } from '../core/audio-tags.ts'
 import { allTracks, updateTrackSpec, type LibraryTrack } from './library.ts'
 
 export interface RefreshResult {

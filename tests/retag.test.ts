@@ -47,7 +47,7 @@ function sha256(file: string): string {
 
 /** 音频载荷的哈希（剥掉标签）。用来验证"写标签不动音频字节"。 */
 async function audioHash(file: string): Promise<string> {
-  const { audioPayload } = await import('../src/music/tags.ts')
+  const { audioPayload } = await import('../src/core/audio-tags.ts')
   const buffer = readFileSync(file)
   const format = buffer.subarray(0, 4).toString('latin1') === 'fLaC' ? 'flac' : 'mp3'
   return createHash('sha256').update(audioPayload(buffer, format)).digest('hex')
@@ -251,7 +251,7 @@ test('写标签真的改坏音频时，执行会中止且不留下损坏的文�
   assert.equal(result.failed.length, 0)
   assert.equal(existsSync(plan.items[0]!.to), true)
   // 音频载荷哈希必须可复现 —— 这是"检测到损坏"的依据
-  const { audioPayload } = await import('../src/music/tags.ts')
+  const { audioPayload } = await import('../src/core/audio-tags.ts')
   const originalFormat = original.subarray(0, 4).toString('latin1') === 'fLaC' ? 'flac' : 'mp3'
   const after = readFileSync(plan.items[0]!.to)
   assert.equal(

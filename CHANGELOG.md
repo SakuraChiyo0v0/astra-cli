@@ -1,3 +1,16 @@
+## 0.53.0
+
+内部重构：理顺 core 与领域的边界，为「按领域懒加载」做准备。**命令、参数、输出、配置键都没变**
+（`tests/surface-golden.test.ts` 逐字节比对 help 全量清单与配置键表）。
+
+- 共用的东西下沉到 core：`media/run.ts` → `core/ffmpeg.ts`（`probe` 一并从 `bili/ffmpeg.ts` 挪来，
+  拆掉 media ↔ bili 的环）；`music/tags.ts` → `core/audio-tags.ts`（bili 写标签不再依赖 music）
+- `lx/` 并进 `music/lx/`（洛雪音源只有音乐域用）；删掉 main.ts 里没用到的 import
+- 每个领域一份清单 `src/<领域>/manifest.ts`，登记在 `src/domains.ts`；main.ts 不再逐个 import 19 个领域
+- 新增 `tests/boundaries.test.ts`：core 不得新增对领域的依赖，领域只能依赖 core 和 `dependsOn` 里声明的领域。
+  core 里剩下的老账（config 的派生路径、doctor 分域检查、sessions 登录汇总）列在白名单里，只许减不许加
+- `scripts/bench-startup.sh`：启动耗时基线。0.52.0 实测中位数：`version` 261ms / `help` 269ms / `bili get --help` 210ms
+
 ## 0.52.0
 
 新增小说域 `astra novel`：按书名找书，打成 EPUB 落到 NAS，可追更连载。

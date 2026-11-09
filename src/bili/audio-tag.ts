@@ -11,15 +11,15 @@
  * - album   = UP 主名（同一 UP 的音频归到一个专辑，播放器里好找）
  * - cover   = 视频封面
  *
- * 与音乐域的关系：复用 `music/tags.ts` 的 ID3v2.4 / FLAC 写入，不重复实现。
+ * 与音乐域的关系：复用 `core/audio-tags.ts` 的 ID3v2.4 / FLAC 写入，不重复实现。
  */
 import { rmSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { AstraError } from '../core/errors.ts'
 import { getConfig } from '../core/config.ts'
-import { runFfmpeg } from '../media/run.ts'
-import { writeTags, type TagData } from '../music/tags.ts'
-import type { AudioFormat } from '../music/audio.ts'
+import { runFfmpeg } from '../core/ffmpeg.ts'
+import { writeTags, type TagData } from '../core/audio-tags.ts'
+import type { AudioFormat } from '../core/audio-tags.ts'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
 
@@ -77,7 +77,7 @@ async function fetchCover(url: string, signal?: AbortSignal): Promise<{ mime: st
 /**
  * 把音频转成目标格式并写标签。
  *
- * 只支持 mp3 / flac —— 与 `music/tags.ts` 的写标签能力保持一致。
+ * 只支持 mp3 / flac —— 与 `core/audio-tags.ts` 的写标签能力保持一致。
  * 用户设了 m4a 时只转码不写标签，并如实告诉他原因。
  */
 export async function processBiliAudio(options: AudioPipelineOptions): Promise<AudioPipelineResult> {

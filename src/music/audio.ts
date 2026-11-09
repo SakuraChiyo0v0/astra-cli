@@ -7,7 +7,8 @@
 import { open } from 'node:fs/promises'
 import { httpRequest } from '../core/http.ts'
 
-export type AudioFormat = 'flac' | 'mp3' | 'm4a' | 'ogg' | 'unknown'
+import type { AudioFormat } from '../core/audio-tags.ts'
+export type { AudioFormat }
 export type Quality = '128k' | '320k' | 'flac' | '24bit'
 export const QUALITY_ORDER: readonly Quality[] = ['24bit', 'flac', '320k', '128k']
 

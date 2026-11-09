@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { loadLxSource, makeLxBody, parseScriptMeta } from '../src/lx/host.ts'
+import { loadLxSource, makeLxBody, parseScriptMeta } from '../src/music/lx/host.ts'
 
 const SCRIPT = (base: string) => `/*!
  * @name 测试音源

@@ -37,7 +37,7 @@ test('字体：不给路径时返回一个存在的字体或 null', () => {
 
 test('封面提取：FLAC PICTURE 块的偏移要对（漏跳 desc 与宽高会永远返回 null）', async () => {
   const { readFileSync } = await import('node:fs')
-  const { extractCoverArt, hasCoverArt } = await import('../src/music/tags.ts')
+  const { extractCoverArt, hasCoverArt } = await import('../src/core/audio-tags.ts')
   const withCover = readFileSync(new URL('./fixtures/with-cover.flac', import.meta.url))
   assert.equal(hasCoverArt(withCover), true, '夹具应当有封面')
   const cover = extractCoverArt(withCover)
@@ -51,7 +51,7 @@ test('封面提取：FLAC PICTURE 块的偏移要对（漏跳 desc 与宽高会�
 
 test('封面提取：没有封面的文件返回 null', async () => {
   const { readFileSync } = await import('node:fs')
-  const { extractCoverArt, hasCoverArt } = await import('../src/music/tags.ts')
+  const { extractCoverArt, hasCoverArt } = await import('../src/core/audio-tags.ts')
   const plain = readFileSync(new URL('./fixtures/tone.flac', import.meta.url))
   assert.equal(hasCoverArt(plain), false)
   assert.equal(extractCoverArt(plain), null)

@@ -24,7 +24,7 @@ import {
 } from './subscribe.ts'
 import { jobItemsFor, MUSIC_DOMAIN, qualitySummary } from './jobs.ts'
 import { cancelJob, createJob, getJob, listJobs, resumeJob, runWorker, spawnWorker, statusLabel } from '../core/jobs.ts'
-import { addSource, listSources, loadEnabledSources, orphanScripts, removeSource, setSourceEnabled } from '../lx/store.ts'
+import { addSource, listSources, loadEnabledSources, orphanScripts, removeSource, setSourceEnabled } from './lx/store.ts'
 import { musicInfoOf } from './resolve.ts'
 import { probeUrl } from './audio.ts'
 import { accountStatus, beginLogin, logout as logoutSession, pollLogin, waitLogin } from './login.ts'
