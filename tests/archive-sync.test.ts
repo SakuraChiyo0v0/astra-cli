@@ -85,3 +85,23 @@ test('没迁移就拒绝 sync', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('老库记的是 0005_hermes_archive：只补记新 id，不重跑建表', async () => {
+  const { db, src } = setup()
+  src.close()
+  try {
+    await migrate(db)
+    // 模拟线上：表早就由外部脚本建好，账也按旧 id 记过
+    await db.conn.exec("delete from schema_migrations where id = 'astra_0006_hermes_archive'")
+    await db.conn.exec(
+      "insert into schema_migrations (id, dialect, checksum, applied_at) values ('0005_hermes_archive', 'sqlite', 'x', '2026-01-01T00:00:00.000Z')",
+    )
+    const again = await migrate(db)
+    assert.deepEqual(again.applied, [], '不能重跑 DDL（表已存在，会报错）')
+    assert.ok(again.skipped.includes('astra_0006_hermes_archive'), '应把新 id 补记进账')
+    const rows = await db.conn.query<{ id: string }>("select id from schema_migrations where id like '%hermes_archive'")
+    assert.deepEqual(rows.map((r) => r.id).sort(), ['0005_hermes_archive', 'astra_0006_hermes_archive'])
+  } finally {
+    await db.conn.close()
+  }
+})

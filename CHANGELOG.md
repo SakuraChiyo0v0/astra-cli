@@ -7,6 +7,8 @@
 - 迁移 `astra_0006_hermes_archive`：PG 建 `hermes` schema（sessions / messages / documents），
   SQLite 用 `hermes_*` 前缀。全部 `if not exists`，线上已有的表重复执行无害
 - 只写会话相关表，不碰资产表；先 `astra db migrate`，缺表时命令直接拒绝写入而不是半途报错
+- 迁移带 `renamedFrom: '0005_hermes_archive'`：线上这些表早就由外部脚本按旧 id 建过并记了账，
+  `db migrate` 只补记新 id、不重跑建表
 - 为什么进 astra 而不是留在 scripts：会话存档现在每天由 Hermes cron 跑 Python 脚本，
   落的是另一套库；并到 astra 后一条命令就能查
 

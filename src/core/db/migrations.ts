@@ -287,6 +287,9 @@ const M0005: Migration = {
  */
 const M0006: Migration = {
   id: 'astra_0006_hermes_archive',
+  // 这套表最早由本仓库之外的脚本按 0005_hermes_archive 建过并记了账。
+  // 线上库就是这种状态，靠 renamedFrom 只补记、不重跑 DDL。
+  renamedFrom: '0005_hermes_archive',
   summary: 'Hermes 会话存档表（sessions / messages / documents）',
   up: {
     sqlite: [
