@@ -59,6 +59,7 @@ export const libCommands: Command[] = [
             { label: 'bili', path: getConfig('bili.dir'), note: 'bili.dir' },
             { label: 'pixiv', path: getConfig('pixiv.dir'), note: 'pixiv.dir' },
             { label: 'comic', path: getConfig('comic.dir'), note: 'comic.dir' },
+            { label: 'manga', path: getConfig('manga.dir'), note: 'manga.dir' },
           ]
           try {
             const sensitive = getConfig('pixiv.sensitive-dir')

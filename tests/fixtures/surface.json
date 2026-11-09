@@ -105,6 +105,7 @@
         "novel.dir：小说（EPUB）根目录（绝对路径）；环境变量 ASTRA_NOVEL_DIR 优先；留空 = <ASTRA_HOME>/novel/books",
         "novel.template：EPUB 落盘模板，变量 {title} {author} {source}",
         "novel.concurrency：抓章并发 1..6",
+        "manga.dir：漫画根目录（绝对路径）；环境变量 ASTRA_MANGA_DIR 优先；留空 = <ASTRA_HOME>/manga/library",
         "notify.telegram_chat：Telegram 通知目标 chat_id（如 -1001234567890）；令牌放 ASTRA_TELEGRAM_TOKEN 或 notify.telegram_token",
         "notify.telegram_token：Telegram bot 令牌（建议改用环境变量 ASTRA_TELEGRAM_TOKEN）",
         "notify.webhook_url：通用 webhook：POST JSON {\"text\": \"...\"}；可用于 Slack/钉钉/自建服务",
@@ -3565,6 +3566,88 @@
       "options": {}
     },
     {
+      "command": "manga search",
+      "summary": "按作品名搜漫画（各源一起搜）",
+      "usage": "astra manga search <作品名> [--source komiic / copymanga] [--limit 20]",
+      "options": {
+        "--source <name>": "只搜一个源：komiic / copymanga",
+        "--limit <n>": "最多返回几条，默认 20"
+      },
+      "notes": [
+        "排序：完全同名 > 以关键词开头 > 包含；繁简体互通",
+        "把 items 列给用户选，再 `astra manga get <作品名> --pick <n>` 或直接给链接",
+        "本子类（JM 车号）在 `astra comic`，不在这里"
+      ]
+    },
+    {
+      "command": "manga info",
+      "summary": "看一部漫画的分组（单行本 / 单话 / 连载…）与章节，不下载",
+      "usage": "astra manga info <作品名|链接> [--pick n] [--source s]",
+      "options": {
+        "--pick <n>": "有多个候选时选第几个",
+        "--source <name>": "只在一个源里找：komiic / copymanga"
+      }
+    },
+    {
+      "command": "manga get",
+      "summary": "下载漫画（后台任务）：一话 / 一卷一个目录，可选打 CBZ",
+      "usage": "astra manga get <作品名|链接> [--group 单行本] [--range 1-3,5] [--pick n] [--source s] [--cbz] [--wait 300]",
+      "options": {
+        "--group <name>": "分组名：单行本 / 单话 / 连载 …",
+        "--range <spec>": "第几话 / 卷，从 1 开始：1-3,5",
+        "--pick <n>": "有多个候选时选第几个",
+        "--source <name>": "只在一个源里找：komiic / copymanga",
+        "--cbz": "每话 / 卷下完再打一个 CBZ（原图目录保留）",
+        "--wait <s>": "等任务结束的最长秒数（≤600）"
+      },
+      "notes": [
+        "作品名只在「完全同名」时自动选（多个源都有就取 komiic 优先）；否则报 AMBIGUOUS，details.candidates 是候选",
+        "--group 不给就取第一个分组（拷贝漫画是单行本优先）；分组名看 `astra manga info`",
+        "落盘 manga.dir / ASTRA_MANGA_DIR：<作品>/<分组>/<第01卷>/001.jpg；已下完整的页会跳过",
+        "Komiic 匿名每天约 300 张；拷贝漫画请求太密会被限流约 1 小时。遇到时该项记失败、错误里写何时可以 resume",
+        "立刻返回任务 id；`--wait 300` 等它跑完（最多 600 秒）"
+      ]
+    },
+    {
+      "command": "manga job",
+      "summary": "看漫画任务进度",
+      "usage": "astra manga job <id> [--failed] [--wait 60]",
+      "options": {
+        "--failed": "列出失败的话 / 卷",
+        "--wait <s>": "最多等待秒数（≤600）"
+      }
+    },
+    {
+      "command": "manga jobs",
+      "summary": "最近的漫画任务",
+      "usage": "astra manga jobs [--active] [--limit 20]",
+      "options": {
+        "--active": "只看还在跑的",
+        "--limit <n>": "条数，默认 20"
+      }
+    },
+    {
+      "command": "manga job cancel",
+      "summary": "取消漫画任务（已下的页不动）",
+      "usage": "astra manga job cancel <id>",
+      "options": {}
+    },
+    {
+      "command": "manga job resume",
+      "summary": "重试漫画任务里失败 / 没跑完的话，只补缺的页",
+      "usage": "astra manga job resume <id>",
+      "options": {},
+      "notes": [
+        "额度 / 限流失败时，错误里写了大约几点可以 resume；早了会再失败一次，不会重下已有的页"
+      ]
+    },
+    {
+      "command": "manga doctor",
+      "summary": "漫画能力自检：目录、各源连通与额度",
+      "usage": "astra manga doctor",
+      "options": {}
+    },
+    {
       "command": "archive sync",
       "summary": "把 Hermes 会话增量写入当前数据库",
       "usage": "astra archive sync [--state <state.db>] [--docs <目录>]",
@@ -3583,6 +3666,7 @@
     "bili _worker",
     "comic _worker",
     "douyin fav",
+    "manga _worker",
     "music _worker",
     "novel _worker",
     "steam _idle-worker",
@@ -3635,6 +3719,7 @@
       "novel.dir：小说（EPUB）根目录（绝对路径）；环境变量 ASTRA_NOVEL_DIR 优先；留空 = <ASTRA_HOME>/novel/books",
       "novel.template：EPUB 落盘模板，变量 {title} {author} {source}",
       "novel.concurrency：抓章并发 1..6",
+      "manga.dir：漫画根目录（绝对路径）；环境变量 ASTRA_MANGA_DIR 优先；留空 = <ASTRA_HOME>/manga/library",
       "notify.telegram_chat：Telegram 通知目标 chat_id（如 -1001234567890）；令牌放 ASTRA_TELEGRAM_TOKEN 或 notify.telegram_token",
       "notify.telegram_token：Telegram bot 令牌（建议改用环境变量 ASTRA_TELEGRAM_TOKEN）",
       "notify.webhook_url：通用 webhook：POST JSON {\"text\": \"...\"}；可用于 Slack/钉钉/自建服务",
@@ -4099,6 +4184,16 @@
         "4",
         "5",
         "6"
+      ]
+    },
+    {
+      "key": "manga.dir",
+      "description": "漫画根目录（绝对路径）；环境变量 ASTRA_MANGA_DIR 优先；留空 = <ASTRA_HOME>/manga/library",
+      "default": "",
+      "secret": false,
+      "accepts": [
+        "",
+        "/abs/path"
       ]
     },
     {

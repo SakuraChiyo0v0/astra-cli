@@ -1,3 +1,18 @@
+## 0.56.0 — 2026-11-09
+
+**新增 `astra manga`：普通漫画（本子类仍在 `astra comic`）**
+
+- 两个源：`komiic`（繁体，单行本 + 单话，GraphQL；匿名每 IP 约 300 张 / 天）、
+  `copymanga`（拷贝漫画，作品最全，连载 / 单行本 / 翻译组；没有额度，但请求太密会 code 210 限流约 1 小时）。
+  协议参考 venera-configs 的 komiic.js / copy_manga.js
+- `manga search / info / get / job / jobs / job cancel / job resume / doctor`：一项 = 一话或一卷，后台任务
+- 落盘 `manga.dir`（`ASTRA_MANGA_DIR` 优先）：`<作品>/<分组>/<第01卷|第01话>/001.jpg`，`--cbz` 另打包；
+  已有且魔数正确的页跳过，中断后 `job resume` 只补缺的页
+- 额度 / 限流统一报 `RATE_LIMITED`（可重试），错误里写大约几点能 resume
+- 网络：Komiic 直连不通，要把 `komiic.com` 加进 `proxy.include`；拷贝漫画只能直连，别加
+- 拷贝漫画的设备号固定存在 `<ASTRA_HOME>/manga/copymanga-device.json`；接口间隔 1.2 秒、图片间隔 0.8 秒
+- `lib root auto` 认 `manga.dir`
+
 ## 0.55.0 — 2026-11-09
 
 **新增 `astra archive`：把 Hermes 会话写进 astra 自己的库**

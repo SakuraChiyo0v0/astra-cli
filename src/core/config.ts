@@ -123,6 +123,8 @@ export const CONFIG_KEYS: ConfigKey[] = [
     validate: (v) => (v.endsWith('.epub') ? null : '必须以 .epub 结尾') },
   { key: 'novel.concurrency', description: '抓章并发 1..6', default: '3',
     validate: (v) => (/^[1-6]$/.test(v) ? null : '只能是 1..6') },
+  { key: 'manga.dir', description: '漫画根目录（绝对路径）；环境变量 ASTRA_MANGA_DIR 优先；留空 = <ASTRA_HOME>/manga/library', default: '',
+    validate: (v) => (v === '' || path.isAbsolute(v) ? null : '必须是绝对路径') },
   { key: 'notify.telegram_chat', description: 'Telegram 通知目标 chat_id（如 -1001234567890）；令牌放 ASTRA_TELEGRAM_TOKEN 或 notify.telegram_token', default: '' },
   { key: 'notify.telegram_token', description: 'Telegram bot 令牌（建议改用环境变量 ASTRA_TELEGRAM_TOKEN）', default: '' },
   { key: 'notify.webhook_url', description: '通用 webhook：POST JSON {"text": "..."}；可用于 Slack/钉钉/自建服务', default: '' },
