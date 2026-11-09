@@ -184,6 +184,13 @@ const MIGRATIONS: string[] = [
   // 小说订阅（0.52.0）：选哪卷、要不要繁转简这类每条订阅自己的选项，存 JSON。
   // 不给每个域各加一列 —— 那正是 bili 那几列 audio_only / pages_mode 的教训。
   `alter table subscriptions add column options text`,
+  // 0.57.0：JM 本子域从 comic 改名 jm，comic 让给普通漫画。存量的 JM 订阅和任务改标签，
+  // 否则 `jm subscribe list` / `jm jobs` 看不到它们，`comic` 域又会把它们当成自己的。
+  // 这一步之前 comic 域只有 JM 一家（普通漫画 0.56.0 才出现，那时叫 manga），所以按 domain=comic 改全部是对的；
+  // 0.56.0 的 manga 任务一并改成 comic。
+  `update subscriptions set kind = 'jm-album' where kind = 'comic-album';
+   update jobs set meta = json_set(meta, '$.domain', 'jm') where json_extract(meta, '$.domain') = 'comic';
+   update jobs set meta = json_set(meta, '$.domain', 'comic') where json_extract(meta, '$.domain') = 'manga'`,
 ]
 
 export function db(): DatabaseSync {

@@ -61,7 +61,7 @@ async function imageSize(file: string, configured: string, signal?: AbortSignal)
   const stream = parsed.streams?.[0]
   const width = stream?.width
   const height = stream?.height
-  if (!width || !height) throw new AstraError('COMIC_BAD_IMAGE', '图片没有有效尺寸', { exitCode: 5 })
+  if (!width || !height) throw new AstraError('JM_BAD_IMAGE', '图片没有有效尺寸', { exitCode: 5 })
   return { width, height }
 }
 
@@ -107,7 +107,7 @@ export async function descrambleToFile(options: {
     return { slices: 0 }
   }
 
-  const work = path.join(tmpdir(), `astra-comic-${process.pid}-${randomBytes(4).toString('hex')}`)
+  const work = path.join(tmpdir(), `astra-jm-${process.pid}-${randomBytes(4).toString('hex')}`)
   await mkdir(work, { recursive: true })
   const ext = path.extname(options.imgName).split('?')[0] || '.jpg'
   const src = path.join(work, `src${ext}`)

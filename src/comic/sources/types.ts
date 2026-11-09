@@ -52,7 +52,7 @@ export interface PageRef {
   headers: Record<string, string>
 }
 
-export interface MangaSource {
+export interface ComicSource {
   /** 对外名字（`--source` 用），也是稳定 id。 */
   name: string
   description: string
@@ -79,7 +79,7 @@ export class QuotaError extends AstraError {
     super('RATE_LIMITED', message, {
       exitCode: 5,
       retryable: true,
-      hint: `约 ${Math.ceil(resetInSeconds / 60)} 分钟后再试；下载任务用 \`astra manga job resume <id>\` 接着下`,
+      hint: `约 ${Math.ceil(resetInSeconds / 60)} 分钟后再试；下载任务用 \`astra comic job resume <id>\` 接着下`,
       details: { source, resetInSeconds },
     })
     this.name = 'QuotaError'

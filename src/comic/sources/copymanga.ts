@@ -3,7 +3,7 @@
  *
  * - **只能直连**：经 mihomo 时接口只回 `error`（代理出口 IP 被拒）。别把它的域名加进 `proxy.include`
  * - 请求头要带 HMAC 签名（`x-auth-signature = HMAC-SHA256(secret, 秒级时间戳)`）
- * - 设备标识固定存在 `<ASTRA_HOME>/manga/copymanga-device.json`：每次随机更像破解版
+ * - 设备标识固定存在 `<ASTRA_HOME>/comic/copymanga-device.json`：每次随机更像破解版
  * - 被判成破解版时回 `code 210`「請到官網更新最新APP」，约 1 小时自动解除。
  *   实测连下一卷 170 张图后紧接着调接口就会触发，所以接口请求之间、图与图之间都留间隔
  * - 一部作品分多个分组（default 连载 / tankobon 单行本 / 翻译组…），默认组可能是空的
@@ -15,7 +15,7 @@ import path from 'node:path'
 import { AstraError } from '../../core/errors.ts'
 import { homePath } from '../../core/paths.ts'
 import { fetchBytes, fetchJson, sleep } from '../fetch.ts'
-import { QuotaError, type ChapterRef, type ComicInfo, type Group, type MangaSource, type PageRef, type SearchHit } from './types.ts'
+import { QuotaError, type ChapterRef, type ComicInfo, type Group, type ComicSource, type PageRef, type SearchHit } from './types.ts'
 
 const APIS = ['https://api.copy2000.online', 'https://api.copy-manga.com']
 const SECRET = Buffer.from('M2FmMDg1OTAzMTEwMzJlZmUwNjYwNTUwYTA1NjNhNTM=', 'base64')
@@ -34,7 +34,7 @@ let lastImage = 0
 interface Device { deviceinfo: string; device: string; pseudoid: string }
 
 function deviceFile(): string {
-  return homePath('manga', 'copymanga-device.json')
+  return homePath('comic', 'copymanga-device.json')
 }
 
 function device(): Device {
@@ -134,7 +134,7 @@ async function chapters(pw: string, key: string, signal?: AbortSignal): Promise<
   }
 }
 
-export const copymanga: MangaSource = {
+export const copymanga: ComicSource = {
   name: 'copymanga',
   description: '拷贝漫画：作品最全（连载 / 单行本 / 翻译组），没有额度；只能直连，请求太密会被限流 1 小时',
 

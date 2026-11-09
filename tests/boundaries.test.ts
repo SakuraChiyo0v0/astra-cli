@@ -19,7 +19,7 @@ const IMPORT = /(?:^|\n)\s*(?:import|export)\b[^'"]*?from\s*['"](\.{1,2}\/[^'"]+
 const KNOWN_CORE_TO_DOMAIN = new Set([
   'core/config.ts -> bili',
   'core/doctor.ts -> bili',
-  'core/doctor.ts -> comic',
+  'core/doctor.ts -> jm',
   'core/doctor.ts -> music',
   'core/sessions.ts -> bili',
   'core/sessions.ts -> music',

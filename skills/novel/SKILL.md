@@ -21,7 +21,7 @@ metadata:
 - 用户想追一本连载（有新章节就更新）
 - 用户问某本书有几卷、多少章
 
-不适用：漫画用 `astra comic`；有声书/音乐用 `astra music`。
+不适用：漫画用 `astra comic`、本子用 `astra jm`；有声书/音乐用 `astra music`。
 
 ## 书源
 

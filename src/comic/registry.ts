@@ -7,23 +7,23 @@ import { progress } from '../core/output.ts'
 import { normalizeTitle } from '../novel/text.ts'
 import { copymanga } from './sources/copymanga.ts'
 import { komiic } from './sources/komiic.ts'
-import type { MangaSource, SearchHit } from './sources/types.ts'
+import type { ComicSource, SearchHit } from './sources/types.ts'
 
 /** 顺序 = 搜索结果同分时的优先级。 */
-export const SOURCES: MangaSource[] = [komiic, copymanga]
+export const SOURCES: ComicSource[] = [komiic, copymanga]
 
-export function sourceByName(name: string): MangaSource {
+export function sourceByName(name: string): ComicSource {
   const source = SOURCES.find((s) => s.name === name.trim().toLowerCase())
   if (!source) throw invalidInput(`没有这个漫画源：${name}`, `可用：${SOURCES.map((s) => s.name).join(' / ')}`)
   return source
 }
 
 export interface Ref {
-  source: MangaSource
+  source: ComicSource
   id: string
 }
 
-export function matchRef(input: string, only?: MangaSource): Ref | null {
+export function matchRef(input: string, only?: ComicSource): Ref | null {
   for (const source of only ? [only] : SOURCES) {
     const id = source.match(input.trim())
     if (id) return { source, id }
@@ -45,7 +45,7 @@ export function rankHits(keyword: string, hits: SearchHit[]): SearchHit[] {
   })
 }
 
-export async function searchAll(keyword: string, only?: MangaSource, signal?: AbortSignal): Promise<{ hits: SearchHit[]; perSource: Record<string, number | string> }> {
+export async function searchAll(keyword: string, only?: ComicSource, signal?: AbortSignal): Promise<{ hits: SearchHit[]; perSource: Record<string, number | string> }> {
   const perSource: Record<string, number | string> = {}
   const results = await Promise.all((only ? [only] : SOURCES).map(async (source) => {
     try {
@@ -54,7 +54,7 @@ export async function searchAll(keyword: string, only?: MangaSource, signal?: Ab
       return hits
     } catch (err) {
       perSource[source.name] = (err as Error).message.slice(0, 120)
-      progress('manga.search_failed', { source: source.name, error: (err as Error).message.slice(0, 120) })
+      progress('comic.search_failed', { source: source.name, error: (err as Error).message.slice(0, 120) })
       return []
     }
   }))

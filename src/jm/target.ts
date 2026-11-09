@@ -5,13 +5,13 @@
  */
 import { invalidInput } from '../core/errors.ts'
 
-export type ComicTarget =
+export type JmTarget =
   | { kind: 'album'; id: string }
   | { kind: 'photo'; id: string }
 
-export function parseComicTarget(input: string): ComicTarget {
+export function parseJmTarget(input: string): JmTarget {
   const raw = input.trim()
-  if (!raw) throw invalidInput('缺少漫画编号或链接', '例如 `astra comic get 123456` 或贴一条带 /album/ 的链接')
+  if (!raw) throw invalidInput('缺少漫画编号或链接', '例如 `astra jm get 123456` 或贴一条带 /album/ 的链接')
 
   const albumMatch = raw.match(/\/album\/(\d+)/i)
   if (albumMatch) return { kind: 'album', id: albumMatch[1]! }

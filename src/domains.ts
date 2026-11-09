@@ -14,7 +14,7 @@ import { domain as model } from './model/manifest.ts'
 import { domain as quark } from './quark/manifest.ts'
 import { domain as cloud } from './cloud/manifest.ts'
 import { domain as pixiv } from './pixiv/manifest.ts'
-import { domain as comic } from './comic/manifest.ts'
+import { domain as jm } from './jm/manifest.ts'
 import { domain as douyin } from './douyin/manifest.ts'
 import { domain as lol } from './lol/manifest.ts'
 import { domain as heybox } from './heybox/manifest.ts'
@@ -24,9 +24,9 @@ import { domain as x } from './x/manifest.ts'
 import { domain as auth } from './auth/manifest.ts'
 import { domain as schedule } from './schedule/manifest.ts'
 import { domain as novel } from './novel/manifest.ts'
-import { domain as manga } from './manga/manifest.ts'
+import { domain as comic } from './comic/manifest.ts'
 import { domain as archive } from './archive/manifest.ts'
 
 export const DOMAINS: DomainModule[] = [
-  music, bili, media, steam, vr, model, quark, cloud, pixiv, comic, douyin, lol, heybox, llm, device, x, auth, schedule, novel, manga, archive,
+  music, bili, media, steam, vr, model, quark, cloud, pixiv, jm, douyin, lol, heybox, llm, device, x, auth, schedule, novel, comic, archive,
 ]

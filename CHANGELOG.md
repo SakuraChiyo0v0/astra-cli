@@ -1,3 +1,28 @@
+## 0.57.0 — 2026-11-10
+
+**改名：JM 本子 `comic` → `jm`，`comic` 让给普通漫画（原 `manga`）**
+
+为什么：`comic` 字面是「漫画」，却一直指 JM 本子；0.56.0 加普通漫画时只好另起 `manga`。现在按内容归位。
+
+- 命令：`astra comic ...`（JM）→ `astra jm ...`；`astra manga ...` → `astra comic ...`。旧命令不保留别名
+- 配置键：`comic.dir / comic.template / comic.concurrency`（JM）→ `jm.dir / jm.template / jm.concurrency`；
+  `manga.dir` → `comic.dir`。环境变量 `ASTRA_COMIC_DIR`（JM）→ `ASTRA_JM_DIR`，`ASTRA_MANGA_DIR` → `ASTRA_COMIC_DIR`。
+  **配置值不会自动搬**，升级时手动改（见下）
+- 资产库迁移 `astra_0007_jm_rename`：`comic:*` → `jm:*`、`manga-*` → `comic-*`，files / events 跟着改；
+  需要 `astra db migrate`
+- 状态库：JM 订阅 kind `comic-album` → `jm-album`；任务 domain `comic` → `jm`、`manga` → `comic`（启动时自动）
+- 本子识别文件 `.astra-comic.json` → `.astra-jm.json`：读的时候两个名字都认，重下一话时写新名并删旧名
+- skills：`astra-comic`（JM）→ `astra-jm`；新 `astra-comic` 是普通漫画
+
+升级步骤（线上）：
+
+```sh
+astra config set jm.dir "$(astra config get comic.dir)"   # 先把 JM 目录挪到新键
+astra config set comic.dir <普通漫画目录>                  # 原 manga.dir 的值
+astra db migrate
+astra lib root list                                        # 存储根标签 comic → jm、manga → comic 手动改
+```
+
 ## 0.56.0 — 2026-11-09
 
 **新增 `astra manga`：普通漫画（本子类仍在 `astra comic`）**

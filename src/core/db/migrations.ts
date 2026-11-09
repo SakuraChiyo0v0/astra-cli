@@ -367,7 +367,29 @@ const M0006: Migration = {
   },
 }
 
-export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004, M0005, M0006]
+/**
+ * 0007：JM 本子的资产 id 从 `comic:` 改成 `jm:`（0.57.0 起 JM 域叫 jm，comic 让给普通漫画）。
+ *
+ * 资产 id 是 `<platform>:<native_id>`，被 files / events 按 asset_id 引用（没有外键），三处一起改。
+ * 这一步之前 `comic` 这个 platform 只有 JM 一家（普通漫画 0.56.0 用的是 `manga-<源>`），
+ * 所以按 `platform = 'comic'` 改全部是对的。`manga-<源>` 一并改成 `comic-<源>`。
+ * 只改字符串，幂等：第二次跑时已经没有匹配行。
+ */
+const M0007_SQL = [
+  `update files set asset_id = 'jm:' || substr(asset_id, 7) where asset_id like 'comic:%'`,
+  `update events set asset_id = 'jm:' || substr(asset_id, 7) where asset_id like 'comic:%'`,
+  `update assets set id = 'jm:' || substr(id, 7), platform = 'jm' where platform = 'comic'`,
+  `update files set asset_id = 'comic-' || substr(asset_id, 7) where asset_id like 'manga-%'`,
+  `update events set asset_id = 'comic-' || substr(asset_id, 7) where asset_id like 'manga-%'`,
+  `update assets set id = 'comic-' || substr(id, 7), platform = 'comic-' || substr(platform, 7) where platform like 'manga-%'`,
+]
+const M0007: Migration = {
+  id: 'astra_0007_jm_rename',
+  summary: 'JM 本子资产 comic:* → jm:*；manga-* → comic-*',
+  up: { sqlite: M0007_SQL, postgres: M0007_SQL, mysql: [] },
+}
+
+export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004, M0005, M0006, M0007]
 
 function checksum(m: Migration): string {
   return createHash('sha256').update(JSON.stringify(m.up)).digest('hex').slice(0, 16)

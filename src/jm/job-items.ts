@@ -4,7 +4,7 @@
 import type { JobItemInput } from '../core/jobs.ts'
 import type { AlbumDetail, AlbumEpisode } from './client.ts'
 
-export const COMIC_DOMAIN = 'comic'
+export const JM_DOMAIN = 'jm'
 
 /** 一本里选中的几话转成任务项。id 用章节 id，同一任务里不会撞。 */
 export function chapterItems(album: Pick<AlbumDetail, 'id' | 'title'>, episodes: AlbumEpisode[]): JobItemInput[] {

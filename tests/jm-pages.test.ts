@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { imageIntact, saveVerifiedPage } from '../src/comic/pages.ts'
+import { imageIntact, saveVerifiedPage } from '../src/jm/pages.ts'
 import { AstraError } from '../src/core/errors.ts'
 
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -25,7 +25,7 @@ function tinyPng(): Buffer {
 }
 
 test('截断的图不算完整，结构完整的算', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'astra-comic-page-'))
+  const dir = mkdtempSync(path.join(tmpdir(), 'astra-jm-page-'))
   try {
     const bad = path.join(dir, '001.jpg')
     const good = path.join(dir, '002.jpg')
@@ -40,7 +40,7 @@ test('截断的图不算完整，结构完整的算', async () => {
 })
 
 test('第一次截断就删掉重写，第二次完整才留下', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'astra-comic-retry-'))
+  const dir = mkdtempSync(path.join(tmpdir(), 'astra-jm-retry-'))
   const target = path.join(dir, '001.jpg')
   let n = 0
   try {
@@ -56,7 +56,7 @@ test('第一次截断就删掉重写，第二次完整才留下', async () => {
 })
 
 test('两次都不完整：抛 TRUNCATED，目录里没有这张图', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'astra-comic-drop-'))
+  const dir = mkdtempSync(path.join(tmpdir(), 'astra-jm-drop-'))
   const target = path.join(dir, '001.jpg')
   try {
     await assert.rejects(
@@ -71,7 +71,7 @@ test('两次都不完整：抛 TRUNCATED，目录里没有这张图', async () =
 
 test('真实截断夹具也过不了', async () => {
   const fixture = readFileSync(path.join(import.meta.dirname, 'fixtures', 'truncated.png'))
-  const dir = mkdtempSync(path.join(tmpdir(), 'astra-comic-fixture-'))
+  const dir = mkdtempSync(path.join(tmpdir(), 'astra-jm-fixture-'))
   const target = path.join(dir, '001.png')
   writeFileSync(target, fixture)
   try {

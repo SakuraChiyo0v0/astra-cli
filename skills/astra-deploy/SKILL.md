@@ -121,6 +121,8 @@ docker exec hermes astra version    # 期望看到新版本号
 | `skills/bili/` | `skills/astra-bili/` |
 | `skills/music/` | `skills/astra-music/` |
 | `skills/vrchat/` | `skills/astra-vrchat/` |
+| `skills/jm/` | `skills/astra-jm/`（0.57.0 之前叫 `astra-comic`，现在那个名字归普通漫画） |
+| `skills/comic/` | `skills/astra-comic/` |
 | `skills/astra-deploy/` | `skills/astra-deploy/` |
 
 传错目录会静默成功（WebDAV 会新建），但 Hermes 永远读不到 —— 先 `PROPFIND` 看一眼：

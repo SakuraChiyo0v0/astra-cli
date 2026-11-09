@@ -8,7 +8,7 @@
  */
 import { AstraError } from '../../core/errors.ts'
 import { fetchBytes, fetchJson } from '../fetch.ts'
-import { QuotaError, type ChapterRef, type ComicInfo, type Group, type MangaSource, type PageRef, type SearchHit } from './types.ts'
+import { QuotaError, type ChapterRef, type ComicInfo, type Group, type ComicSource, type PageRef, type SearchHit } from './types.ts'
 
 const BASE = 'https://komiic.com'
 const API = `${BASE}/api/query`
@@ -66,7 +66,7 @@ export async function quota(signal?: AbortSignal): Promise<{ limit: number; usag
   return { limit: Number(d.getImageLimit.limit), usage: Number(d.getImageLimit.usage), resetInSeconds: Number(d.getImageLimit.resetInSeconds) }
 }
 
-export const komiic: MangaSource = {
+export const komiic: ComicSource = {
   name: 'komiic',
   description: 'Komiic：繁体，单行本 + 单话；匿名每天约 300 张',
 
