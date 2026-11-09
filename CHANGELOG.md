@@ -1,3 +1,15 @@
+## 0.55.0 — 2026-11-09
+
+**新增 `astra archive`：把 Hermes 会话写进 astra 自己的库**
+
+- `astra archive sync [--state <state.db>] [--docs <目录>]`：读 Hermes 的 `state.db`（默认 `/opt/data/state.db`
+  或 `HERMES_STATE_DB`），把会话、消息增量写进库里；消息条数和最大 id 都没变的会话跳过，适合 cron 反复跑
+- 迁移 `astra_0006_hermes_archive`：PG 建 `hermes` schema（sessions / messages / documents），
+  SQLite 用 `hermes_*` 前缀。全部 `if not exists`，线上已有的表重复执行无害
+- 只写会话相关表，不碰资产表；先 `astra db migrate`，缺表时命令直接拒绝写入而不是半途报错
+- 为什么进 astra 而不是留在 scripts：会话存档现在每天由 Hermes cron 跑 Python 脚本，
+  落的是另一套库；并到 astra 后一条命令就能查
+
 ## 0.54.0 — 2026-11-09
 
 **漫画后台任务与连载订阅**（在原 `claude/comic-cli-446f14` 分支上编号 0.32.0；

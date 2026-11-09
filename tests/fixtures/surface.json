@@ -3563,6 +3563,20 @@
       "summary": "小说能力自检：目录、ffmpeg、各书源连通、索引",
       "usage": "astra novel doctor",
       "options": {}
+    },
+    {
+      "command": "archive sync",
+      "summary": "把 Hermes 会话增量写入当前数据库",
+      "usage": "astra archive sync [--state <state.db>] [--docs <目录>]",
+      "options": {
+        "--state <路径>": "Hermes 的 state.db，默认 /opt/data/state.db 或 HERMES_STATE_DB",
+        "--docs <目录>": "绘画清单目录，默认 /opt/data/文档/AI绘图"
+      },
+      "notes": [
+        "写入 hermes.sessions / hermes.messages（SQLite 上是 hermes_* 表），不碰资产表",
+        "消息条数和最大 id 都没变的会话会跳过，适合 cron 反复跑",
+        "先 astra db migrate，缺会话表迁移时会拒绝写入"
+      ]
     }
   ],
   "hidden": [

@@ -5,6 +5,7 @@
 
 | 日期 | 文档 | 一句话 |
 |-|-|-|
+| 2026-11-09 | [会话存档进库](2026-11-09%20会话存档进库.md) | 新增 `astra archive sync`：读 Hermes 的 `state.db` 增量写进本库（PG 用 `hermes` schema，SQLite 用 `hermes_*`）。坑：迁移号跟主线的资产可见性撞了，顺延成 0006 并加 `astra_` 前缀；`db-adapter` 测试里写死了迁移清单，要同步改三处 |
 | 2026-11-09 | [comic 后台任务与订阅](2026-11-09%20comic%20后台任务与订阅.md) | 复用 `core/jobs.ts`，一话一项；订阅复用 `subscriptions` 表，基线 + 只记成功的话。顺带发现 `music subscribe` 从没按 kind 过滤，B 站订阅一直混在音乐列表里；`mirrorFile` 在漫画目录不是 lib root 时静默不登记，现在结果里报 `registered` |
 | 2026-10-29 | [comic 域纯 TS 落地](2026-10-29%20comic%20域纯%20TS%20落地.md) | 新增 `comic get/info/search/doctor`：纯 TS 打移动端 API，不依赖 jmcomic-web。AES 密钥是 md5 hex 的 ASCII（不是 raw digest）；解混淆用 ffmpeg 竖条重排（单文件产物塞不进 sharp）；album 接口里 scramble_id 恒为 0，真值要另打 chapter_view_template |
 | 2026-10-23 | [同曲多专辑归属与 doctor 示例](2026-10-23%20同曲多专辑归属与%20doctor%20示例.md) | P4#5：并行下 5 张专辑时，全局去重让**先下完的那张**占住重复曲目 —— HIStory(1995 精选)抢走 Billie Jean，Thriller(1982) 判 skipped，用户看到的是"专辑不完整"而不是"重复被去掉"。判据改成与顺序无关的四级优先级；**关键是"分不出时保持现状"必须对称返回 false**，返回 true 就退化成"传进来的第一个赢"，又回到顺序决定。另修 4f：doctor 示例的 `{title}` 取到了分 P 名，让人误以为音频模板有 `{part}` |

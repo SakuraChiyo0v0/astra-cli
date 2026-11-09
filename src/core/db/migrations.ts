@@ -278,7 +278,93 @@ const M0005: Migration = {
   },
 }
 
-export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004, M0005]
+
+/**
+ * 0006：Hermes 会话进同一个库，但和资产表分开。
+ *
+ * PG 用 `hermes` schema；SQLite 没有 schema，表名加 `hermes_` 前缀，列对齐。
+ * 线上 PG 里已经按这个形状建过（外部脚本），所以全部 `if not exists`，重复执行无害。
+ */
+const M0006: Migration = {
+  id: 'astra_0006_hermes_archive',
+  summary: 'Hermes 会话存档表（sessions / messages / documents）',
+  up: {
+    sqlite: [
+      `create table if not exists hermes_sessions (
+         id text primary key,
+         title text,
+         started_at text,
+         last_activity_at text,
+         message_count integer,
+         model text,
+         input_tokens integer,
+         output_tokens integer,
+         source text,
+         chat_id text,
+         chat_type text,
+         archived integer,
+         imported_at text not null
+       )`,
+      `create table if not exists hermes_messages (
+         session_id text not null references hermes_sessions(id) on delete cascade,
+         msg_id integer not null,
+         role text,
+         content text,
+         tool_name text,
+         tool_calls text,
+         ts text,
+         token_count integer,
+         primary key (session_id, msg_id)
+       )`,
+      `create index if not exists hermes_messages_session on hermes_messages (session_id)`,
+      `create table if not exists hermes_documents (
+         path text primary key,
+         title text,
+         body text,
+         imported_at text not null
+       )`,
+    ],
+    postgres: [
+      `create schema if not exists hermes`,
+      `create table if not exists hermes.sessions (
+         id text primary key,
+         title text,
+         started_at timestamptz,
+         last_activity_at timestamptz,
+         message_count integer,
+         model text,
+         input_tokens bigint,
+         output_tokens bigint,
+         source text,
+         chat_id text,
+         chat_type text,
+         archived boolean,
+         imported_at timestamptz not null default now()
+       )`,
+      `create table if not exists hermes.messages (
+         session_id text not null references hermes.sessions(id) on delete cascade,
+         msg_id bigint not null,
+         role text,
+         content text,
+         tool_name text,
+         tool_calls jsonb,
+         ts text,
+         token_count integer,
+         primary key (session_id, msg_id)
+       )`,
+      `create index if not exists messages_session on hermes.messages (session_id)`,
+      `create table if not exists hermes.documents (
+         path text primary key,
+         title text,
+         body text,
+         imported_at timestamptz not null default now()
+       )`,
+    ],
+    mysql: [],
+  },
+}
+
+export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004, M0005, M0006]
 
 function checksum(m: Migration): string {
   return createHash('sha256').update(JSON.stringify(m.up)).digest('hex').slice(0, 16)

@@ -24,7 +24,8 @@ import { domain as x } from './x/manifest.ts'
 import { domain as auth } from './auth/manifest.ts'
 import { domain as schedule } from './schedule/manifest.ts'
 import { domain as novel } from './novel/manifest.ts'
+import { domain as archive } from './archive/manifest.ts'
 
 export const DOMAINS: DomainModule[] = [
-  music, bili, media, steam, vr, model, quark, cloud, pixiv, comic, douyin, lol, heybox, llm, device, x, auth, schedule, novel,
+  music, bili, media, steam, vr, model, quark, cloud, pixiv, comic, douyin, lol, heybox, llm, device, x, auth, schedule, novel, archive,
 ]
