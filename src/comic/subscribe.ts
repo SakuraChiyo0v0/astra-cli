@@ -13,7 +13,7 @@
  * 上一轮任务还在跑时不再开新任务，免得同一话被两个 worker 同时写。
  */
 import { randomUUID } from 'node:crypto'
-import { db } from '../core/db.ts'
+import { all, num, one, recordSubscriptionRun, run } from '../core/state.ts'
 import { AstraError } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
 import { createJob, getJob, spawnWorker } from '../core/jobs.ts'
@@ -77,8 +77,8 @@ function toView(row: Row): ComicSubscription {
     id: row.id,
     albumId: row.target_id,
     title: row.title,
-    everyHours: row.every_hours,
-    enabled: row.enabled === 1,
+    everyHours: num(row.every_hours),
+    enabled: num(row.enabled) === 1,
     lastCheckedAt: row.last_checked_at,
     baseline: parseIds(row.last_seen),
     done: parseDone(row.seen_pages),
@@ -87,23 +87,21 @@ function toView(row: Row): ComicSubscription {
   }
 }
 
-export function listComicSubscriptions(): ComicSubscription[] {
-  const rows = db().prepare('select * from subscriptions where kind = ? order by created_at').all(COMIC_SUB_KIND) as unknown as Row[]
+export async function listComicSubscriptions(): Promise<ComicSubscription[]> {
+  const rows = await all<Row>('select * from subscriptions where kind = ? order by created_at', [COMIC_SUB_KIND])
   return rows.map(toView)
 }
 
-export function findComicSubscription(idOrPrefix: string): ComicSubscription {
-  const rows = db()
-    .prepare('select * from subscriptions where kind = ? and (id = ? or id like ? or target_id = ?)')
-    .all(COMIC_SUB_KIND, idOrPrefix, `${idOrPrefix}%`, idOrPrefix) as unknown as Row[]
+export async function findComicSubscription(idOrPrefix: string): Promise<ComicSubscription> {
+  const rows = await all<Row>('select * from subscriptions where kind = ? and (id = ? or id like ? or target_id = ?)', [COMIC_SUB_KIND, idOrPrefix, `${idOrPrefix}%`, idOrPrefix])
   if (rows.length === 0) throw new AstraError('NOT_FOUND', `没有漫画订阅 ${idOrPrefix}`, { exitCode: 4, hint: '用 `astra comic subscribe list` 看' })
   if (rows.length > 1) throw new AstraError('AMBIGUOUS_ID', `订阅 id 前缀 ${idOrPrefix} 对应多个`, { exitCode: 2, hint: '多写几位' })
   return toView(rows[0]!)
 }
 
 /** 已订阅就返回那条，没有返回 null。 */
-export function comicSubscriptionFor(albumId: string): ComicSubscription | null {
-  const row = db().prepare('select * from subscriptions where kind = ? and target_id = ?').get(COMIC_SUB_KIND, albumId) as Row | undefined
+export async function comicSubscriptionFor(albumId: string): Promise<ComicSubscription | null> {
+  const row = await one<Row>('select * from subscriptions where kind = ? and target_id = ?', [COMIC_SUB_KIND, albumId])
   return row ? toView(row) : null
 }
 
@@ -111,27 +109,28 @@ export function comicSubscriptionFor(albumId: string): ComicSubscription | null 
  * 建订阅。album 由调用方先查好（命令里已经查过一次，不重复打上游）。
  * `backfill` 为 true 时基线为空：第一次检查会把还没下过的话全补上。
  */
-export function addComicSubscription(album: Pick<AlbumDetail, 'id' | 'title' | 'episodes'>, input: { everyHours: number; backfill?: boolean }): { subscription: ComicSubscription; created: boolean } {
-  const existing = comicSubscriptionFor(album.id)
+export async function addComicSubscription(album: Pick<AlbumDetail, 'id' | 'title' | 'episodes'>, input: { everyHours: number; backfill?: boolean }): Promise<{ subscription: ComicSubscription; created: boolean }> {
+  const existing = await comicSubscriptionFor(album.id)
   if (existing) return { subscription: existing, created: false }
   const id = randomUUID().slice(0, 8)
   const baseline = input.backfill === true ? [] : album.episodes.map((e) => e.id)
-  db()
-    .prepare('insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, last_seen, seen_pages, created_at) values (?, ?, ?, ?, null, ?, 1, ?, ?, ?)')
-    .run(id, COMIC_SUB_KIND, album.id, album.title, input.everyHours, JSON.stringify(baseline), '{}', new Date().toISOString())
-  return { subscription: findComicSubscription(id), created: true }
+  await run(
+    'insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, last_seen, seen_pages, created_at) values (?, ?, ?, ?, null, ?, 1, ?, ?, ?)',
+    [id, COMIC_SUB_KIND, album.id, album.title, input.everyHours, JSON.stringify(baseline), '{}', new Date().toISOString()],
+  )
+  return { subscription: await findComicSubscription(id), created: true }
 }
 
-export function removeComicSubscription(idOrPrefix: string): ComicSubscription {
-  const sub = findComicSubscription(idOrPrefix)
-  db().prepare('delete from subscriptions where id = ?').run(sub.id)
+export async function removeComicSubscription(idOrPrefix: string): Promise<ComicSubscription> {
+  const sub = await findComicSubscription(idOrPrefix)
+  await run('delete from subscriptions where id = ?', [sub.id])
   return sub
 }
 
-export function setComicSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean }): ComicSubscription {
-  const sub = findComicSubscription(idOrPrefix)
-  if (patch.everyHours !== undefined) db().prepare('update subscriptions set every_hours = ? where id = ?').run(patch.everyHours, sub.id)
-  if (patch.enabled !== undefined) db().prepare('update subscriptions set enabled = ? where id = ?').run(patch.enabled ? 1 : 0, sub.id)
+export async function setComicSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean }): Promise<ComicSubscription> {
+  const sub = await findComicSubscription(idOrPrefix)
+  if (patch.everyHours !== undefined) await run('update subscriptions set every_hours = ? where id = ?', [patch.everyHours, sub.id])
+  if (patch.enabled !== undefined) await run('update subscriptions set enabled = ? where id = ?', [patch.enabled ? 1 : 0, sub.id])
   return findComicSubscription(sub.id)
 }
 
@@ -142,8 +141,8 @@ export function pickNewChapters(current: AlbumEpisode[], baseline: string[], don
 }
 
 /** 到点该检查的：启用、且从没检查过或距上次超过间隔。 */
-export function dueComicSubscriptions(now = Date.now(), subs = listComicSubscriptions()): ComicSubscription[] {
-  return subs.filter((s) => {
+export async function dueComicSubscriptions(now = Date.now(), subs?: ComicSubscription[]): Promise<ComicSubscription[]> {
+  return (subs ?? (await listComicSubscriptions())).filter((s) => {
     if (!s.enabled) return false
     if (!s.lastCheckedAt) return true
     return now - Date.parse(s.lastCheckedAt) >= s.everyHours * 3600_000
@@ -160,10 +159,10 @@ export interface ComicRunResult {
   note: string
 }
 
-function lastJobActive(jobId: string | null): boolean {
+async function lastJobActive(jobId: string | null): Promise<boolean> {
   if (!jobId) return false
   try {
-    const { job } = getJob(jobId, false, COMIC_DOMAIN)
+    const { job } = await getJob(jobId, false, COMIC_DOMAIN)
     return job.status === 'queued' || job.status === 'running'
   } catch {
     return false
@@ -172,9 +171,9 @@ function lastJobActive(jobId: string | null): boolean {
 
 /** 跑一次：拉章节列表 → 求差 → 有新话就开后台任务。 */
 export async function runComicSubscription(idOrPrefix: string, options: { signal?: AbortSignal } = {}): Promise<ComicRunResult> {
-  const sub = findComicSubscription(idOrPrefix)
+  const sub = await findComicSubscription(idOrPrefix)
   const now = new Date().toISOString()
-  if (lastJobActive(sub.lastJobId)) {
+  if (await lastJobActive(sub.lastJobId)) {
     return { subscription: sub, newCount: 0, jobId: null, newChapters: [], note: `上一轮任务 ${sub.lastJobId} 还在跑，这次跳过` }
   }
 
@@ -184,14 +183,14 @@ export async function runComicSubscription(idOrPrefix: string, options: { signal
   let jobId: string | null = null
   let note: string
   if (fresh.length > 0) {
-    const job = createJob({
+    const job = await createJob({
       domain: COMIC_DOMAIN,
       kind: 'subscribe',
       title: `订阅「${album.title}」新增 ${fresh.length} 话`,
       items: chapterItems(album, fresh),
       meta: { subscriptionId: sub.id, albumId: album.id },
     })
-    spawnWorker(COMIC_DOMAIN, job.id)
+    await spawnWorker(COMIC_DOMAIN, job.id)
     jobId = job.id
     note = `发现 ${fresh.length} 话待下，已开任务 ${job.id}`
     progress('comic.subscribe.new', { id: sub.id, count: fresh.length, jobId })
@@ -200,28 +199,25 @@ export async function runComicSubscription(idOrPrefix: string, options: { signal
   }
 
   // 标题以上游为准（作者改名时跟着变）
-  db()
-    .prepare('update subscriptions set title = ?, last_checked_at = ?, last_job_id = coalesce(?, last_job_id) where id = ?')
-    .run(album.title, now, jobId, sub.id)
-  db()
-    .prepare('insert or replace into subscription_runs (subscription_id, ran_at, new_tracks, job_id, note) values (?, ?, ?, ?, ?)')
-    .run(sub.id, now, fresh.length, jobId, note)
+  await run('update subscriptions set title = ?, last_checked_at = ?, last_job_id = coalesce(?, last_job_id) where id = ?', [album.title, now, jobId, sub.id])
+  await recordSubscriptionRun(sub.id, now, fresh.length, jobId, note)
 
-  return { subscription: findComicSubscription(sub.id), newCount: fresh.length, jobId, newChapters: fresh.map((e) => e.sort), note }
+  return { subscription: await findComicSubscription(sub.id), newCount: fresh.length, jobId, newChapters: fresh.map((e) => e.sort), note }
 }
 
 /**
  * 任务跑完后按**实际结果**回写"这些话下好了"。只认 downloaded / skipped。
  * 从 job_items 读：worker 是另一个进程，run 时的内存早没了。
  */
-export function recordComicSubscriptionChapters(subscriptionId: string, jobId: string): void {
-  const rows = db()
-    .prepare("select native_id, meta from job_items where job_id = ? and status in ('downloaded', 'skipped')")
-    .all(jobId) as unknown as { native_id: string; meta: string | null }[]
+export async function recordComicSubscriptionChapters(subscriptionId: string, jobId: string): Promise<void> {
+  const rows = await all<{ native_id: string; meta: string | null }>(
+    "select native_id, meta from job_items where job_id = ? and status in ('downloaded', 'skipped')",
+    [jobId],
+  )
   if (rows.length === 0) return
   let sub: ComicSubscription
   try {
-    sub = findComicSubscription(subscriptionId)
+    sub = await findComicSubscription(subscriptionId)
   } catch {
     return // 订阅在任务跑的时候被删了
   }
@@ -236,5 +232,5 @@ export function recordComicSubscriptionChapters(subscriptionId: string, jobId: s
     }
     done[row.native_id] = sort
   }
-  db().prepare('update subscriptions set seen_pages = ? where id = ?').run(JSON.stringify(done), sub.id)
+  await run('update subscriptions set seen_pages = ? where id = ?', [JSON.stringify(done), sub.id])
 }

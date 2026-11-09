@@ -28,14 +28,14 @@ on(EVENT_NAMES.request, ({ action, source, info }) => {
 send(EVENT_NAMES.inited, { sources: { wy: { name: '网易云', type: 'music', actions: ['musicUrl'], qualitys: ['128k', '320k', 'flac'] } } })
 `
 
-test('makeLxBody：既是字符串又挂着字段', () => {
+test('makeLxBody：既是字符串又挂着字段', async () => {
   const body = makeLxBody('{"code":0,"url":"x"}')
   assert.equal(JSON.parse(String(body)).url, 'x')
   assert.equal((body as unknown as { code: number }).code, 0)
   assert.equal(String(makeLxBody('plain')), 'plain')
 })
 
-test('parseScriptMeta', () => {
+test('parseScriptMeta', async () => {
   assert.deepEqual(parseScriptMeta('/*!\n * @name 全豆要[聚合音源]\n * @version 9.3 特供\n */'), {
     name: '全豆要[聚合音源]', description: '', version: '9.3 特供', author: '', homepage: '',
   })

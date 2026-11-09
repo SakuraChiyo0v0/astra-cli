@@ -11,7 +11,7 @@
  * 每次 run 只处理"到点的"订阅，所以调得比 every_hours 勤也没关系。
  */
 import { randomUUID } from 'node:crypto'
-import { db } from '../core/db.ts'
+import { all, num, one, recordSubscriptionRun as recordRun, run } from '../core/state.ts'
 import { AstraError, invalidInput } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
 import { getConfig } from '../core/config.ts'
@@ -77,29 +77,25 @@ function fromRow(row: Row): Subscription {
     targetId: row.target_id,
     title: row.title,
     quality: row.quality as Quality | null,
-    everyHours: row.every_hours,
-    enabled: row.enabled === 1,
+    everyHours: num(row.every_hours),
+    enabled: num(row.enabled) === 1,
     lastCheckedAt: row.last_checked_at,
     lastSeen: row.last_seen ? (JSON.parse(row.last_seen) as string[]) : null,
     lastJobId: row.last_job_id,
     createdAt: row.created_at,
-    baseMin: row.base_min ?? 0,
-    maxMin: row.max_min ?? 0,
-    factor: row.factor ?? 2,
-    currentMin: row.current_min ?? 0,
+    baseMin: num(row.base_min ?? 0),
+    maxMin: num(row.max_min ?? 0),
+    factor: num(row.factor ?? 2),
+    currentMin: num(row.current_min ?? 0),
   }
 }
 
-export function listSubscriptions(): Subscription[] {
-  return (db()
-    .prepare(`select * from subscriptions where kind in (${MUSIC_KIND_SQL}) order by created_at`)
-    .all() as unknown as Row[]).map(fromRow)
+export async function listSubscriptions(): Promise<Subscription[]> {
+  return (await all<Row>(`select * from subscriptions where kind in (${MUSIC_KIND_SQL}) order by created_at`)).map(fromRow)
 }
 
-export function findSubscription(idOrPrefix: string): Subscription {
-  const rows = db()
-    .prepare(`select * from subscriptions where (id = ? or id like ?) and kind in (${MUSIC_KIND_SQL})`)
-    .all(idOrPrefix, `${idOrPrefix}%`) as unknown as Row[]
+export async function findSubscription(idOrPrefix: string): Promise<Subscription> {
+  const rows = await all<Row>(`select * from subscriptions where (id = ? or id like ?) and kind in (${MUSIC_KIND_SQL})`, [idOrPrefix, `${idOrPrefix}%`])
   if (rows.length === 0) throw new AstraError('NOT_FOUND', `没有订阅 ${idOrPrefix}`, { exitCode: 4, hint: '用 `astra music subscribe list` 看已有的' })
   if (rows.length > 1) throw new AstraError('AMBIGUOUS_ID', `订阅 id 前缀 ${idOrPrefix} 对多个订阅`, { exitCode: 2, hint: '多写几位' })
   return fromRow(rows[0]!)
@@ -126,50 +122,49 @@ export function intervalMinutesOf(sub: Pick<Subscription, 'everyHours' | 'baseMi
   return sub.everyHours * 60
 }
 
-export function addSubscription(input: {
+export async function addSubscription(input: {
   kind: SubscribeKind
   targetId: string
   title: string
   everyHours: number
   quality: Quality | null
   backoff?: { baseMin: number; maxMin: number; factor: number }
-}): Subscription {
-  const existing = db().prepare('select * from subscriptions where kind = ? and target_id = ?').get(input.kind, input.targetId) as Row | undefined
+}): Promise<Subscription> {
+  const existing = await one<Row>('select * from subscriptions where kind = ? and target_id = ?', [input.kind, input.targetId])
   if (existing) throw new AstraError('ALREADY_SUBSCRIBED', `已经在订阅「${existing.title}」了`, {
     exitCode: 2,
     hint: `订阅 id ${existing.id}；改间隔用 \`astra music subscribe set ${existing.id} --every ...\``,
   })
   const id = randomUUID().slice(0, 8)
-  db()
-    .prepare(
-      `insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, created_at,
-                                  base_min, max_min, factor, current_min)
-       values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+  await run(
+    `insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, created_at,
+                                base_min, max_min, factor, current_min)
+     values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+    [
       id, input.kind, input.targetId, input.title, input.quality, input.everyHours, new Date().toISOString(),
       input.backoff?.baseMin ?? 0,
       input.backoff?.maxMin ?? 0,
       input.backoff?.factor ?? 2,
       input.backoff?.baseMin ?? 0,
-    )
+    ],
+  )
   return findSubscription(id)
 }
 
-export function removeSubscription(idOrPrefix: string): boolean {
-  const sub = findSubscription(idOrPrefix)
-  return db().prepare('delete from subscriptions where id = ?').run(sub.id).changes > 0
+export async function removeSubscription(idOrPrefix: string): Promise<boolean> {
+  const sub = await findSubscription(idOrPrefix)
+  return (await run('delete from subscriptions where id = ?', [sub.id])) > 0
 }
 
-export function setSubscription(idOrPrefix: string, patch: {
+export async function setSubscription(idOrPrefix: string, patch: {
   everyHours?: number
   enabled?: boolean
   quality?: Quality | null
   baseMin?: number
   maxMin?: number
   factor?: number
-}): Subscription {
-  const sub = findSubscription(idOrPrefix)
+}): Promise<Subscription> {
+  const sub = await findSubscription(idOrPrefix)
   const sets: string[] = []
   const values: (string | number | null)[] = []
   if (patch.everyHours !== undefined) {
@@ -200,7 +195,7 @@ export function setSubscription(idOrPrefix: string, patch: {
     throw invalidInput('没有要改的东西', '可用：--every <小时> / --base <分钟> / --max <分钟> / --factor <倍数> / --enable / --disable / --quality <档位>')
   }
   values.push(sub.id)
-  db().prepare(`update subscriptions set ${sets.join(', ')} where id = ?`).run(...values)
+  await run(`update subscriptions set ${sets.join(', ')} where id = ?`, values)
   return findSubscription(sub.id)
 }
 
@@ -247,7 +242,10 @@ export async function runSubscription(sub: Subscription, options: { baselineOnly
   // 第一次跑（或上次没存快照）：只记基线
   const baseline = previous === null || options.force === true
   const newTracks = baseline ? [] : tracks.filter((t) => !previous!.includes(t.id))
-  const toDownload = options.baselineOnly ? [] : newTracks.filter((t) => findTrack('wy', t.id) === null)
+  const toDownload: Track[] = []
+  if (!options.baselineOnly) {
+    for (const t of newTracks) if ((await findTrack('wy', t.id)) === null) toDownload.push(t)
+  }
 
   let jobId: string | null = null
   let note: string | null = null
@@ -255,8 +253,8 @@ export async function runSubscription(sub: Subscription, options: { baselineOnly
     // 订阅没指定档位时继承 `music.quality`，不是写死 flac ——
     // 用户把默认改成 320k 省流量，订阅却还按 flac 下，等于配置没生效
     const quality = (sub.quality ?? getConfig('music.quality')) as Quality
-    const job = createJob({ domain: MUSIC_DOMAIN, kind: 'subscription', title: `订阅「${sub.title}」新增 ${toDownload.length} 首`, profile: quality, items: jobItemsFor(toDownload, quality) })
-    spawnWorker(MUSIC_DOMAIN, job.id)
+    const job = await createJob({ domain: MUSIC_DOMAIN, kind: 'subscription', title: `订阅「${sub.title}」新增 ${toDownload.length} 首`, profile: quality, items: jobItemsFor(toDownload, quality) })
+    await spawnWorker(MUSIC_DOMAIN, job.id)
     jobId = job.id
     note = `开了后台任务 ${job.id}`
   } else if (newTracks.length > 0) {
@@ -276,14 +274,10 @@ export async function runSubscription(sub: Subscription, options: { baselineOnly
     })
     : null
   if (nextMin !== null) {
-    db().prepare('update subscriptions set current_min = ? where id = ?').run(nextMin, sub.id)
+    await run('update subscriptions set current_min = ? where id = ?', [nextMin, sub.id])
   }
-  db()
-    .prepare('update subscriptions set last_checked_at = ?, last_seen = ?, last_job_id = coalesce(?, last_job_id) where id = ?')
-    .run(now, JSON.stringify(currentIds), jobId, sub.id)
-  db()
-    .prepare('insert or replace into subscription_runs (subscription_id, ran_at, new_tracks, job_id, note) values (?, ?, ?, ?, ?)')
-    .run(sub.id, now, newTracks.length, jobId, note)
+  await run('update subscriptions set last_checked_at = ?, last_seen = ?, last_job_id = coalesce(?, last_job_id) where id = ?', [now, JSON.stringify(currentIds), jobId, sub.id])
+  await recordRun(sub.id, now, newTracks.length, jobId, note)
 
   progress('subscribe.run', { id: sub.id, title: sub.title, total: tracks.length, new: newTracks.length, queued: toDownload.length, baseline })
 
@@ -300,21 +294,21 @@ export async function runSubscription(sub: Subscription, options: { baselineOnly
 }
 
 /** 到点该跑的订阅（上次检查超过 every_hours，或从没跑过）。 */
-export function dueSubscriptions(now = Date.now()): Subscription[] {
-  return listSubscriptions().filter((sub) => {
+export async function dueSubscriptions(now = Date.now()): Promise<Subscription[]> {
+  return (await listSubscriptions()).filter((sub) => {
     if (!sub.enabled) return false
     if (sub.lastCheckedAt === null) return true
     return now - Date.parse(sub.lastCheckedAt) >= intervalMinutesOf(sub) * 60_000
   })
 }
 
-export function recentRuns(subscriptionId: string, limit = 10): { ranAt: string; newTracks: number; jobId: string | null; note: string | null }[] {
+export async function recentRuns(subscriptionId: string, limit = 10): Promise<{ ranAt: string; newTracks: number; jobId: string | null; note: string | null }[]> {
   return (
-    db().prepare('select * from subscription_runs where subscription_id = ? order by ran_at desc limit ?').all(subscriptionId, limit) as unknown as {
+    await all<{
       ran_at: string
       new_tracks: number
       job_id: string | null
       note: string | null
-    }[]
-  ).map((r) => ({ ranAt: r.ran_at, newTracks: r.new_tracks, jobId: r.job_id, note: r.note }))
+    }>('select * from subscription_runs where subscription_id = ? order by ran_at desc limit ?', [subscriptionId, limit])
+  ).map((r) => ({ ranAt: r.ran_at, newTracks: num(r.new_tracks), jobId: r.job_id, note: r.note }))
 }

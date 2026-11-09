@@ -21,57 +21,57 @@ before(async () => {
   lib = await import('../src/music/library.ts')
 })
 
-test('订阅：第一次只记基线，不下载', () => {
-  const s = sub.addSubscription({ kind: 'playlist', targetId: '3778678', title: '歌单《热歌榜》', everyHours: 24, quality: 'flac' })
+test('订阅：第一次只记基线，不下载', async () => {
+  const s = await sub.addSubscription({ kind: 'playlist', targetId: '3778678', title: '歌单《热歌榜》', everyHours: 24, quality: 'flac' })
   assert.equal(s.lastSeen, null)
   assert.equal(s.enabled, true)
   assert.equal(s.everyHours, 24)
 })
 
-test('订阅：同一目标不能重复加，提示改用 set', () => {
-  assert.throws(() => sub.addSubscription({ kind: 'playlist', targetId: '3778678', title: 'x', everyHours: 1, quality: null }), /已经在订阅/)
+test('订阅：同一目标不能重复加，提示改用 set', async () => {
+  await assert.rejects(async () => await sub.addSubscription({ kind: 'playlist', targetId: '3778678', title: 'x', everyHours: 1, quality: null }), /已经在订阅/)
 })
 
-test('订阅：按 id 前缀查找、改间隔、停用', () => {
-  const s = sub.listSubscriptions()[0]!
-  assert.equal(sub.findSubscription(s.id.slice(0, 4)).id, s.id)
-  const updated = sub.setSubscription(s.id, { everyHours: 6, enabled: false })
+test('订阅：按 id 前缀查找、改间隔、停用', async () => {
+  const s = (await sub.listSubscriptions())[0]!
+  assert.equal((await sub.findSubscription(s.id.slice(0, 4))).id, s.id)
+  const updated = await sub.setSubscription(s.id, { everyHours: 6, enabled: false })
   assert.equal(updated.everyHours, 6)
   assert.equal(updated.enabled, false)
-  assert.throws(() => sub.findSubscription('zzzz'), /没有订阅/)
+  await assert.rejects(async () => await sub.findSubscription('zzzz'), /没有订阅/)
 })
 
-test('到点判断：从没跑过 / 超过间隔 / 停用不跑', () => {
-  const s = sub.listSubscriptions()[0]!
+test('到点判断：从没跑过 / 超过间隔 / 停用不跑', async () => {
+  const s = (await sub.listSubscriptions())[0]!
   // 停用的一律不跑
-  assert.equal(sub.dueSubscriptions().some((x) => x.id === s.id), false)
+  assert.equal((await sub.dueSubscriptions()).some((x) => x.id === s.id), false)
 
-  sub.setSubscription(s.id, { enabled: true })
+  await sub.setSubscription(s.id, { enabled: true })
   // 从没跑过 → 到点
-  assert.equal(sub.dueSubscriptions().some((x) => x.id === s.id), true)
+  assert.equal((await sub.dueSubscriptions()).some((x) => x.id === s.id), true)
 })
 
-test('曲库规格：默认 null，回填后能读到', () => {
-  lib.saveTrack({
+test('曲库规格：默认 null，回填后能读到', async () => {
+  await lib.saveTrack({
     platform: 'wy', id: '2034742057', title: 'アイドル', artists: ['YOASOBI'], album: 'アイドル', durationMs: 213233,
     path: '/nonexistent/a.flac', format: 'flac', quality: '24bit', bytes: 100, bps: 3_230_000, sourceId: 'official',
     audioSha256: null, spec: { sampleRate: 96_000, bitsPerSample: 24, channels: 2 }, hasCover: true, hasLyric: true, hasWordLyric: true,
   })
-  const t = lib.findTrack('wy', '2034742057')!
+  const t = (await lib.findTrack('wy', '2034742057'))!
   assert.deepEqual(t.spec, { sampleRate: 96_000, bitsPerSample: 24, channels: 2 })
   assert.equal(t.hasWordLyric, true)
 
-  lib.updateTrackSpec('wy', '2034742057', { spec: { sampleRate: 44_100, bitsPerSample: 16, channels: 2 } })
-  assert.equal(lib.findTrack('wy', '2034742057')!.spec.sampleRate, 44_100)
+  await lib.updateTrackSpec('wy', '2034742057', { spec: { sampleRate: 44_100, bitsPerSample: 16, channels: 2 } })
+  assert.equal((await lib.findTrack('wy', '2034742057'))!.spec.sampleRate, 44_100)
 })
 
-test('统计：按真实规格分组，而不是只看档位名', () => {
-  lib.saveTrack({
+test('统计：按真实规格分组，而不是只看档位名', async () => {
+  await lib.saveTrack({
     platform: 'wy', id: '3', title: 'pcm', artists: ['x'], album: null, durationMs: 1000,
     path: '/nonexistent/b.flac', format: 'flac', quality: 'flac', bytes: 50, bps: 900_000, sourceId: null,
     audioSha256: null, spec: { sampleRate: 44_100, bitsPerSample: 16, channels: 2 }, hasCover: false, hasLyric: true, hasWordLyric: false,
   })
-  const stats = lib.libraryStats()
+  const stats = await lib.libraryStats()
   assert.equal(stats.tracks, 2)
   // 上个测试把 2034742057 的规格从 96k/24 改成了 44.1k/16，所以这里两首都是 44.1k/16。
   // 这正好也验证了 updateTrackSpec 生效。
@@ -84,11 +84,9 @@ test('统计：按真实规格分组，而不是只看档位名', () => {
 })
 
 test('订阅列表不混入 B 站订阅（共用 subscriptions 表）', async () => {
-  const { db } = await import('../src/core/db.ts')
-  db()
-    .prepare("insert into subscriptions (id, kind, target_id, title, every_hours, enabled, last_seen, created_at) values ('bltest01','bili-season','season:1/2','合集测试',24,1,'[]',?)")
-    .run(new Date().toISOString())
-  assert.ok(!sub.listSubscriptions().some((s) => s.id === 'bltest01'), 'music 列表不该出现 bili 订阅')
-  assert.ok(!sub.dueSubscriptions().some((s) => s.id === 'bltest01'), 'music 到点判断不该收 bili 订阅')
-  assert.throws(() => sub.findSubscription('bltest01'), /没有订阅/, 'music 命令不该能操作 bili 订阅')
+  const { run } = await import('../src/core/state.ts')
+  await run("insert into subscriptions (id, kind, target_id, title, every_hours, enabled, last_seen, created_at) values ('bltest01','bili-season','season:1/2','合集测试',24,1,'[]',?)", [new Date().toISOString()])
+  assert.ok(!(await sub.listSubscriptions()).some((s) => s.id === 'bltest01'), 'music 列表不该出现 bili 订阅')
+  assert.ok(!(await sub.dueSubscriptions()).some((s) => s.id === 'bltest01'), 'music 到点判断不该收 bili 订阅')
+  await assert.rejects(async () => await sub.findSubscription('bltest01'), /没有订阅/, 'music 命令不该能操作 bili 订阅')
 })

@@ -39,7 +39,7 @@ const add: Command = {
     const cmd = typeof ctx.values.cmd === 'string' ? ctx.values.cmd : ''
     if (!every) throw invalidInput('缺少 --every', '例如 `--every 6h`')
     if (!cmd) throw invalidInput('缺少 --cmd', '例如 `--cmd "music subscribe run"`')
-    const created = addSchedule({ name: ctx.positionals[0]!, command: cmd, interval: every })
+    const created = await addSchedule({ name: ctx.positionals[0]!, command: cmd, interval: every })
     return okResult(created)
   },
 }
@@ -59,7 +59,7 @@ const list: Command = {
   summary: '列出定时任务',
   usage: 'astra schedule list',
   async run() {
-    const rows = listSchedules()
+    const rows = await listSchedules()
     return {
       ...okResult({ total: rows.length, schedules: rows }),
       table: {
@@ -84,7 +84,7 @@ const remove: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run(ctx) {
-    return okResult({ removed: removeSchedule(ctx.positionals[0]!) })
+    return okResult({ removed: await removeSchedule(ctx.positionals[0]!) })
   },
 }
 
@@ -95,7 +95,7 @@ const enable: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run(ctx) {
-    return okResult(setEnabled(ctx.positionals[0]!, true))
+    return okResult(await setEnabled(ctx.positionals[0]!, true))
   },
 }
 
@@ -106,7 +106,7 @@ const disable: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run(ctx) {
-    return okResult(setEnabled(ctx.positionals[0]!, false))
+    return okResult(await setEnabled(ctx.positionals[0]!, false))
   },
 }
 
@@ -117,8 +117,8 @@ const run: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run(ctx) {
-    const schedule = getScheduleForRun(ctx.positionals[0]!)
-    const pid = spawnSchedule(schedule)
+    const schedule = await getScheduleForRun(ctx.positionals[0]!)
+    const pid = await spawnSchedule(schedule)
     return okResult({ name: schedule.name, pid, command: schedule.command })
   },
 }
@@ -129,7 +129,7 @@ const tick: Command = {
   usage: 'astra schedule tick',
   notes: ['每分钟调一次即可；没有到期任务时零输出、退出码 0，适合 cron 静默。'],
   async run() {
-    const started = runDue()
+    const started = await runDue()
     return okResult({ started, count: started.length })
   },
 }

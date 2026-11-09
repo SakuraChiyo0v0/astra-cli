@@ -118,7 +118,7 @@ export async function archiveAlbumCovers(
   // 目录 -> 该目录下的音频文件。曲库记录只是"加速线索"，
   // 找不到就现场扫目录，绝不因为"曲库没有"就跳过。
   const knownByDir = new Map<string, string[]>()
-  for (const track of allTracks()) {
+  for (const track of await allTracks()) {
     if (track.missing) continue
     const dir = path.dirname(track.path)
     const list = knownByDir.get(dir)
@@ -200,7 +200,7 @@ export interface M3uOptions {
 export async function exportM3u(options: M3uOptions): Promise<{ output: string; count: number; skipped: number }> {
   const keyword = options.keyword?.trim().toLowerCase() ?? ''
   const baseDir = path.dirname(path.resolve(options.output))
-  const tracks = allTracks().filter((t) => {
+  const tracks = (await allTracks()).filter((t) => {
     if (t.missing) return false
     if (!keyword) return true
     return [t.title, ...t.artists, t.album ?? ''].join(' ').toLowerCase().includes(keyword)
@@ -220,7 +220,7 @@ export async function exportM3u(options: M3uOptions): Promise<{ output: string; 
   }
   await mkdir(baseDir, { recursive: true })
   await writeFile(options.output, lines.join('\n') + '\n', 'utf8')
-  return { output: options.output, count, skipped: allTracks().length - tracks.length }
+  return { output: options.output, count, skipped: (await allTracks()).length - tracks.length }
 }
 
 /** 供测试与调试：生成 M3U 内容而不落盘。 */

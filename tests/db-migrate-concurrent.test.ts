@@ -15,11 +15,12 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
 import { spawn } from 'node:child_process'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const dbModule = path.join(here, '..', 'src', 'core', 'db.ts')
+const stateModule = path.join(here, '..', 'src', 'core', 'state.ts')
 
 /** 起一个子进程：在给定 home 上打开 db（触发迁移），完成后退出。 */
 function migrateOnce(home: string, script: string): Promise<{ code: number | null; stderr: string }> {
@@ -41,8 +42,10 @@ test('两个进程同时在新库上迁移：都不报错，版本号只前进�
     [
       `process.env.ASTRA_HOME = process.argv[2]`,
       `process.env.ASTRA_MUSIC_DIR = process.argv[2] + '/music'`,
-      `const { db } = await import(${JSON.stringify(dbModule)})`,
-      `db()`,
+      // 必须用 file URL：Windows 上裸的 C:\… 路径会被当成 URL scheme
+      `const { state, closeState } = await import(${JSON.stringify(pathToFileURL(stateModule).href)})`,
+      `await state()`,
+      `await closeState()`,
       `process.exit(0)`,
     ].join('\n'),
   )
@@ -55,20 +58,22 @@ test('两个进程同时在新库上迁移：都不报错，版本号只前进�
     }
 
     // 版本号必须是"迁移条数"，而不是被某个进程写成更小的值
-    const { db } = await import('../src/core/db.ts')
-    const version = (db().prepare('pragma user_version').get() as { user_version: number }).user_version
-    const migrations = await import('../src/core/db.ts').then((m) => (m as unknown as { MIGRATIONS?: unknown[] }).MIGRATIONS)
-    if (Array.isArray(migrations)) assert.equal(version, migrations.length)
-    else assert.ok(version > 0, 'user_version 应已推进')
+    const { SQLITE_LADDER } = await import('../src/core/db/state-schema.ts')
+    const check = new DatabaseSync(path.join(home, 'astra.db'), { readOnly: true })
+    const version = (check.prepare('pragma user_version').get() as { user_version: number }).user_version
+    assert.equal(version, SQLITE_LADDER.length)
 
     // 表结构确实建好了（不是"事务回滚了但没报错"）
-    const tables = db().prepare("select name from sqlite_master where type='table'").all() as { name: string }[]
+    const tables = check.prepare("select name from sqlite_master where type='table'").all() as { name: string }[]
     const names = tables.map((t) => t.name)
     for (const t of ['tracks', 'jobs', 'job_items', 'subscriptions', 'audit_log']) {
       assert.ok(names.includes(t), `缺表 ${t}`)
     }
-    const cols = (db().prepare('pragma table_info(tracks)').all() as { name: string }[]).map((c) => c.name)
-    assert.ok(cols.includes('album_type'), 'tracks 应已加上 album_type（最后一次迁移）')
+    const cols = (check.prepare('pragma table_info(tracks)').all() as { name: string }[]).map((c) => c.name)
+    assert.ok(cols.includes('album_type'), 'tracks 应已加上 album_type')
+    const subCols = (check.prepare('pragma table_info(subscriptions)').all() as { name: string }[]).map((c) => c.name)
+    assert.ok(subCols.includes('options'), 'subscriptions 应已加上 options（阶梯最后一级）')
+    check.close()
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

@@ -9,7 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { positionExpr, pickFont } from '../src/media/compose.ts'
 
-test('水印位置：用 text_w/text_h 而不是 w/h', () => {
+test('水印位置：用 text_w/text_h 而不是 w/h', async () => {
   assert.equal(positionExpr('top-left'), '20:20')
   assert.equal(positionExpr('top-right'), 'W-text_w-20:20')
   assert.equal(positionExpr('bottom-left'), '20:H-text_h-20')
@@ -20,16 +20,16 @@ test('水印位置：用 text_w/text_h 而不是 w/h', () => {
   }
 })
 
-test('水印位置：边距可调', () => {
+test('水印位置：边距可调', async () => {
   assert.equal(positionExpr('bottom-right', 50), 'W-text_w-50:H-text_h-50')
 })
 
-test('字体：显式路径不存在时不静默返回', () => {
+test('字体：显式路径不存在时不静默返回', async () => {
   // 给一个肯定不存在的路径，应当返回 null 让调用方报错，而不是回落到别的字体
   assert.equal(pickFont('/definitely/not/a/font.ttf'), null)
 })
 
-test('字体：不给路径时返回一个存在的字体或 null', () => {
+test('字体：不给路径时返回一个存在的字体或 null', async () => {
   const font = pickFont()
   // 找不到字体的环境（精简容器）允许为 null，调用方会报 NO_FONT
   assert.ok(font === null || font.length > 0)

@@ -784,8 +784,8 @@ const bulk: Command = {
       if (items.length === 0) {
         throw new AstraError('EMPTY_COLLECTION', `${label}「${collection.title}」里没有可下载的视频`, { exitCode: 4 })
       }
-      const job = createJob({ domain: BILI_DOMAIN, kind: ref.kind, title: `${label}「${collection.title}」`, profile: qualityName(quality), items })
-      spawnWorker(BILI_DOMAIN, job.id)
+      const job = await createJob({ domain: BILI_DOMAIN, kind: ref.kind, title: `${label}「${collection.title}」`, profile: qualityName(quality), items })
+      await spawnWorker(BILI_DOMAIN, job.id)
       return {
         data: {
           status: 'job_started',
@@ -809,8 +809,8 @@ const bulk: Command = {
           id: v.bvid, title: v.title, subtitle: parsed.title,
           meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true },
         }))
-        const job = createJob({ domain: BILI_DOMAIN, kind: 'season', title: `合集「${parsed.title}」`, profile: qualityName(quality), items })
-        spawnWorker(BILI_DOMAIN, job.id)
+        const job = await createJob({ domain: BILI_DOMAIN, kind: 'season', title: `合集「${parsed.title}」`, profile: qualityName(quality), items })
+        await spawnWorker(BILI_DOMAIN, job.id)
         return { data: { status: 'job_started', job: { id: job.id, title: parsed.title, total: items.length }, preview: parsed.items.slice(0, 5).map((v) => ({ bvid: v.bvid, title: v.title })) } }
       }
     }
@@ -845,8 +845,8 @@ const bulk: Command = {
     }
 
     const items = await biliJobItems(info.bvid, indexes ?? info.pages.map((_, i) => i), quality)
-    const job = createJob({ domain: BILI_DOMAIN, kind: 'pages', title: info.title, profile: qualityName(quality), items })
-    spawnWorker(BILI_DOMAIN, job.id)
+    const job = await createJob({ domain: BILI_DOMAIN, kind: 'pages', title: info.title, profile: qualityName(quality), items })
+    await spawnWorker(BILI_DOMAIN, job.id)
     return {
       data: { status: 'job_started', job: { id: job.id, title: info.title, total: items.length }, preview: items.slice(0, 5).map((i) => ({ title: i.title })) },
       ...(warnings.length > 0 ? { warnings } : {}),
@@ -869,12 +869,12 @@ const jobCmd: Command = {
     const id = positionals[0]!
     const waitSeconds = Number(values.wait ?? '0')
     const deadline = Date.now() + (Number.isFinite(waitSeconds) ? waitSeconds : 0) * 1000
-    let snapshot = getJob(id, false, BILI_DOMAIN)
+    let snapshot = await getJob(id, false, BILI_DOMAIN)
     while (waitSeconds > 0 && Date.now() < deadline && !signal.aborted && ['queued', 'running'].includes(snapshot.job.status)) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
-      snapshot = getJob(id, false, BILI_DOMAIN)
+      snapshot = await getJob(id, false, BILI_DOMAIN)
     }
-    const full = getJob(id, true, BILI_DOMAIN)
+    const full = await getJob(id, true, BILI_DOMAIN)
     const items = values.failed === true ? full.items?.filter((i) => i.status === 'failed') : full.items
     return {
       data: {
@@ -898,7 +898,7 @@ const jobList: Command = {
   maxArgs: 0,
   async run({ values }) {
     const limit = Number(values.limit ?? '10')
-    return { data: { jobs: listJobs(limit, values.active === true, BILI_DOMAIN).map((j) => ({ ...j, statusLabel: statusLabel(j.status) })) } }
+    return { data: { jobs: (await listJobs(limit, values.active === true, BILI_DOMAIN)).map((j) => ({ ...j, statusLabel: statusLabel(j.status) })) } }
   },
 }
 
@@ -909,7 +909,7 @@ const jobCancel: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const j = cancelJob(positionals[0]!, BILI_DOMAIN)
+    const j = await cancelJob(positionals[0]!, BILI_DOMAIN)
     return { data: { ...j, statusLabel: statusLabel(j.status) } }
   },
 }
@@ -921,7 +921,7 @@ const jobResume: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const j = resumeJob(positionals[0]!, BILI_DOMAIN)
+    const j = await resumeJob(positionals[0]!, BILI_DOMAIN)
     return { data: { ...j, statusLabel: statusLabel(j.status) } }
   },
 }
@@ -935,7 +935,7 @@ const workerCmd: Command = {
   maxArgs: 1,
   async run({ positionals }) {
     await runWorker(BILI_DOMAIN, positionals[0]!)
-    return { data: getJob(positionals[0]!, false, BILI_DOMAIN).job }
+    return { data: (await getJob(positionals[0]!, false, BILI_DOMAIN)).job }
   },
 }
 
@@ -1080,8 +1080,8 @@ const watchLaterCmd: Command = {
     if (values.download === true) {
       const quality = parseQuality(values.quality)
       const jobItems = items.map((v) => ({ id: v.bvid, title: v.title, subtitle: '稍后再看', meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true } }))
-      const job = createJob({ domain: BILI_DOMAIN, kind: 'later', title: '稍后再看', profile: qualityName(quality), items: jobItems })
-      spawnWorker(BILI_DOMAIN, job.id)
+      const job = await createJob({ domain: BILI_DOMAIN, kind: 'later', title: '稍后再看', profile: qualityName(quality), items: jobItems })
+      await spawnWorker(BILI_DOMAIN, job.id)
       return { data: { status: 'job_started', job: { id: job.id, title: '稍后再看', total: items.length }, preview: items.slice(0, 5).map((v) => ({ bvid: v.bvid, title: v.title })) } }
     }
     return { data: { total: items.length, items: items.map((v) => ({ ...v, duration: formatDuration(v.durationSec) })) } }
@@ -1106,8 +1106,8 @@ const historyCmd: Command = {
       if (items.length === 0) throw new AstraError('EMPTY_HISTORY', '观看历史是空的', { exitCode: 4 })
       const quality = parseQuality(values.quality)
       const jobItems = items.map((v) => ({ id: v.bvid, title: v.title, subtitle: '观看历史', meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true } }))
-      const job = createJob({ domain: BILI_DOMAIN, kind: 'history', title: '观看历史', profile: qualityName(quality), items: jobItems })
-      spawnWorker(BILI_DOMAIN, job.id)
+      const job = await createJob({ domain: BILI_DOMAIN, kind: 'history', title: '观看历史', profile: qualityName(quality), items: jobItems })
+      await spawnWorker(BILI_DOMAIN, job.id)
       return { data: { status: 'job_started', job: { id: job.id, title: '观看历史', total: items.length } } }
     }
     return {
@@ -1380,7 +1380,7 @@ const subList: Command = {
   usage: 'astra bili subscribe list',
   maxArgs: 0,
   async run() {
-    const subs = listBiliSubscriptions()
+    const subs = await listBiliSubscriptions()
     return {
       data: {
         total: subs.length,
@@ -1452,7 +1452,7 @@ const subSet: Command = {
     }
     const pagesMode = parsePagesMode(values.pages)
     if (pagesMode) patch.pagesMode = pagesMode
-    return { data: setBiliSubscription(positionals[0]!, patch) }
+    return { data: await setBiliSubscription(positionals[0]!, patch) }
   },
 }
 
@@ -1463,7 +1463,7 @@ const subRemove: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    return { data: { removed: removeBiliSubscription(positionals[0]!) } }
+    return { data: { removed: await removeBiliSubscription(positionals[0]!) } }
   },
 }
 
@@ -1486,8 +1486,8 @@ const subRun: Command = {
   maxArgs: 0,
   async run({ values, signal }) {
     const targets = typeof values.id === 'string' && values.id
-      ? [findBiliSubscription(values.id)]
-      : values.force === true ? listBiliSubscriptions().filter((s) => s.enabled) : dueBiliSubscriptions()
+      ? [await findBiliSubscription(values.id)]
+      : values.force === true ? (await listBiliSubscriptions()).filter((s) => s.enabled) : await dueBiliSubscriptions()
     if (targets.length === 0) return { data: { ran: 0, results: [], note: '没有到点的订阅' } }
     const results = []
     for (const sub of targets) {
@@ -1559,12 +1559,12 @@ const spaceCmd: Command = {
           id: v.bvid, title: v.title, subtitle: `UP ${mid}`,
           meta: { bvid: v.bvid, pageIndex: 0, quality, singlePage: true },
         }))
-        const job = createJob({
+        const job = await createJob({
           domain: BILI_DOMAIN, kind: 'space',
           title: `UP ${mid}${keyword ? ` 「${keyword}」` : ''} 投稿`,
           profile: qualityName(quality), items: jobItems,
         })
-        spawnWorker(BILI_DOMAIN, job.id)
+        await spawnWorker(BILI_DOMAIN, job.id)
         return {
           data: { status: 'job_started', job: { id: job.id, total: jobItems.length, platformTotal: result.total }, preview: items.slice(0, 5) },
         }

@@ -89,7 +89,7 @@ export interface RetagOptions {
  * 之前，得先知道其中有没有会撞车的。
  */
 export async function planRetag(options: RetagOptions = {}): Promise<RetagPlan> {
-  const tracks = options.tracks ?? (await import('./library.ts')).allTracks()
+  const tracks = options.tracks ?? (await (await import('./library.ts')).allTracks())
   const root = musicRoot()
 
   // 按专辑归组：albumartist / 合辑判定是专辑级属性，同组必须算出同一个值
@@ -436,6 +436,6 @@ async function retagOne(item: RetagPlanItem): Promise<{ tagged: boolean; moved: 
 
   // 曲库记录跟着走，否则 `music have` 会说文件缺失
   const info = await stat(moved ? item.to : item.from)
-  updateTrackPath('netease', item.id, moved ? item.to : item.from, info.size)
+  await updateTrackPath('netease', item.id, moved ? item.to : item.from, info.size)
   return { tagged, moved }
 }

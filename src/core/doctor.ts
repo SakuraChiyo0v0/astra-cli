@@ -25,6 +25,9 @@ import { loadBiliSession } from '../bili/auth.ts'
 import { runBinary, ffmpegPath } from './ffmpeg.ts'
 import { maybeProxiedRequest, proxyConfig } from './proxy.ts'
 import { dirUsage } from './disk.ts'
+import { stateDb } from './state.ts'
+import { redact } from './db/index.ts'
+import { legacyStatePath, legacyStatePending } from './db/import-state.ts'
 
 export type CheckKind = 'required' | 'domain' | 'optional'
 
@@ -64,6 +67,19 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: Record<st
   const home = astraHome()
   const homeWrite = checkWritable(home)
   add({ name: 'home', kind: 'required', ok: homeWrite.ok, detail: homeWrite.detail, ...(homeWrite.ok ? {} : { hint: '检查 ASTRA_HOME 的属主与权限' }) })
+
+  // 状态库：0.56.0 起和资产库是同一个库。连得上、状态表在，CLI 才能跑
+  try {
+    const current = await stateDb()
+    const legacy = legacyStatePending(current)
+    add({ name: 'state', kind: 'required', ok: true, detail: `${current.dialect.name}：${redact(current.url)}` })
+    if (legacy) {
+      // 升级上来、老 astra.db 还没搬：曲库 / 任务历史 / 订阅都还在老文件里，新库里看不到
+      add({ name: 'state-import', kind: 'optional', ok: false, detail: `老状态库还在：${legacyStatePath()}`, hint: '跑一次 `astra db import-state` 把曲库、任务、订阅搬进当前库' })
+    }
+  } catch (err) {
+    add({ name: 'state', kind: 'required', ok: false, detail: (err as Error).message.slice(0, 160), hint: '检查 `astra db status` 与 db-url' })
+  }
 
   // ffmpeg 只影响 B 站下载与媒体处理，音乐不需要 —— 所以算 domain 级
   const ffmpegConfigured = getConfig('music.ffmpeg')

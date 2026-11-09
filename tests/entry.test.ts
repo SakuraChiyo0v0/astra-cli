@@ -32,7 +32,7 @@ before(async () => {
   }
 })
 
-after(() => {
+after(async () => {
   if (buildRoot) rmSync(buildRoot, { recursive: true, force: true })
 })
 
@@ -50,7 +50,7 @@ async function runCopy(dirName: string, fileName: string): Promise<{ version: st
   return { version: parsed.data.version }
 }
 
-test('产物必须先打包（npm run build）', () => {
+test('产物必须先打包（npm run build）', async () => {
   assert.ok(existsSync(dist), '没有 dist/astra.mjs：先 npm run build')
 })
 

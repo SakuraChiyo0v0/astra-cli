@@ -78,7 +78,7 @@ function bitrateOf(bps: number | null): number | null {
  * `limit` 控制最多查多少首（每首一次网络请求，曲库大时别一次全查）。
  */
 export async function scanUpgradable(limit: number, signal?: AbortSignal): Promise<ScanResult> {
-  const all = allTracks().filter(worthChecking)
+  const all = (await allTracks()).filter(worthChecking)
   const targets = all.slice(0, limit)
   const candidates: UpgradeCandidate[] = []
   const noUpgrade: { title: string; reason: string }[] = []

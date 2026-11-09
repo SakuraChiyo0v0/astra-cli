@@ -6,7 +6,7 @@
  * "哪些还是 16bit、哪些能升级"。
  */
 import { existsSync } from 'node:fs'
-import { db } from '../core/db.ts'
+import { all, num, numOrNull, one, run, tx } from '../core/state.ts'
 import { mirrorTrack } from '../core/db/mirror.ts'
 import type { AudioFormat, Quality } from './audio.ts'
 import { normalize } from './match.ts'
@@ -71,7 +71,7 @@ interface Row {
   created_at: string
 }
 
-const bit = (v: number | null): boolean | null => (v === null ? null : v === 1)
+const bit = (v: number | null): boolean | null => (v === null || v === undefined ? null : Number(v) === 1)
 
 /**
  * 采样率写成 44.1k 这种常见写法。
@@ -89,28 +89,47 @@ function fromRow(row: Row): LibraryTrack {
     title: row.title,
     artists: JSON.parse(row.artists) as string[],
     album: row.album,
-    durationMs: row.duration_ms,
+    durationMs: numOrNull(row.duration_ms),
     path: row.file_path,
     format: row.format as AudioFormat,
     quality: row.quality as Quality,
-    spec: { sampleRate: row.sample_rate, bitsPerSample: row.bits_per_sample, channels: row.channels },
-    bytes: row.bytes,
-    bps: row.bps,
+    spec: { sampleRate: numOrNull(row.sample_rate), bitsPerSample: numOrNull(row.bits_per_sample), channels: numOrNull(row.channels) },
+    bytes: numOrNull(row.bytes),
+    bps: numOrNull(row.bps),
     hasCover: bit(row.has_cover),
     hasLyric: bit(row.has_lyric),
     hasWordLyric: bit(row.has_word_lyric),
     sourceId: row.source_id,
     albumId: row.album_id ?? null,
-    albumYear: row.album_year ?? null,
+    albumYear: numOrNull(row.album_year),
     albumType: row.album_type ?? null,
     createdAt: row.created_at,
     missing: !existsSync(row.file_path),
   }
 }
 
-export function findTrack(platform: string, id: string): LibraryTrack | null {
-  const row = db().prepare('select * from tracks where platform = ? and native_id = ?').get(platform, id) as Row | undefined
+export async function findTrack(platform: string, id: string): Promise<LibraryTrack | null> {
+  const row = await one<Row>('select * from tracks where platform = ? and native_id = ?', [platform, id])
   return row ? fromRow(row) : null
+}
+
+/**
+ * 这一批 id 里哪些已经在曲库。一次查完 —— 列表页（搜索结果、歌单、每日推荐）
+ * 每条都单独 `findTrack` 的话，状态库在 PG 上就是几十上百次往返。
+ */
+export async function trackIdsInLibrary(platform: string, ids: string[]): Promise<Set<string>> {
+  const unique = [...new Set(ids)]
+  const found = new Set<string>()
+  const CHUNK = 500
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const slice = unique.slice(i, i + CHUNK)
+    const rows = await all<{ native_id: string }>(
+      `select native_id from tracks where platform = ? and native_id in (${slice.map(() => '?').join(', ')})`,
+      [platform, ...slice],
+    )
+    for (const row of rows) found.add(row.native_id)
+  }
+  return found
 }
 
 /**
@@ -134,8 +153,8 @@ export function trackFingerprint(title: string, artists: string[], durationMs: n
 }
 
 /** 按指纹找已下载的同一首歌（跨 id）。 */
-export function findByFingerprint(platform: string, fingerprint: string): LibraryTrack | null {
-  const row = db().prepare('select * from tracks where platform = ? and fingerprint = ? limit 1').get(platform, fingerprint) as Row | undefined
+export async function findByFingerprint(platform: string, fingerprint: string): Promise<LibraryTrack | null> {
+  const row = await one<Row>('select * from tracks where platform = ? and fingerprint = ? limit 1', [platform, fingerprint])
   return row ? fromRow(row) : null
 }
 
@@ -163,9 +182,8 @@ export interface SaveEntry {
   albumType?: string | null
 }
 
-export function saveTrack(entry: SaveEntry): void {
-  db()
-    .prepare(
+export async function saveTrack(entry: SaveEntry): Promise<void> {
+  await run(
       `insert into tracks (platform, native_id, title, artists, album, duration_ms, file_path, format, quality, bytes, bps,
                            audio_sha256, source_id, created_at, sample_rate, bits_per_sample, channels, has_cover, has_lyric, has_word_lyric, fingerprint,
                            album_id, album_year, album_type)
@@ -178,8 +196,7 @@ export function saveTrack(entry: SaveEntry): void {
          has_cover = excluded.has_cover, has_lyric = excluded.has_lyric, has_word_lyric = excluded.has_word_lyric,
          fingerprint = excluded.fingerprint,
          album_id = excluded.album_id, album_year = excluded.album_year, album_type = excluded.album_type`,
-    )
-    .run(
+    [
       entry.platform, entry.id, entry.title, JSON.stringify(entry.artists), entry.album, entry.durationMs, entry.path,
       entry.format, entry.quality, entry.bytes, entry.bps, entry.audioSha256, entry.sourceId, new Date().toISOString(),
       entry.spec?.sampleRate ?? null, entry.spec?.bitsPerSample ?? null, entry.spec?.channels ?? null,
@@ -190,7 +207,8 @@ export function saveTrack(entry: SaveEntry): void {
       entry.albumId ?? null,
       entry.albumYear ?? null,
       entry.albumType ?? null,
-    )
+    ],
+  )
 
   // 同步进资产库（assets + files）。不 await：资产库出问题不能影响下载结果。
   void mirrorTrack({
@@ -207,11 +225,11 @@ export function saveTrack(entry: SaveEntry): void {
 }
 
 /** 回填补读的规格与附属文件状态（老记录没有这些列的值）。 */
-export function updateTrackSpec(
+export async function updateTrackSpec(
   platform: string,
   id: string,
   patch: { spec?: TrackSpec; bytes?: number | null; bps?: number | null; hasCover?: boolean; hasLyric?: boolean; hasWordLyric?: boolean; quality?: Quality },
-): void {
+): Promise<void> {
   const sets: string[] = []
   const values: (string | number | null)[] = []
   if (patch.spec) {
@@ -226,7 +244,7 @@ export function updateTrackSpec(
   if (patch.hasWordLyric !== undefined) { sets.push('has_word_lyric = ?'); values.push(patch.hasWordLyric ? 1 : 0) }
   if (sets.length === 0) return
   values.push(platform, id)
-  db().prepare(`update tracks set ${sets.join(', ')} where platform = ? and native_id = ?`).run(...values)
+  await run(`update tracks set ${sets.join(', ')} where platform = ? and native_id = ?`, values)
 }
 
 /**
@@ -235,16 +253,17 @@ export function updateTrackSpec(
  * 单独一个函数、单独一步，是因为它和"规格有没有变"无关：
  * 文件完全没变老记录也要补指纹，不能塞进 refresh 的"有变化才写"分支里。
  */
-export function backfillFingerprints(force = false): number {
+export async function backfillFingerprints(force = false): Promise<number> {
   // 默认只补 null；`force` 时全量重算 —— 算法一旦调整（比如从"取整到秒"改成"5 秒分桶"，
   // 同一首歌的新旧指纹会不一样），旧指纹就是错的，必须整体重写。
   const where = force ? '1 = 1' : 'fingerprint is null'
-  const rows = db().prepare(`select platform, native_id, title, artists, duration_ms from tracks where ${where}`).all() as {
+  const rows = await all<{
     platform: string; native_id: string; title: string; artists: string; duration_ms: number | null
-  }[]
+  }>(`select platform, native_id, title, artists, duration_ms from tracks where ${where}`)
   if (rows.length === 0) return 0
-  const update = db().prepare('update tracks set fingerprint = ? where platform = ? and native_id = ?')
   let n = 0
+  // 一个事务里写完：几百条逐条自动提交在 PG 上慢得多
+  await tx(async (conn) => {
   for (const row of rows) {
     let artists: string[] = []
     try {
@@ -253,9 +272,10 @@ export function backfillFingerprints(force = false): number {
     } catch {
       artists = []
     }
-    update.run(trackFingerprint(row.title, artists, row.duration_ms), row.platform, row.native_id)
+    await conn.exec('update tracks set fingerprint = ? where platform = ? and native_id = ?', [trackFingerprint(row.title, artists, numOrNull(row.duration_ms)), row.platform, row.native_id])
     n += 1
   }
+  })
   return n
 }
 
@@ -263,18 +283,18 @@ export function backfillFingerprints(force = false): number {
  * 改一条记录的文件路径与大小。`music retag` 搬完文件后调它，
  * 不更新的话 `music have` 会把每一首搬过的都报成"文件缺失"。
  */
-export function updateTrackPath(platform: string, id: string, filePath: string, bytes: number | null): void {
-  db().prepare('update tracks set file_path = ?, bytes = ? where platform = ? and native_id = ?').run(filePath, bytes, platform, id)
+export async function updateTrackPath(platform: string, id: string, filePath: string, bytes: number | null): Promise<void> {
+  await run('update tracks set file_path = ?, bytes = ? where platform = ? and native_id = ?', [filePath, bytes, platform, id])
 }
 
-export function forgetTrack(platform: string, id: string): boolean {
-  return db().prepare('delete from tracks where platform = ? and native_id = ?').run(platform, id).changes > 0
+export async function forgetTrack(platform: string, id: string): Promise<boolean> {
+  return (await run('delete from tracks where platform = ? and native_id = ?', [platform, id])) > 0
 }
 
 /** 模糊找：每个关键词都要出现在 标题 / 歌手 / 专辑 之一里。 */
-export function searchLibrary(keyword: string, limit: number): { total: number; tracks: LibraryTrack[] } {
+export async function searchLibrary(keyword: string, limit: number): Promise<{ total: number; tracks: LibraryTrack[] }> {
   const words = keyword.split(/\s+/).map(normalize).filter(Boolean)
-  const rows = db().prepare('select * from tracks order by created_at desc').all() as unknown as Row[]
+  const rows = await all<Row>('select * from tracks order by created_at desc')
   const matched = rows.filter((row) => {
     const haystack = normalize(`${row.title} ${(JSON.parse(row.artists) as string[]).join(' ')} ${row.album ?? ''}`)
     return words.every((w) => haystack.includes(w))
@@ -282,8 +302,8 @@ export function searchLibrary(keyword: string, limit: number): { total: number; 
   return { total: matched.length, tracks: matched.slice(0, limit).map(fromRow) }
 }
 
-export function allTracks(): LibraryTrack[] {
-  return (db().prepare('select * from tracks order by created_at desc').all() as unknown as Row[]).map(fromRow)
+export async function allTracks(): Promise<LibraryTrack[]> {
+  return (await all<Row>('select * from tracks order by created_at desc')).map(fromRow)
 }
 
 export interface LibraryStats {
@@ -297,8 +317,8 @@ export interface LibraryStats {
   noWordLyric: number
 }
 
-export function libraryStats(): LibraryStats {
-  const rows = db().prepare('select * from tracks').all() as unknown as Row[]
+export async function libraryStats(): Promise<LibraryStats> {
+  const rows = await all<Row>('select * from tracks')
   const byQuality: Record<string, number> = {}
   const bySpec: Record<string, number> = {}
   let bytes = 0
@@ -307,12 +327,12 @@ export function libraryStats(): LibraryStats {
   let noWordLyric = 0
   for (const row of rows) {
     byQuality[row.quality] = (byQuality[row.quality] ?? 0) + 1
-    const spec = row.sample_rate && row.bits_per_sample ? specKey(row.sample_rate, row.bits_per_sample) : '未知规格'
+    const spec = row.sample_rate && row.bits_per_sample ? specKey(num(row.sample_rate), num(row.bits_per_sample)) : '未知规格'
     bySpec[spec] = (bySpec[spec] ?? 0) + 1
-    bytes += row.bytes ?? 0
+    bytes += num(row.bytes)
     if (!existsSync(row.file_path)) missing += 1
-    if (row.has_cover === 0) noCover += 1
-    if (row.has_word_lyric === 0) noWordLyric += 1
+    if (row.has_cover !== null && num(row.has_cover) === 0) noCover += 1
+    if (row.has_word_lyric !== null && num(row.has_word_lyric) === 0) noWordLyric += 1
   }
   return { tracks: rows.length, bytes, byQuality, bySpec, missing, noCover, noWordLyric }
 }

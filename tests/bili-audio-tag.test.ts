@@ -28,7 +28,7 @@ function readTags(file: string): Record<string, string> | null {
   return Object.fromEntries(Object.entries(tags).map(([k, v]) => [k.toLowerCase(), v]))
 }
 
-test('默认输出格式是 mp3（能写标签）', () => {
+test('默认输出格式是 mp3（能写标签）', async () => {
   // 没设 bili.audio-format 时
   const prev = process.env.ASTRA_HOME
   process.env.ASTRA_HOME = mkdtempSync(path.join(tmpdir(), 'astra-at-'))
@@ -117,7 +117,7 @@ test('封面下载失败不影响标签写入', async () => {
   }
 })
 
-test('分支判定：整段流 + 只取音频，必须过音频管道', () => {
+test('分支判定：整段流 + 只取音频，必须过音频管道', async () => {
   // 这条防的是"调用方忘了调管道"。上一次只测 processBiliAudio 本身，
   // 把 durl 分支退回"直接存"测试照样绿 —— 因为它验的是被调用的函数，不是要不要调。
   assert.equal(audioPlan(true), 'pipeline', 'durl 是带画面的整段流，不过管道就存成假 mp3')

@@ -59,10 +59,10 @@ function jobView(job: JobView): Record<string, unknown> {
 
 async function waitJob(id: string, seconds: number, signal: AbortSignal): Promise<JobView> {
   const deadline = Date.now() + seconds * 1000
-  let snapshot = getJob(id, false, NOVEL_DOMAIN).job
+  let snapshot = (await getJob(id, false, NOVEL_DOMAIN)).job
   while (Date.now() < deadline && !signal.aborted && ['queued', 'running'].includes(snapshot.status)) {
     await new Promise((r) => setTimeout(r, 2000))
-    snapshot = getJob(id, false, NOVEL_DOMAIN).job
+    snapshot = (await getJob(id, false, NOVEL_DOMAIN)).job
   }
   return snapshot
 }
@@ -166,7 +166,7 @@ const get: Command = {
     const target = epubPath({ title: simplified ? toSimplified(plan.title) : plan.title, author: book.author, source: key })
     const overwrite = existsSync(target)
     const meta: BookJobMeta = { source: key, bookId: book.id, plan, simplified, images }
-    const job = createJob({
+    const job = await createJob({
       domain: NOVEL_DOMAIN,
       kind: 'book',
       title: `《${simplified ? toSimplified(plan.title) : plan.title}》`,
@@ -176,7 +176,7 @@ const get: Command = {
       }),
       meta: { ...meta },
     })
-    spawnWorker(NOVEL_DOMAIN, job.id)
+    await spawnWorker(NOVEL_DOMAIN, job.id)
     const waitSeconds = Math.min(600, Math.max(0, Number(values.wait ?? '0') || 0))
     const final = waitSeconds > 0 ? await waitJob(job.id, waitSeconds, signal) : job
     return {
@@ -205,7 +205,7 @@ const jobCmd: Command = {
     const id = positionals[0]!
     const seconds = Math.min(600, Math.max(0, Number(values.wait ?? '0') || 0))
     if (seconds > 0) await waitJob(id, seconds, signal)
-    const full = getJob(id, true, NOVEL_DOMAIN)
+    const full = await getJob(id, true, NOVEL_DOMAIN)
     const failed = (full.items ?? []).filter((i) => i.status === 'failed')
     return {
       data: {
@@ -230,7 +230,7 @@ const jobsCmd: Command = {
   maxArgs: 0,
   async run({ values }) {
     const limit = Math.max(1, Math.min(200, Number(values.limit ?? '20') || 20))
-    return { data: { jobs: listJobs(limit, values.active === true, NOVEL_DOMAIN).map(jobView) } }
+    return { data: { jobs: (await listJobs(limit, values.active === true, NOVEL_DOMAIN)).map(jobView) } }
   },
 }
 
@@ -241,7 +241,7 @@ const jobCancel: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    return { data: jobView(cancelJob(positionals[0]!, NOVEL_DOMAIN)) }
+    return { data: jobView(await cancelJob(positionals[0]!, NOVEL_DOMAIN)) }
   },
 }
 
@@ -252,7 +252,7 @@ const jobResume: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    return { data: jobView(resumeJob(positionals[0]!, NOVEL_DOMAIN)) }
+    return { data: jobView(await resumeJob(positionals[0]!, NOVEL_DOMAIN)) }
   },
 }
 
@@ -265,7 +265,7 @@ const worker: Command = {
   maxArgs: 1,
   async run({ positionals }) {
     await runWorker(NOVEL_DOMAIN, positionals[0]!)
-    return { data: jobView(getJob(positionals[0]!, false, NOVEL_DOMAIN).job) }
+    return { data: jobView((await getJob(positionals[0]!, false, NOVEL_DOMAIN)).job) }
   },
 }
 
@@ -285,16 +285,16 @@ const indexCmd: Command = {
       ? { books: index.books.length, pages: index.pages, builtAt: index.builtAt, stale: Date.now() - Date.parse(index.builtAt) > INDEX_TTL_MS }
       : null
     if (values.rebuild !== true) return { data: { index: status, next: status ? null : '`astra novel index --rebuild`' } }
-    const running = listJobs(50, true, NOVEL_DOMAIN).find((j) => j.kind === 'index')
+    const running = (await listJobs(50, true, NOVEL_DOMAIN)).find((j) => j.kind === 'index')
     if (running) throw new AstraError('JOB_RUNNING', `已经在重建了：${running.id}`, { exitCode: 2, hint: `\`astra novel job ${running.id}\`` })
     const pages = await indexPages(signal)
-    const job = createJob({
+    const job = await createJob({
       domain: NOVEL_DOMAIN,
       kind: 'index',
       title: '努努书坊书名索引',
       items: pages.map((p) => ({ id: p.path, title: p.author ?? p.path, meta: { kind: 'index-page', path: p.path, author: p.author } })),
     })
-    spawnWorker(NOVEL_DOMAIN, job.id)
+    await spawnWorker(NOVEL_DOMAIN, job.id)
     return { data: { index: status, job: jobView(job), next: `\`astra novel job ${job.id} --wait 600\`` } }
   },
 }
@@ -357,7 +357,7 @@ const subList: Command = {
   usage: 'astra novel subscribe list',
   maxArgs: 0,
   async run() {
-    const subs = listNovelSubscriptions().map(subView)
+    const subs = (await listNovelSubscriptions()).map(subView)
     return { data: { subscriptions: subs }, table: { headers: ['id', 'title', 'chapters', 'every', 'enabled'], rows: subs.map((s) => [String(s.id), String(s.title), Number(s.chapters), Number(s.everyHours), s.enabled ? 'yes' : 'no']) } }
   },
 }
@@ -369,8 +369,8 @@ const subRemove: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const sub = findNovelSubscription(positionals[0]!)
-    return { data: { removed: removeNovelSubscription(sub.id), id: sub.id, title: sub.title } }
+    const sub = await findNovelSubscription(positionals[0]!)
+    return { data: { removed: await removeNovelSubscription(sub.id), id: sub.id, title: sub.title } }
   },
 }
 
@@ -385,8 +385,8 @@ const subRun: Command = {
   maxArgs: 1,
   async run({ positionals, values, signal }) {
     const targets = positionals[0]
-      ? [findNovelSubscription(positionals[0])]
-      : values.all === true ? listNovelSubscriptions().filter((s) => s.enabled) : dueNovelSubscriptions()
+      ? [await findNovelSubscription(positionals[0])]
+      : values.all === true ? (await listNovelSubscriptions()).filter((s) => s.enabled) : await dueNovelSubscriptions()
     const results: Record<string, unknown>[] = []
     const warnings: string[] = []
     for (const sub of targets) {

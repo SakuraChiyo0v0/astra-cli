@@ -11,7 +11,7 @@
  * 然后照常打包覆盖旧 EPUB。
  */
 import { randomUUID } from 'node:crypto'
-import { db } from '../core/db.ts'
+import { all, num, one, recordSubscriptionRun, run } from '../core/state.ts'
 import { AstraError } from '../core/errors.ts'
 import { createJob, spawnWorker, type JobItemView, type JobView } from '../core/jobs.ts'
 import { progress } from '../core/output.ts'
@@ -87,8 +87,8 @@ function toView(row: Row): NovelSubscription {
     source,
     bookId,
     title: row.title,
-    everyHours: row.every_hours,
-    enabled: row.enabled === 1,
+    everyHours: num(row.every_hours),
+    enabled: num(row.enabled) === 1,
     lastCheckedAt: row.last_checked_at,
     lastJobId: row.last_job_id,
     seen: parseList(row.last_seen),
@@ -96,12 +96,12 @@ function toView(row: Row): NovelSubscription {
   }
 }
 
-export function listNovelSubscriptions(): NovelSubscription[] {
-  return (db().prepare('select * from subscriptions where kind = ? order by created_at').all(NOVEL_KIND) as unknown as Row[]).map(toView)
+export async function listNovelSubscriptions(): Promise<NovelSubscription[]> {
+  return (await all<Row>('select * from subscriptions where kind = ? order by created_at', [NOVEL_KIND])).map(toView)
 }
 
-export function findNovelSubscription(idOrPrefix: string): NovelSubscription {
-  const rows = db().prepare('select * from subscriptions where kind = ? and (id = ? or id like ?)').all(NOVEL_KIND, idOrPrefix, `${idOrPrefix}%`) as unknown as Row[]
+export async function findNovelSubscription(idOrPrefix: string): Promise<NovelSubscription> {
+  const rows = await all<Row>('select * from subscriptions where kind = ? and (id = ? or id like ?)', [NOVEL_KIND, idOrPrefix, `${idOrPrefix}%`])
   if (rows.length === 0) throw new AstraError('NOT_FOUND', `没有小说订阅 ${idOrPrefix}`, { exitCode: 4, hint: '`astra novel subscribe list` 看现有订阅' })
   if (rows.length > 1) throw new AstraError('AMBIGUOUS_ID', `订阅 id 前缀 ${idOrPrefix} 对应多个`, { exitCode: 2, hint: '多写几位' })
   return toView(rows[0]!)
@@ -120,18 +120,19 @@ export async function addNovelSubscription(
   const book = await source.book(input.bookId, signal)
   const plan = makePlan(book, input.options.volume, source.volumesAreBooks)
   const targetId = `${input.source}:${input.bookId}`
-  const existing = db().prepare('select id from subscriptions where kind = ? and target_id = ?').get(NOVEL_KIND, targetId) as { id: string } | undefined
+  const existing = await one<{ id: string }>('select id from subscriptions where kind = ? and target_id = ?', [NOVEL_KIND, targetId])
   if (existing) throw new AstraError('ALREADY_EXISTS', `已经订阅过《${book.title}》（${existing.id}）`, { exitCode: 2, hint: '`astra novel subscribe list`' })
   const id = randomUUID().slice(0, 8)
-  db()
-    .prepare('insert into subscriptions (id, kind, target_id, title, every_hours, enabled, last_seen, created_at, options) values (?, ?, ?, ?, ?, 1, ?, ?, ?)')
-    .run(id, NOVEL_KIND, targetId, plan.title, input.everyHours, JSON.stringify(planIds(plan)), new Date().toISOString(), JSON.stringify(input.options))
+  await run(
+    'insert into subscriptions (id, kind, target_id, title, every_hours, enabled, last_seen, created_at, options) values (?, ?, ?, ?, ?, 1, ?, ?, ?)',
+    [id, NOVEL_KIND, targetId, plan.title, input.everyHours, JSON.stringify(planIds(plan)), new Date().toISOString(), JSON.stringify(input.options)],
+  )
   return findNovelSubscription(id)
 }
 
-export function removeNovelSubscription(idOrPrefix: string): boolean {
-  const sub = findNovelSubscription(idOrPrefix)
-  return db().prepare('delete from subscriptions where id = ?').run(sub.id).changes > 0
+export async function removeNovelSubscription(idOrPrefix: string): Promise<boolean> {
+  const sub = await findNovelSubscription(idOrPrefix)
+  return (await run('delete from subscriptions where id = ?', [sub.id])) > 0
 }
 
 /** 当前章节里基线没有的。纯函数，单测用。 */
@@ -148,7 +149,7 @@ export interface NovelRunResult {
 }
 
 export async function runNovelSubscription(idOrPrefix: string, signal?: AbortSignal): Promise<NovelRunResult> {
-  const sub = findNovelSubscription(idOrPrefix)
+  const sub = await findNovelSubscription(idOrPrefix)
   const source = sourceById(sub.source)
   const book = await source.book(sub.bookId, signal)
   const plan = makePlan(book, sub.options.volume, source.volumesAreBooks)
@@ -156,33 +157,33 @@ export async function runNovelSubscription(idOrPrefix: string, signal?: AbortSig
   let jobId: string | null = null
   let note = '没有新章节'
   if (fresh.length > 0) {
-    const job = createJob({
+    const job = await createJob({
       domain: 'novel',
       kind: 'book',
       title: `追更《${plan.title}》新增 ${fresh.length} 章`,
       items: plan.chapters.map((c) => ({ id: c.id, title: c.title, meta: { source: sub.source, bookId: sub.bookId, title: c.title, images: sub.options.images } })),
       meta: { source: sub.source, bookId: sub.bookId, plan, simplified: sub.options.simplified, images: sub.options.images, subscriptionId: sub.id },
     })
-    spawnWorker('novel', job.id)
+    await spawnWorker('novel', job.id)
     jobId = job.id
     note = `发现 ${fresh.length} 章新内容，已开任务 ${job.id}`
     progress('novel.subscribe.new', { id: sub.id, count: fresh.length, jobId })
   }
   const now = new Date().toISOString()
-  db().prepare('update subscriptions set last_checked_at = ?, last_job_id = coalesce(?, last_job_id) where id = ?').run(now, jobId, sub.id)
-  db().prepare('insert or replace into subscription_runs (subscription_id, ran_at, new_tracks, job_id, note) values (?, ?, ?, ?, ?)').run(sub.id, now, fresh.length, jobId, note)
-  return { subscription: findNovelSubscription(sub.id), newCount: fresh.length, jobId, note }
+  await run('update subscriptions set last_checked_at = ?, last_job_id = coalesce(?, last_job_id) where id = ?', [now, jobId, sub.id])
+  await recordSubscriptionRun(sub.id, now, fresh.length, jobId, note)
+  return { subscription: await findNovelSubscription(sub.id), newCount: fresh.length, jobId, note }
 }
 
 /** 任务跑完后按**实际抓到**的章回写基线。只在成书时才算（没出书就等于没追上）。 */
-export function recordSubscriptionChapters(subscriptionId: string, job: JobView, items: JobItemView[]): void {
+export async function recordSubscriptionChapters(subscriptionId: string, job: JobView, items: JobItemView[]): Promise<void> {
   if (job.status !== 'done') return
-  const sub = findNovelSubscription(subscriptionId)
+  const sub = await findNovelSubscription(subscriptionId)
   const got = items.filter((i) => i.status === 'downloaded' || i.status === 'skipped').map((i) => i.id)
   const merged = [...new Set([...sub.seen, ...got])]
-  db().prepare('update subscriptions set last_seen = ? where id = ?').run(JSON.stringify(merged), sub.id)
+  await run('update subscriptions set last_seen = ? where id = ?', [JSON.stringify(merged), sub.id])
 }
 
-export function dueNovelSubscriptions(now = Date.now()): NovelSubscription[] {
-  return listNovelSubscriptions().filter((s) => s.enabled && (!s.lastCheckedAt || now - Date.parse(s.lastCheckedAt) >= s.everyHours * 3_600_000))
+export async function dueNovelSubscriptions(now = Date.now()): Promise<NovelSubscription[]> {
+  return (await listNovelSubscriptions()).filter((s) => s.enabled && (!s.lastCheckedAt || now - Date.parse(s.lastCheckedAt) >= s.everyHours * 3_600_000))
 }

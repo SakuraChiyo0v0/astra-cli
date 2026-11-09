@@ -40,8 +40,8 @@ function makeFlac(dir: string, name: string, withCover: boolean): string {
   return file
 }
 
-function register(file: string, id: string): void {
-  saveTrack({
+async function register(file: string, id: string): Promise<void> {
+  await saveTrack({
     platform: 'netease', id, title: path.basename(file), artists: ['测试'], album: '专辑',
     durationMs: 1000, path: file, format: 'flac', quality: 'flac',
     bytes: null, bps: null, sourceId: null, audioSha256: null,

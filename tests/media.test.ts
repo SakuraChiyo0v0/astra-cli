@@ -11,14 +11,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { parseTime, mediaInfo, extractAudio } from '../src/media/tools.ts'
 
-test('时间解析：秒 / 分:秒 / 时:分:秒', () => {
+test('时间解析：秒 / 分:秒 / 时:分:秒', async () => {
   assert.equal(parseTime('12.5'), 12.5)
   assert.equal(parseTime('1:30'), 90)
   assert.equal(parseTime('00:01:30.5'), 90.5)
   assert.equal(parseTime('2:00:00'), 7200)
 })
 
-test('时间解析：非法输入明确拒绝', () => {
+test('时间解析：非法输入明确拒绝', async () => {
   assert.throws(() => parseTime('abc'), /格式不对/)
   assert.throws(() => parseTime('1:2:3:4'), /格式不对/)
   assert.throws(() => parseTime('-5'), /格式不对/)

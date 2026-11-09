@@ -16,7 +16,7 @@ import { describeCommand, parseCommandArgs, type Command } from './core/command.
 import { renderTable } from './core/output.ts'
 import { CONFIG_KEYS, getConfig, listConfig, musicRoot, setConfig, unsetConfig } from './core/config.ts'
 import { astraHome } from './core/paths.ts'
-import { closeDb } from './core/db.ts'
+import { closeState } from './core/state.ts'
 import { runDoctor } from './core/doctor.ts'
 import { allSessions, clearSessions, type Domain } from './core/sessions.ts'
 import { dbCommands } from './core/db/commands.ts'
@@ -135,7 +135,7 @@ const jobsCmd: Command = {
     const limit = Number(values.limit ?? 10)
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new AstraError('INVALID_INPUT', '--limit 必须是 1..100 的整数', { exitCode: 2 })
     const domain = typeof values.domain === 'string' ? values.domain : undefined
-    const jobs = listJobs(limit, values.active === true, domain)
+    const jobs = await listJobs(limit, values.active === true, domain)
     return {
       data: {
         total: jobs.length,
@@ -174,17 +174,17 @@ const jobCmd: Command = {
     if (!first) throw new AstraError('INVALID_INPUT', '需要任务 id', { exitCode: 2, hint: '`astra jobs` 看有哪些' })
     if (first === 'cancel' || first === 'resume') {
       if (!second) throw new AstraError('INVALID_INPUT', `astra job ${first} 需要任务 id`, { exitCode: 2 })
-      const j = first === 'cancel' ? cancelJob(second) : resumeJob(second)
+      const j = first === 'cancel' ? await cancelJob(second) : await resumeJob(second)
       return { data: { ...j, statusLabel: statusLabel(j.status) } }
     }
     const waitSeconds = Number(values.wait ?? 0)
     const deadline = Date.now() + (Number.isFinite(waitSeconds) ? waitSeconds : 0) * 1000
-    let snapshot = getJob(first, false)
+    let snapshot = await getJob(first, false)
     while (waitSeconds > 0 && Date.now() < deadline && !signal.aborted && ['queued', 'running'].includes(snapshot.job.status)) {
       await new Promise((r) => setTimeout(r, 2000))
-      snapshot = getJob(first, false)
+      snapshot = await getJob(first, false)
     }
-    const full = getJob(first, values.items === true || values.failed === true)
+    const full = await getJob(first, values.items === true || values.failed === true)
     const items = values.failed === true ? full.items?.filter((i) => i.status === 'failed') : full.items
     return {
       data: {
@@ -305,7 +305,8 @@ const backupCmd: Command = {
   summary: '备份曲库数据库与会话，或用备份恢复',
   usage: 'astra backup | astra backup list | astra backup restore <备份目录>',
   notes: [
-    '只备份 astra.db（曲库与任务历史）和三个会话文件；**不备份**音乐/视频文件本身',
+    '状态库是本机 SQLite 时备份 astra.db（曲库与任务历史）；是 PostgreSQL 时只备会话文件，数据库用 `astra db backup`',
+    '会话文件（三个）总是备份；**不备份**音乐/视频文件本身',
     '数据库用 SQLite 的 VACUUM INTO 生成一致快照，不会因为那一刻有写入而损坏',
     '默认保留最近 7 份；备份目录可用环境变量 ASTRA_BACKUP_DIR 指到别的盘',
     '`restore` 会覆盖当前曲库，但会先把当前库改名保留；有任务在跑时会拒绝',
@@ -318,15 +319,16 @@ const backupCmd: Command = {
     }
     if (sub === 'restore') {
       if (!arg) throw new AstraError('INVALID_INPUT', '需要备份目录', { exitCode: 2, hint: '`astra backup list` 看有哪些' })
-      const result = restore(arg)
+      const result = await restore(arg)
       return {
         data: { ...result, note: '已用备份覆盖曲库；原库已改名保留，确认无误后可手动删除' },
         warnings: result.previousKept ? [`原库保留在 ${result.previousKept}`] : [],
       }
     }
-    const result = backup()
+    const result = await backup()
     const warnings: string[] = []
-    if (!result.hasDatabase) warnings.push('本次没有备份到数据库（还没下载过任何东西时是正常的）')
+    if (result.database === 'postgres') warnings.push('状态库在 PostgreSQL：这里只备了会话文件，数据库请用 `astra db backup`')
+    else if (!result.hasDatabase) warnings.push('本次没有备份到数据库（还没下载过任何东西时是正常的）')
     if (result.sessionCount === 0) warnings.push('没有可备份的会话文件（可能都还没登录）')
     return { data: result, warnings }
   },
@@ -356,13 +358,13 @@ const auditCmd: Command = {
   maxArgs: 1,
   async run({ positionals, values }) {
     if (positionals[0] === 'prune') {
-      const removed = pruneAudit()
-      const remaining = listAudit({ limit: 500 }).length
+      const removed = await pruneAudit()
+      const remaining = (await listAudit({ limit: 500 })).length
       return { data: { removed, remaining } }
     }
     const limit = Number(values.limit ?? 50)
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new AstraError('INVALID_INPUT', '--limit 必须是 1..500 的整数', { exitCode: 2 })
-    const records = listAudit({
+    const records = await listAudit({
       limit,
       ...(typeof values.domain === 'string' ? { domain: values.domain } : {}),
       ...(values.failed === true ? { failedOnly: true } : {}),
@@ -544,7 +546,7 @@ async function main(): Promise<number> {
     writeJson(failResult(error), pretty)
     return error.exitCode
   } finally {
-    closeDb()
+    await closeState()
   }
 }
 

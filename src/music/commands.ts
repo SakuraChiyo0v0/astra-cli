@@ -15,7 +15,7 @@ import { decide, scoreTrack, type Candidate } from './match.ts'
 import { artistTopTracks, albumInfo, playlistTracks, searchCollection, searchSongs, songDetail, songDetails, type Track } from './netease.ts'
 import { resolveTarget } from './target.ts'
 import { downloadTrack } from './download.ts'
-import { allTracks, backfillFingerprints, findTrack, forgetTrack, libraryStats, searchLibrary, type LibraryTrack } from './library.ts'
+import { allTracks, backfillFingerprints, findTrack, forgetTrack, libraryStats, searchLibrary, trackIdsInLibrary, type LibraryTrack } from './library.ts'
 import { archiveAlbumCovers, exportM3u, findAlbumDirs } from './library-io.ts'
 import { refreshLibrarySpecs } from './maintain.ts'
 import {
@@ -59,8 +59,8 @@ function formatDuration(ms: number | null): string | null {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-/** 给 AI 看的候选：带 ref（下一步直接 `music get <ref>`）和版本标记。 */
-function candidateView(c: Candidate, index: number) {
+/** 给 AI 看的候选：带 ref（下一步直接 `music get <ref>`）和版本标记。`owned` 由调用方一次查好。 */
+function candidateView(c: Candidate, index: number, owned: Set<string>) {
   const t = c.track
   return {
     index: index + 1,
@@ -72,8 +72,14 @@ function candidateView(c: Candidate, index: number) {
     year: t.publishTime ? new Date(t.publishTime + 8 * 3600_000).getUTCFullYear() : null,
     note: [...t.aliases, ...t.translations].join(' / ') || null,
     flags: c.flags,
-    inLibrary: findTrack('wy', t.id) !== null,
+    inLibrary: owned.has(t.id),
   }
+}
+
+/** 一批候选的视图：先一次查曲库，再逐个拼。 */
+async function candidateViews(list: Candidate[]): Promise<ReturnType<typeof candidateView>[]> {
+  const owned = await trackIdsInLibrary('wy', list.map((c) => c.track.id))
+  return list.map((c, i) => candidateView(c, i, owned))
 }
 
 function trackView(t: Track) {
@@ -100,11 +106,12 @@ async function collectionTracks(kind: 'album' | 'playlist' | 'artist', id: strin
   return { title: `${r.name} 热门歌曲`, tracks: r.tracks }
 }
 
-function startBatch(kind: string, title: string, quality: Quality, tracks: Track[]) {
+async function startBatch(kind: string, title: string, quality: Quality, tracks: Track[]) {
   if (tracks.length === 0) throw new AstraError('EMPTY', `${title} 里没有歌曲`, { exitCode: 4 })
-  const job = createJob({ domain: MUSIC_DOMAIN, kind, title, profile: quality, items: jobItemsFor(tracks, quality) })
-  spawnWorker(MUSIC_DOMAIN, job.id)
-  const inLibrary = tracks.filter((t) => findTrack('wy', t.id) !== null).length
+  const job = await createJob({ domain: MUSIC_DOMAIN, kind, title, profile: quality, items: jobItemsFor(tracks, quality) })
+  await spawnWorker(MUSIC_DOMAIN, job.id)
+  const owned = await trackIdsInLibrary('wy', tracks.map((t) => t.id))
+  const inLibrary = tracks.filter((t) => owned.has(t.id)).length
   return {
     data: {
       status: 'job_started',
@@ -140,7 +147,7 @@ const get: Command = {
     const target = await resolveTarget(input)
     if (target.kind === 'album' || target.kind === 'playlist' || target.kind === 'artist') {
       const { title, tracks } = await collectionTracks(target.kind, target.id, signal)
-      return startBatch(target.kind, title, quality, tracks)
+      return await startBatch(target.kind, title, quality, tracks)
     }
     let track: Track
     let alternatives: Candidate[] = []
@@ -158,7 +165,7 @@ const get: Command = {
             status: 'ambiguous',
             reason: decision.reason,
             keyword: target.keyword,
-            candidates: decision.candidates.map(candidateView),
+            candidates: await candidateViews(decision.candidates),
             next: '让用户从 candidates 里选一个，然后执行 `astra music get <ref>`',
           },
         }
@@ -174,7 +181,7 @@ const get: Command = {
     })
     const data: Record<string, unknown> = { ...result }
     delete data.warnings
-    if (alternatives.length > 0) data.otherVersions = alternatives.slice(0, 3).map(candidateView)
+    if (alternatives.length > 0) data.otherVersions = await candidateViews(alternatives.slice(0, 3))
     return { data, warnings: result.warnings }
   },
 }
@@ -205,7 +212,7 @@ const search: Command = {
           type, keyword, total, page,
           returned: tracks.length,
           truncated: total > (page - 1) * limit + tracks.length,
-          items: tracks.map((t, i) => candidateView(scoreTrack(keyword, t), i)),
+          items: await candidateViews(tracks.map((t) => scoreTrack(keyword, t))),
         },
       }
     }
@@ -237,7 +244,7 @@ const info: Command = {
     if (target.kind === 'keyword') throw invalidInput('info 需要链接或 ref', '先用 `astra music search` 找到 ref')
     if (target.kind === 'song') {
       const t = await songDetail(target.id, signal)
-      const lib = findTrack('wy', t.id)
+      const lib = await findTrack('wy', t.id)
       return { data: { ...trackView(t), inLibrary: lib ? { path: lib.path, quality: lib.quality, missing: lib.missing } : null } }
     }
     const { title, tracks } = await collectionTracks(target.kind, target.id, signal)
@@ -246,7 +253,7 @@ const info: Command = {
         title,
         total: tracks.length,
         returned: Math.min(tracks.length, limit),
-        inLibrary: tracks.filter((t) => findTrack('wy', t.id) !== null).length,
+        inLibrary: (await trackIdsInLibrary('wy', tracks.map((t) => t.id))).size,
         tracks: tracks.slice(0, limit).map(trackView),
         truncated: tracks.length > limit,
       },
@@ -274,7 +281,7 @@ const batch: Command = {
     }
     const tracks = await songDetails(ids, signal)
     const missing = ids.filter((id) => !tracks.some((t) => t.id === id))
-    const started = startBatch('songs', (values.title as string | undefined) ?? `${tracks.length} 首歌`, quality, tracks)
+    const started = await startBatch('songs', (values.title as string | undefined) ?? `${tracks.length} 首歌`, quality, tracks)
     if (missing.length > 0) started.warnings.push(`网易云查不到：${missing.join(', ')}`)
     return started
   },
@@ -318,16 +325,16 @@ const have: Command = {
     if (values.refresh === true) {
       // 先补指纹再回读规格：指纹是"老记录才缺"的，补它不需要读文件
       // 全量重算：指纹算法会变，旧的留着重算不出来就会一直匹配不上
-      const fingerprinted = backfillFingerprints(true)
+      const fingerprinted = await backfillFingerprints(true)
       const refreshed = await refreshLibrarySpecs()
-      return { data: { refreshed, fingerprinted, stats: libraryStats() } }
+      return { data: { refreshed, fingerprinted, stats: await libraryStats() } }
     }
     if (values.low === true) {
-      const low = allTracks().filter((t) => !t.missing && (t.quality === '128k' || t.quality === '320k' || (t.spec.bitsPerSample !== null && t.spec.bitsPerSample <= 16)))
+      const low = (await allTracks()).filter((t) => !t.missing && (t.quality === '128k' || t.quality === '320k' || (t.spec.bitsPerSample !== null && t.spec.bitsPerSample <= 16)))
       return { data: { total: low.length, tracks: low.slice(0, limit).map(trackViewOfLib), truncated: low.length > limit, hint: '这些可以用 `astra music get <ref> --force` 重下，官方通道常能拿到更高规格' } }
     }
-    const { total, tracks } = searchLibrary(positionals.join(' '), limit)
-    const stats = libraryStats()
+    const { total, tracks } = await searchLibrary(positionals.join(' '), limit)
+    const stats = await libraryStats()
     // `--table` 的视图：人看一眼想知道的是这几个数，
     // 不是 `bySpec` / `byQuality` 那两坨嵌套对象。
     const gb = (n: number): string => `${(n / 1024 ** 3).toFixed(1)}G`
@@ -525,7 +532,7 @@ const forget: Command = {
   async run({ positionals }) {
     const t = await resolveTarget(positionals[0]!)
     if (t.kind !== 'song') throw invalidInput('需要一首歌的 ref')
-    return { data: { removed: forgetTrack('wy', t.id), ref: `wy:${t.id}` } }
+    return { data: { removed: await forgetTrack('wy', t.id), ref: `wy:${t.id}` } }
   },
 }
 
@@ -545,12 +552,12 @@ const job: Command = {
     const id = positionals[0]!
     const waitSeconds = intOf(values.wait, 0, 0, 600, 'wait')
     const deadline = Date.now() + waitSeconds * 1000
-    let snapshot = getJob(id, false, MUSIC_DOMAIN)
+    let snapshot = await getJob(id, false, MUSIC_DOMAIN)
     while (waitSeconds > 0 && Date.now() < deadline && !signal.aborted && ['queued', 'running'].includes(snapshot.job.status)) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
-      snapshot = getJob(id, false, MUSIC_DOMAIN)
+      snapshot = await getJob(id, false, MUSIC_DOMAIN)
     }
-    const full = getJob(id, true, MUSIC_DOMAIN)
+    const full = await getJob(id, true, MUSIC_DOMAIN)
     const items = values.failed === true ? full.items?.filter((i) => i.status === 'failed') : full.items
     return {
       data: {
@@ -574,7 +581,7 @@ const jobs: Command = {
   },
   maxArgs: 0,
   async run({ values }) {
-    return { data: { jobs: listJobs(intOf(values.limit, 10, 1, 100, 'limit'), values.active === true, MUSIC_DOMAIN).map((j) => ({ ...j, statusLabel: statusLabel(j.status) })) } }
+    return { data: { jobs: (await listJobs(intOf(values.limit, 10, 1, 100, 'limit'), values.active === true, MUSIC_DOMAIN)).map((j) => ({ ...j, statusLabel: statusLabel(j.status) })) } }
   },
 }
 
@@ -585,7 +592,7 @@ const jobCancel: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const j = cancelJob(positionals[0]!, MUSIC_DOMAIN)
+    const j = await cancelJob(positionals[0]!, MUSIC_DOMAIN)
     return { data: { ...j, statusLabel: statusLabel(j.status) } }
   },
 }
@@ -597,7 +604,7 @@ const jobResume: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const j = resumeJob(positionals[0]!, MUSIC_DOMAIN)
+    const j = await resumeJob(positionals[0]!, MUSIC_DOMAIN)
     return { data: { ...j, statusLabel: statusLabel(j.status) } }
   },
 }
@@ -611,7 +618,7 @@ const worker: Command = {
   maxArgs: 1,
   async run({ positionals }) {
     await runWorker(MUSIC_DOMAIN, positionals[0]!)
-    return { data: getJob(positionals[0]!, false, MUSIC_DOMAIN).job }
+    return { data: (await getJob(positionals[0]!, false, MUSIC_DOMAIN)).job }
   },
 }
 
@@ -824,17 +831,18 @@ const daily: Command = {
     const { tracks, reasons } = await recommendDaily(session, signal)
     const limit = intOf(values.limit, tracks.length, 1, 300, 'limit')
     const mapped = tracks.map(toTrack)
-    const view = mapped.slice(0, limit).map((t, i) => ({ ...trackView(t), reason: reasons[i] ?? null, inLibrary: findTrack('wy', t.id) !== null }))
+    const owned = await trackIdsInLibrary('wy', mapped.map((t) => t.id))
+    const view = mapped.slice(0, limit).map((t, i) => ({ ...trackView(t), reason: reasons[i] ?? null, inLibrary: owned.has(t.id) }))
     if (values.download === true) {
       const quality = qualityOf(values.quality)
-      const started = startBatch('daily', `每日推荐 ${new Date().toISOString().slice(0, 10)}`, quality, mapped)
+      const started = await startBatch('daily', `每日推荐 ${new Date().toISOString().slice(0, 10)}`, quality, mapped)
       return { data: { ...started.data, date: new Date().toISOString().slice(0, 10), today: view }, warnings: started.warnings }
     }
     return {
       data: {
         date: new Date().toISOString().slice(0, 10),
         total: mapped.length,
-        inLibrary: mapped.filter((t) => findTrack('wy', t.id) !== null).length,
+        inLibrary: mapped.filter((t) => owned.has(t.id)).length,
         tracks: view,
         truncated: mapped.length > limit,
       },
@@ -918,22 +926,23 @@ const liked: Command = {
     if (values.download === true) {
       const quality = qualityOf(values.quality)
       const tracks = await songDetails(ids, signal)
-      const started = startBatch('liked', '我喜欢的音乐', quality, tracks)
+      const started = await startBatch('liked', '我喜欢的音乐', quality, tracks)
       return { data: { ...started.data, total: ids.length }, warnings: started.warnings }
     }
     const tracks = limit > 0 ? await songDetails(ids.slice(0, limit), signal) : []
+    const likedOwned = await trackIdsInLibrary('wy', tracks.map((t) => t.id))
     return {
       data: {
         total: ids.length,
-        inLibrary: ids.length > 0 ? tracks.filter((t) => findTrack('wy', t.id) !== null).length : 0,
-        tracks: tracks.map((t) => ({ ...trackView(t), inLibrary: findTrack('wy', t.id) !== null })),
+        inLibrary: likedOwned.size,
+        tracks: tracks.map((t) => ({ ...trackView(t), inLibrary: likedOwned.has(t.id) })),
         truncated: ids.length > limit && limit > 0,
       },
     }
   },
 }
 
-function subView(s: ReturnType<typeof listSubscriptions>[number]) {
+function subView(s: Awaited<ReturnType<typeof listSubscriptions>>[number]) {
   return {
     id: s.id,
     ref: `${s.kind}:${s.targetId}`,
@@ -1038,7 +1047,7 @@ const subscribeAdd: Command = {
     const quality = values.quality === undefined ? null : qualityOf(values.quality)
     // 先读一次，确认目标存在并拿到它的真实名字（标题只用 id 的话列表里认不出是哪个）
     const { title, count } = await describeTarget(kind, targetId, signal)
-    const sub = addSubscription({
+    const sub = await addSubscription({
       kind, targetId, title, everyHours: every, quality,
       ...(adaptive ? { backoff: backoff } : {}),
     })
@@ -1047,7 +1056,7 @@ const subscribeAdd: Command = {
     // `jobId` 是旧字段，留着不打断已有脚本
     return {
       data: {
-        subscription: subView(findSubscription(sub.id)),
+        subscription: subView(await findSubscription(sub.id)),
         preview: { tracks: count },
         baseline: result.baseline,
         note: result.note,
@@ -1065,12 +1074,12 @@ const subscribeList: Command = {
   options: { runs: { type: 'boolean', description: '附上最近 5 次运行记录' } },
   maxArgs: 0,
   async run({ values }) {
-    const subs = listSubscriptions()
+    const subs = await listSubscriptions()
     const views = subs.map(subView)
     return {
       data: {
-        subscriptions: subs.map((s) => ({ ...subView(s), ...(values.runs === true ? { runs: recentRuns(s.id, 5) } : {}) })),
-        due: dueSubscriptions().map((s) => s.id),
+        subscriptions: await Promise.all(subs.map(async (s) => ({ ...subView(s), ...(values.runs === true ? { runs: await recentRuns(s.id, 5) } : {}) }))),
+        due: (await dueSubscriptions()).map((s) => s.id),
       },
       table: {
         headers: ['ID', '标题', '间隔h', '音质', '启用', '上次检查'],
@@ -1107,7 +1116,7 @@ const subscribeSet: Command = {
     if (values.base !== undefined) patch.baseMin = intOf(values.base, 5, 0, 24 * 60, 'base')
     if (values.max !== undefined) patch.maxMin = intOf(values.max, 640, 1, 7 * 24 * 60, 'max')
     if (values.factor !== undefined) patch.factor = intOf(values.factor, 2, 2, 10, 'factor')
-    return { data: subView(setSubscription(positionals[0]!, patch)) }
+    return { data: subView(await setSubscription(positionals[0]!, patch)) }
   },
 }
 
@@ -1118,7 +1127,7 @@ const subscribeRemove: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    return { data: { removed: removeSubscription(positionals[0]!) } }
+    return { data: { removed: await removeSubscription(positionals[0]!) } }
   },
 }
 
@@ -1139,10 +1148,10 @@ const subscribeRun: Command = {
   maxArgs: 0,
   async run({ values, signal }) {
     const subs = values.id !== undefined
-      ? [findSubscription(String(values.id))]
+      ? [await findSubscription(String(values.id))]
       : values.all === true
-        ? listSubscriptions().filter((s) => s.enabled)
-        : dueSubscriptions()
+        ? (await listSubscriptions()).filter((s) => s.enabled)
+        : await dueSubscriptions()
     const results = []
     for (const sub of subs) {
       try {
@@ -1262,7 +1271,7 @@ const upgrade: Command = {
       }
       const quality = qualityOf(values.quality)
       const tracks = await loadCandidateTracks(result.candidates, signal)
-      const started = startBatch('upgrade', `音质升级 ${tracks.length} 首`, quality, tracks)
+      const started = await startBatch('upgrade', `音质升级 ${tracks.length} 首`, quality, tracks)
       return {
         data: { ...started.data, scanned: result.scanned, upgrading: result.candidates },
         warnings: started.warnings,
@@ -1339,8 +1348,8 @@ const retag: Command = {
     }
 
     const scope = typeof values.keyword === 'string' && values.keyword.trim()
-      ? searchLibrary(values.keyword.trim(), 100000).tracks
-      : allTracks()
+      ? (await searchLibrary(values.keyword.trim(), 100000)).tracks
+      : await allTracks()
     if (scope.length === 0) {
       return { data: { status: 'empty', total: 0, message: '曲库里没有可处理的歌' } }
     }

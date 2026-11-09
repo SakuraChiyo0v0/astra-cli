@@ -220,8 +220,8 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
   // **但命中不等于就该跳过**（P4#5）：同一首歌可能同时在 Thriller(1982) 和
   // HIStory(1995) 里。只在"已有那份的专辑更该拥有它"时才跳过；否则要把它
   // 从精选集**搬**回原专辑 —— 否则并行下载时谁先下完谁占，等于随机。
-  const byId = findTrack('wy', track.id)
-  const hit = byId ?? findByFingerprint('wy', trackFingerprint(track.title, track.artists, track.durationMs))
+  const byId = await findTrack('wy', track.id)
+  const hit = byId ?? await findByFingerprint('wy', trackFingerprint(track.title, track.artists, track.durationMs))
   let existing = hit && !hit.missing && !options.force ? hit : null
   // 归位时要清理的旧文件。**只有新文件确认落盘后才删它**（P4#6）
   let reassignFrom: string | null = null
@@ -480,7 +480,7 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
       await writeFile(lyricFile, lyricBody.lrc, 'utf8')
     }
 
-    saveTrack({
+    await saveTrack({
       platform: 'wy',
       id: track.id,
       title: track.title,
@@ -520,7 +520,7 @@ export async function downloadTrack(track: Track, options: DownloadOptions): Pro
     if (reassignFrom && reassignFrom !== target) {
       try {
         await rm(reassignFrom, { force: true })
-        if (reassignFromId && reassignFromId !== track.id) forgetTrack('wy', reassignFromId)
+        if (reassignFromId && reassignFromId !== track.id) await forgetTrack('wy', reassignFromId)
         // 顺手清掉同名的歌词 sidecar —— 它们跟着音频走，留下就是孤儿
         const oldBase = reassignFrom.replace(/\.[^.]+$/, '')
         for (const ext of ['.lrc', '.line.lrc', '.word.lrc']) await rm(`${oldBase}${ext}`, { force: true })

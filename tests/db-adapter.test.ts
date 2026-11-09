@@ -22,7 +22,7 @@ function tmpDb(): { db: Database; file: string } {
   return { db: { conn: new SqliteConn(file), dialect: sqliteDialect, url: `sqlite:${file}` }, file }
 }
 
-test('? 占位符转成 $n，但跳过字符串、标识符和注释', () => {
+test('? 占位符转成 $n，但跳过字符串、标识符和注释', async () => {
   assert.equal(toDollarPlaceholders('select * from t where a = ? and b = ?'), 'select * from t where a = $1 and b = $2')
   // 字符串字面量里的问号不能被改
   assert.equal(
@@ -39,7 +39,7 @@ test('? 占位符转成 $n，但跳过字符串、标识符和注释', () => {
   assert.equal(toDollarPlaceholders('select /* ? */ ?'), 'select /* ? */ $1')
 })
 
-test('连接串识别方言，不认识的直接报错而不是静默回落', () => {
+test('连接串识别方言，不认识的直接报错而不是静默回落', async () => {
   assert.equal(dialectOf(undefined), 'sqlite')
   assert.equal(dialectOf(''), 'sqlite')
   assert.equal(dialectOf('postgres://u:p@h:5432/db'), 'postgres')
@@ -50,7 +50,7 @@ test('连接串识别方言，不认识的直接报错而不是静默回落', ()
   assert.throws(() => dialectOf('mongodb://h/db'), /无法识别的数据库连接串/)
 })
 
-test('sqlite: 前缀剥离', () => {
+test('sqlite: 前缀剥离', async () => {
   assert.equal(sqlitePath('sqlite:/tmp/a.db'), '/tmp/a.db')
   assert.equal(sqlitePath('sqlite:///tmp/a.db'), '/tmp/a.db')
   assert.equal(sqlitePath('file:/tmp/a.db'), '/tmp/a.db')
@@ -61,16 +61,16 @@ test('迁移建表、可重复执行、状态可查', async () => {
   const { db } = tmpDb()
   try {
     const first = await migrate(db)
-    assert.deepEqual(first.applied, ['0001_assets_files', '0002_backfill_tracks', '0003_clear_untrusted_sha256', '0004_file_identity_columns', 'astra_0005_asset_visibility', 'astra_0006_hermes_archive'])
+    assert.deepEqual(first.applied, ['0001_assets_files', '0002_backfill_tracks', '0003_clear_untrusted_sha256', '0004_file_identity_columns', 'astra_0005_asset_visibility', 'astra_0006_hermes_archive', 'astra_0007_state_tables'])
     assert.equal(first.current, first.total)
 
     // 再跑一次：不重复应用
     const second = await migrate(db)
     assert.deepEqual(second.applied, [])
-    assert.equal(second.skipped.length, 6)
+    assert.equal(second.skipped.length, 7)
 
     const applied = await appliedMigrations(db)
-    assert.equal(applied.length, 6)
+    assert.equal(applied.length, 7)
     assert.match(applied[0]!.checksum, /^[0-9a-f]{16}$/)
   } finally {
     await db.conn.close()

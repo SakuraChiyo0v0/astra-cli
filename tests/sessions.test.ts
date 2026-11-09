@@ -18,7 +18,7 @@ before(async () => {
   sessions = await import('../src/core/sessions.ts')
 })
 
-beforeEach(() => {
+beforeEach(async () => {
   // 每个用例从干净状态开始
   for (const f of ['netease-session.json', 'bili-session.json', 'vr-session.json']) {
     const p = path.join(process.env.ASTRA_HOME!, f)
@@ -28,21 +28,21 @@ beforeEach(() => {
 
 const home = (f: string) => path.join(process.env.ASTRA_HOME!, f)
 
-test('三个域都会出现在统一视图里', () => {
+test('三个域都会出现在统一视图里', async () => {
   const list = sessions.allSessions()
   assert.deepEqual(list.map((s) => s.domain), ['netease', 'bili', 'vrchat'])
   assert.ok(list.every((s) => s.state === 'not_logged_in'))
   assert.ok(list.every((s) => s.howToLogin.length > 0), '每个域都要告诉用户怎么登录')
 })
 
-test('空文件被识别成 stale_file，而不是"未登录"', () => {
+test('空文件被识别成 stale_file，而不是"未登录"', async () => {
   writeFileSync(home('bili-session.json'), '')
   const view = sessions.biliSessionView()
   assert.equal(view.state, 'stale_file')
   assert.match(view.fileIssue ?? '', /空的/)
 })
 
-test('权限过宽被识别出来', { skip: process.platform === 'win32' ? 'Windows 没有 POSIX 权限位' : false }, () => {
+test('权限过宽被识别出来', { skip: process.platform === 'win32' ? 'Windows 没有 POSIX 权限位' : false }, async () => {
   writeFileSync(home('netease-session.json'), '{}')
   chmodSync(home('netease-session.json'), 0o644)
   const view = sessions.neteaseSessionView()
@@ -50,7 +50,7 @@ test('权限过宽被识别出来', { skip: process.platform === 'win32' ? 'Wind
   assert.match(view.fileIssue ?? '', /权限过于宽松/)
 })
 
-test('VRChat 有会话文件时能读出账号', () => {
+test('VRChat 有会话文件时能读出账号', async () => {
   writeFileSync(home('vr-session.json'), JSON.stringify({ cookie: 'auth=abc', userId: 'usr_1', displayName: 'Ame', savedAt: '2026-01-01' }))
   const view = sessions.vrSessionView()
   assert.equal(view.state, 'logged_in')
@@ -58,7 +58,7 @@ test('VRChat 有会话文件时能读出账号', () => {
   assert.match(view.digest ?? '', /^[0-9a-f]{10}$/, '指纹是 10 位，不泄露内容')
 })
 
-test('清理指定域只删那一个', () => {
+test('清理指定域只删那一个', async () => {
   writeFileSync(home('netease-session.json'), JSON.stringify({ cookie: 'MUSIC_U=x', userId: '1', nickname: 'n', savedAt: '' }))
   writeFileSync(home('vr-session.json'), JSON.stringify({ cookie: 'auth=abc', userId: 'u', displayName: 'd', savedAt: '' }))
   const result = sessions.clearSessions(['netease'])
@@ -67,7 +67,7 @@ test('清理指定域只删那一个', () => {
   assert.equal(existsSync(home('vr-session.json')), true, '没点名的域不能被删')
 })
 
-test('清理全部三个域', () => {
+test('清理全部三个域', async () => {
   for (const f of ['netease-session.json', 'bili-session.json', 'vr-session.json']) writeFileSync(home(f), '{}')
   const result = sessions.clearSessions()
   assert.deepEqual(result.cleared.sort(), ['bili', 'netease', 'vrchat'])

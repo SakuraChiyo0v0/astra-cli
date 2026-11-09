@@ -71,14 +71,14 @@ before(async () => {
 
 const eps = (n: number): AlbumEpisode[] => Array.from({ length: n }, (_, i) => ({ id: `c${i + 1}`, sort: i + 1, title: `第${i + 1}话` }))
 
-test('chapterItems：一话一项，带 albumId / chapterId / sort', () => {
+test('chapterItems：一话一项，带 albumId / chapterId / sort', async () => {
   const items = comicJobs.chapterItems({ id: '777', title: '连载' }, eps(2))
   assert.equal(items.length, 2)
   assert.equal(items[1]!.id, 'c2')
   assert.deepEqual(items[1]!.meta, { albumId: '777', chapterId: 'c2', sort: 2 })
 })
 
-test('shouldBackground：多话默认后台，单话当场；显式参数优先', () => {
+test('shouldBackground：多话默认后台，单话当场；显式参数优先', async () => {
   assert.equal(commands.shouldBackground({}, 3), true)
   assert.equal(commands.shouldBackground({}, 1), false)
   assert.equal(commands.shouldBackground({ wait: true }, 3), false)
@@ -90,54 +90,54 @@ test('worker：已有的话记 skipped，失败的话不拖累其它话', async 
   upstream.failChapter = 'c3'
   seedChapter(1)
   seedChapter(2)
-  const job = jobs.createJob({ domain: comicJobs.COMIC_DOMAIN, kind: 'album', title: 't', items: comicJobs.chapterItems(album(), eps(3)) })
+  const job = await jobs.createJob({ domain: comicJobs.COMIC_DOMAIN, kind: 'album', title: 't', items: comicJobs.chapterItems(album(), eps(3)) })
   await jobs.runWorker(comicJobs.COMIC_DOMAIN, job.id)
-  const { job: done, items } = jobs.getJob(job.id, true, comicJobs.COMIC_DOMAIN)
+  const { job: done, items } = await jobs.getJob(job.id, true, comicJobs.COMIC_DOMAIN)
   assert.equal(done.status, 'partial')
   assert.deepEqual(items!.map((i) => i.status), ['skipped', 'skipped', 'failed'])
   assert.ok(existsSync(path.join(items![0]!.path!, '.astra-comic.json')), '跳过的话也补写 sidecar')
-  assert.equal(jobs.listJobs(10, false, 'comic').some((j) => j.id === job.id), true)
+  assert.equal((await jobs.listJobs(10, false, 'comic')).some((j) => j.id === job.id), true)
 })
 
-test('订阅：默认记基线，只下之后的新话', () => {
+test('订阅：默认记基线，只下之后的新话', async () => {
   upstream.episodes = eps(2)
-  const { subscription, created } = sub.addComicSubscription(album(), { everyHours: 24 })
+  const { subscription, created } = await sub.addComicSubscription(album(), { everyHours: 24 })
   assert.equal(created, true)
   assert.deepEqual(subscription.baseline, ['c1', 'c2'])
   assert.deepEqual(sub.pickNewChapters(eps(2), subscription.baseline, subscription.done), [])
   assert.deepEqual(sub.pickNewChapters(eps(4), subscription.baseline, subscription.done).map((e) => e.sort), [3, 4])
 
-  const again = sub.addComicSubscription(album(), { everyHours: 6 })
+  const again = await sub.addComicSubscription(album(), { everyHours: 6 })
   assert.equal(again.created, false, '同一本不建第二条')
   assert.equal(again.subscription.id, subscription.id)
-  sub.removeComicSubscription(subscription.id)
+  await sub.removeComicSubscription(subscription.id)
 })
 
 test('订阅：只把下成功的话记为已下，失败的下一轮还会补', async () => {
   upstream.episodes = eps(3)
   upstream.failChapter = 'c3'
-  const { subscription } = sub.addComicSubscription(album(), { everyHours: 24, backfill: true })
+  const { subscription } = await sub.addComicSubscription(album(), { everyHours: 24, backfill: true })
   assert.deepEqual(subscription.baseline, [])
 
   // 走 run 的同一条路径，但不起子进程：建任务、本进程跑 worker
   const fresh = sub.pickNewChapters(upstream.episodes, subscription.baseline, subscription.done)
   assert.equal(fresh.length, 3)
-  const job = jobs.createJob({
+  const job = await jobs.createJob({
     domain: comicJobs.COMIC_DOMAIN, kind: 'subscribe', title: 's',
     items: comicJobs.chapterItems(album(), fresh), meta: { subscriptionId: subscription.id },
   })
   await jobs.runWorker(comicJobs.COMIC_DOMAIN, job.id) // afterFinish 回写
 
-  const after = sub.findComicSubscription(subscription.id)
+  const after = await sub.findComicSubscription(subscription.id)
   assert.deepEqual(after.done, { c1: 1, c2: 2 })
   assert.deepEqual(sub.pickNewChapters(upstream.episodes, after.baseline, after.done).map((e) => e.id), ['c3'])
-  sub.removeComicSubscription(subscription.id)
+  await sub.removeComicSubscription(subscription.id)
 })
 
-test('dueComicSubscriptions：没跑过的、过了间隔的到点；停用的不跑', () => {
+test('dueComicSubscriptions：没跑过的、过了间隔的到点；停用的不跑', async () => {
   const base = { albumId: 'x', title: 'x', baseline: [], done: {}, lastJobId: null, createdAt: '' }
   const now = Date.parse('2026-10-30T12:00:00Z')
-  const due = sub.dueComicSubscriptions(now, [
+  const due = await sub.dueComicSubscriptions(now, [
     { ...base, id: 'never', everyHours: 24, enabled: true, lastCheckedAt: null },
     { ...base, id: 'stale', everyHours: 6, enabled: true, lastCheckedAt: '2026-10-30T05:00:00Z' },
     { ...base, id: 'fresh', everyHours: 6, enabled: true, lastCheckedAt: '2026-10-30T10:00:00Z' },
@@ -146,14 +146,14 @@ test('dueComicSubscriptions：没跑过的、过了间隔的到点；停用的�
   assert.deepEqual(due.map((s) => s.id), ['never', 'stale'])
 })
 
-test('漫画订阅不混进 music subscribe', () => {
-  const { subscription } = sub.addComicSubscription({ ...album(), id: '888' }, { everyHours: 24 })
-  assert.equal(musicSub.listSubscriptions().some((s) => s.id === subscription.id), false)
-  assert.throws(() => musicSub.findSubscription(subscription.id), /没有订阅/)
-  sub.removeComicSubscription(subscription.id)
+test('漫画订阅不混进 music subscribe', async () => {
+  const { subscription } = await sub.addComicSubscription({ ...album(), id: '888' }, { everyHours: 24 })
+  assert.equal((await musicSub.listSubscriptions()).some((s) => s.id === subscription.id), false)
+  await assert.rejects(async () => await musicSub.findSubscription(subscription.id), /没有订阅/)
+  await sub.removeComicSubscription(subscription.id)
 })
 
-test('comic 下的新命令都注册了，cron 命令就是 subscribe run', () => {
+test('comic 下的新命令都注册了，cron 命令就是 subscribe run', async () => {
   const names = commands.comicCommands.map((c) => c.name)
   for (const n of ['comic job', 'comic jobs', 'comic job cancel', 'comic job resume', 'comic _worker', 'comic subscribe add', 'comic subscribe list', 'comic subscribe set', 'comic subscribe remove', 'comic subscribe run']) {
     assert.ok(names.includes(n), `缺 ${n}`)

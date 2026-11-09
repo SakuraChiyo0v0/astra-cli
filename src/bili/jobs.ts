@@ -106,9 +106,9 @@ registerJobHandler(BILI_DOMAIN, {
 
   // 订阅任务跑完后，按**实际结果**记下哪几个分 P 落盘了。
   // 只记 downloaded / skipped —— 失败的不能记，记了下一轮就不会补。
-  afterFinish: (job) => {
+  afterFinish: async (job) => {
     const subscriptionId = typeof job.meta?.subscriptionId === 'string' ? job.meta.subscriptionId : ''
-    if (subscriptionId) recordSubscriptionPages(subscriptionId, job.id)
+    if (subscriptionId) await recordSubscriptionPages(subscriptionId, job.id)
   },
 
   async handle(item, ctx): Promise<ItemOutcome> {

@@ -32,7 +32,7 @@ function setup() {
   return { db, src, state, docs, dir }
 }
 
-test('秒级时间戳转成 ISO', () => {
+test('秒级时间戳转成 ISO', async () => {
   assert.equal(toIso(1_700_000_000), '2023-11-14T22:13:20.000Z')
   assert.equal(toIso(null), null)
 })

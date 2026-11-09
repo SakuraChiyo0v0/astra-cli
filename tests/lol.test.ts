@@ -38,7 +38,7 @@ function game(overrides: Partial<LcuGame> = {}, stats: Record<string, number | b
   }
 }
 
-test('lol 是命令组，且命令齐全', () => {
+test('lol 是命令组，且命令齐全', async () => {
   assert.equal(commandGroup('lol'), true)
   const names = groupCommands('lol')
   for (const expected of ['lol sync', 'lol history', 'lol stats', 'lol rank', 'lol champions', 'lol doctor']) {
@@ -46,7 +46,7 @@ test('lol 是命令组，且命令齐全', () => {
   }
 })
 
-test('toMatchRow：常规对局字段映射正确', () => {
+test('toMatchRow：常规对局字段映射正确', async () => {
   const row = toMatchRow(game(), PUUID)
   assert.ok(row)
   assert.equal(row.gameId, 7_691_654_649_154_572_543)
@@ -62,12 +62,12 @@ test('toMatchRow：常规对局字段映射正确', () => {
   assert.equal(row.gameCreation, new Date(1_763_000_000_000).toISOString())
 })
 
-test('toMatchRow：没有 gameId 或没有 participants 的脏数据被丢掉', () => {
+test('toMatchRow：没有 gameId 或没有 participants 的脏数据被丢掉', async () => {
   assert.equal(toMatchRow(game({ gameId: 0 }), PUUID), null)
   assert.equal(toMatchRow(game({ participants: [] }), PUUID), null)
 })
 
-test('toMatchRow：缺 stats 的字段落 0，不写 null 到 not-null 列', () => {
+test('toMatchRow：缺 stats 的字段落 0，不写 null 到 not-null 列', async () => {
   const row = toMatchRow(game({ participants: [{ championId: 235, stats: { kills: 3 } }] }), PUUID)
   assert.ok(row)
   assert.equal(row.kills, 3)
@@ -79,13 +79,13 @@ test('toMatchRow：缺 stats 的字段落 0，不写 null 到 not-null 列', () 
   assert.deepEqual(row.items, [0, 0, 0, 0, 0, 0, 0])
 })
 
-test('toMatchRow：时长缺省时不炸', () => {
+test('toMatchRow：时长缺省时不炸', async () => {
   const row = toMatchRow(game({ gameDuration: undefined }), PUUID)
   assert.ok(row)
   assert.equal(row.durationSec, null)
 })
 
-test('myParticipant：按 participantIdentities 匹配自己那一条', () => {
+test('myParticipant：按 participantIdentities 匹配自己那一条', async () => {
   const g = game({
     participants: [
       { championId: 1, stats: { kills: 0 } },
@@ -96,12 +96,12 @@ test('myParticipant：按 participantIdentities 匹配自己那一条', () => {
   assert.equal(myParticipant(g)?.championId, 2)
 })
 
-test('myParticipant：身份缺失时回落第一条', () => {
+test('myParticipant：身份缺失时回落第一条', async () => {
   const g = game({ participants: [{ championId: 9, stats: {} }], participantIdentities: undefined })
   assert.equal(myParticipant(g)?.championId, 9)
 })
 
-test('tableName：PG 走 crawl schema，其它方言裸表名', () => {
+test('tableName：PG 走 crawl schema，其它方言裸表名', async () => {
   assert.equal(tableName('postgres', 'lol_match'), 'crawl.lol_match')
   assert.equal(tableName('sqlite', 'lol_match'), 'lol_match')
   assert.equal(tableName('mysql', 'lol_match'), 'lol_match')

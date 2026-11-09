@@ -24,7 +24,7 @@ function specLabel(sampleRate: number | null, bits: number | null): string {
 }
 
 export async function refreshLibrarySpecs(tracks?: LibraryTrack[]): Promise<RefreshResult> {
-  const list = tracks ?? allTracks()
+  const list = tracks ?? await allTracks()
   const result: RefreshResult = { checked: 0, updated: 0, missing: 0, changed: [] }
   for (const track of list) {
     result.checked += 1
@@ -67,7 +67,7 @@ export async function refreshLibrarySpecs(tracks?: LibraryTrack[]): Promise<Refr
 
     if (!specChanged && !qualityChanged && !sideChanged && !sizeChanged) continue
 
-    updateTrackSpec(track.platform, track.id, {
+    await updateTrackSpec(track.platform, track.id, {
       spec,
       bytes: probe.bytes,
       bps: probe.bps,

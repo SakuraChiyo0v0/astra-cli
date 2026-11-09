@@ -21,7 +21,7 @@ before(async () => {
   confirm = await import('../src/core/confirm.ts')
 })
 
-test('Basic 头：账号密码各自 URL 编码后再 base64', () => {
+test('Basic 头：账号密码各自 URL 编码后再 base64', async () => {
   // VRChat 的实测要求：密码里含 @ : 等符号时，不编码会导致 401
   const header = api.basicHeader('me@example.com', 'p@ss:word')
   assert.match(header, /^Basic /)
@@ -29,7 +29,7 @@ test('Basic 头：账号密码各自 URL 编码后再 base64', () => {
   assert.equal(decoded, 'me%40example.com:p%40ss%3Aword')
 })
 
-test('用户归一化：从 location 推出当前世界', () => {
+test('用户归一化：从 location 推出当前世界', async () => {
   const online = data.toUser({ id: 'usr_1', displayName: 'A', location: 'wrld_abc:12345~region(us)', status: 'active', isFriend: true })
   assert.equal(online.worldId, 'wrld_abc')
   assert.equal(online.location, 'wrld_abc:12345~region(us)')
@@ -39,7 +39,7 @@ test('用户归一化：从 location 推出当前世界', () => {
   assert.equal(offline.worldId, null, '离线时不该有 worldId')
 })
 
-test('实例归一化：拆出世界 id、实例 id、地区', () => {
+test('实例归一化：拆出世界 id、实例 id、地区', async () => {
   const i = data.toInstance({ location: 'wrld_abc:12345~region(jp)', occupants: 12, capacity: 32, accessType: 'public' })
   assert.equal(i.worldId, 'wrld_abc')
   assert.equal(i.instanceId, '12345')
@@ -47,13 +47,13 @@ test('实例归一化：拆出世界 id、实例 id、地区', () => {
   assert.equal(i.occupants, 12)
 })
 
-test('实例归一化：没有 region 后缀也不炸', () => {
+test('实例归一化：没有 region 后缀也不炸', async () => {
   const i = data.toInstance({ location: 'wrld_abc:12345' })
   assert.equal(i.worldId, 'wrld_abc')
   assert.equal(i.region, null)
 })
 
-test('世界 / 通知 / 群组：只保留用得上的字段', () => {
+test('世界 / 通知 / 群组：只保留用得上的字段', async () => {
   const w = data.toWorld({ id: 'wrld_1', name: 'W', occupants: 3, capacity: 16, tags: ['a'], updated_at: '2026-01-01' })
   assert.deepEqual(Object.keys(w).sort(), ['authorName', 'capacity', 'description', 'favorites', 'id', 'name', 'occupants', 'releaseStatus', 'tags', 'thumbnailImageUrl', 'updatedAt', 'visits'])
 
@@ -65,7 +65,7 @@ test('世界 / 通知 / 群组：只保留用得上的字段', () => {
   assert.equal(g.isMember, true)
 })
 
-test('确认令牌：预览不执行、令牌只能用一次、参数变了对不上', () => {
+test('确认令牌：预览不执行、令牌只能用一次、参数变了对不上', async () => {
   const params = { userId: 'usr_1' }
   const preview = confirm.prepare('vr-test', 'friends.request', params, { userId: 'usr_1' }, '确认后执行')
   assert.equal(preview.status, 'needs_confirmation')
@@ -87,14 +87,14 @@ test('确认令牌：预览不执行、令牌只能用一次、参数变了对�
   assert.throws(() => confirm.consume('vr-test', preview.token), /没有待确认的操作/)
 })
 
-test('确认令牌：指纹与参数顺序无关', () => {
+test('确认令牌：指纹与参数顺序无关', async () => {
   const a = confirm.prepare('vr-test2', 'x', { a: 1, b: 2 }, {}, '')
   const pending = confirm.consume('vr-test2', a.token)
   assert.equal(confirm.bindingMatches(pending, { b: 2, a: 1 }), true)
   confirm.clearPending('vr-test2')
 })
 
-test('确认令牌：过期就拒绝并清掉', () => {
+test('确认令牌：过期就拒绝并清掉', async () => {
   const preview = confirm.prepare('vr-test3', 'x', { a: 1 }, {}, '')
   const file = path.join(process.env.ASTRA_HOME!, 'pending-vr-test3.json')
   const pending = JSON.parse(readFileSync(file, 'utf8'))
@@ -104,7 +104,7 @@ test('确认令牌：过期就拒绝并清掉', () => {
   assert.equal(confirm.readPending('vr-test3'), null)
 })
 
-test('不同用途的待办互不覆盖', () => {
+test('不同用途的待办互不覆盖', async () => {
   const a = confirm.prepare('vr-a', 'act', { v: 1 }, {}, '')
   const b = confirm.prepare('vr-b', 'act', { v: 2 }, {}, '')
   assert.notEqual(a.token, b.token)
@@ -114,12 +114,12 @@ test('不同用途的待办互不覆盖', () => {
   confirm.clearPending('vr-b')
 })
 
-test('权限位归一化：只留用得上的字段', () => {
+test('权限位归一化：只留用得上的字段', async () => {
   const p = data.permissionFrom({ id: 'perm_1', name: 'Permissions.Users.Edit', ownerId: 'usr_1', displayName: 'Edit User', description: 'desc' })
   assert.deepEqual(p, { id: 'perm_1', name: 'Permissions.Users.Edit', ownerId: 'usr_1', displayName: 'Edit User', description: 'desc' })
 })
 
-test('群组成员归一化：displayName 可能在外层也可能嵌在 user 里', () => {
+test('群组成员归一化：displayName 可能在外层也可能嵌在 user 里', async () => {
   const a = data.toGroupMember({ userId: 'usr_1', user: { displayName: 'A' }, roleIds: ['role_1'], joinedAt: '2026-01-01' })
   assert.equal(a.displayName, 'A')
   assert.deepEqual(a.roleIds, ['role_1'])
@@ -128,7 +128,7 @@ test('群组成员归一化：displayName 可能在外层也可能嵌在 user �
   assert.deepEqual(b.roleIds, [], '没有 roleIds 时给空数组，不是 undefined')
 })
 
-test('群组角色归一化：isDefault 只在真的是 true 时为真', () => {
+test('群组角色归一化：isDefault 只在真的是 true 时为真', async () => {
   const r = data.toGroupRole({ id: 'role_1', name: 'Member', isDefault: true, permissions: ['p1', 'p2'], order: 3 })
   assert.equal(r.isDefault, true)
   assert.equal(r.permissions.length, 2)

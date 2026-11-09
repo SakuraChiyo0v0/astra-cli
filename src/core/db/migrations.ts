@@ -14,6 +14,7 @@ import { AstraError } from '../errors.ts'
 import type { Database } from './index.ts'
 import { PgConn } from './pg.ts'
 import type { DialectName } from './adapter.ts'
+import { POSTGRES_STATE, climbSqliteLadder } from './state-schema.ts'
 
 export interface Migration {
   id: string
@@ -367,7 +368,66 @@ const M0006: Migration = {
   },
 }
 
-export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004, M0005, M0006]
+/**
+ * 0007：运行状态表并进同一个库（0.56.0）。
+ *
+ * tracks / jobs / job_items / subscriptions / subscription_runs / audit_log / schedules
+ * 以前单独落在 `<ASTRA_HOME>/astra.db`。PG 上直接建最终形状；SQLite 上**什么也不做**——
+ * 本机 SQLite 本来就是同一个文件，表由 `climbSqliteLadder` 按老阶梯补齐（老库可能停在任意一级）。
+ * 定义见 `state-schema.ts`。
+ */
+const M0007: Migration = {
+  id: 'astra_0007_state_tables',
+  summary: '运行状态表（曲库 / 任务 / 订阅 / 审计 / 调度）进同一个库',
+  up: {
+    sqlite: ['select 1'],
+    postgres: POSTGRES_STATE,
+    mysql: [],
+  },
+}
+
+export const MIGRATIONS: Migration[] = [M0001, M0002, M0003, M0004, M0005, M0006, M0007]
+
+/** 状态表必须的迁移 id。 */
+export const STATE_MIGRATION = M0007.id
+
+/**
+ * 保证状态表存在。`state()` 第一次打开时调。
+ *
+ * 和 `migrate()` 不同：这里**只**处理状态表，不碰资产库的其它迁移（那些仍要 `astra db migrate` 显式跑）。
+ * 为什么状态表要自动：它是 CLI 能跑的前提，不建表连 `music get` 都跑不了；
+ * 以前的 `core/db.ts` 也是打开时自动迁移的，这里保持同样的行为。
+ *
+ * SQLite：补老阶梯（幂等，靠 user_version）。
+ * PG：执行 M0007（全是 `if not exists`）并记账；咨询锁防两个进程同时建。
+ */
+export async function ensureStateTables(db: Database): Promise<void> {
+  if (db.dialect.name === 'sqlite') {
+    await climbSqliteLadder(db.conn)
+    return
+  }
+  if (db.dialect.name !== 'postgres') {
+    throw new AstraError('CONFIG', `状态库不支持 ${db.dialect.name}`, { exitCode: 3 })
+  }
+  const done = async (): Promise<boolean> => {
+    await ensureTable(db)
+    const rows = await db.conn.query<{ id: string }>('select id from schema_migrations where id = ?', [M0007.id])
+    return rows.length > 0
+  }
+  if (await done()) return
+  const apply = async (): Promise<void> => {
+    if (await done()) return // 拿到锁之后再看一次：另一个进程可能刚建完
+    await db.conn.tx(async (tx) => {
+      for (const stmt of M0007.up.postgres) await tx.exec(stmt.replace(/\n\s+/g, ' ').trim())
+      await tx.exec(
+        'insert into schema_migrations (id, dialect, checksum, applied_at) values (?, ?, ?, ?) on conflict (id) do nothing',
+        [M0007.id, 'postgres', checksum(M0007), new Date().toISOString()],
+      )
+    })
+  }
+  if (db.conn instanceof PgConn) await db.conn.withLock(0x61737472, apply)
+  else await apply()
+}
 
 function checksum(m: Migration): string {
   return createHash('sha256').update(JSON.stringify(m.up)).digest('hex').slice(0, 16)

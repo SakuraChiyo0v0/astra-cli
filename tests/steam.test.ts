@@ -10,25 +10,25 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { accountIdFromSteamId64, apiKeyDigest, validateSteamId64 } from '../src/steam/auth.ts'
 
-test('SteamID64 形状：17 位、以 7656 开头', () => {
+test('SteamID64 形状：17 位、以 7656 开头', async () => {
   assert.equal(validateSteamId64('76561197960265729'), null)
   assert.equal(validateSteamId64(' 76561197960265729 '), null, '前后空格应被容忍')
 })
 
-test('SteamID64 形状：常见错误给出可读原因', () => {
+test('SteamID64 形状：常见错误给出可读原因', async () => {
   assert.match(validateSteamId64('12345') ?? '', /17 位/)
   assert.match(validateSteamId64('12345678901234567') ?? '', /7656/, '17 位但不是 7656 开头')
   assert.match(validateSteamId64('765611979602657291') ?? '', /17 位/, '18 位')
   assert.match(validateSteamId64('abcdefghijklmnopq') ?? '', /17 位/)
 })
 
-test('AccountID = SteamID64 - 76561197960265728', () => {
+test('AccountID = SteamID64 - 76561197960265728', async () => {
   // 76561197960265728 是基准值，自己减自己是 0
   assert.equal(accountIdFromSteamId64('76561197960265728'), '0')
   assert.equal(accountIdFromSteamId64('76561197960265729'), '1')
 })
 
-test('key 指纹：只暴露前 8 位，不泄露原文', () => {
+test('key 指纹：只暴露前 8 位，不泄露原文', async () => {
   const key = '88F9A4B8086B28134735FD90A4A49829'
   const digest = apiKeyDigest(key)
   assert.equal(digest.length, 8)

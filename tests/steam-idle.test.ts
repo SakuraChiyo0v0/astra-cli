@@ -24,20 +24,20 @@ const owned = [
   { appId: 2358720, name: 'Black Myth: Wukong', minutes: 30 },
 ]
 
-test('pickGames: 完全同名优先，忽略大小写', () => {
+test('pickGames: 完全同名优先，忽略大小写', async () => {
   assert.deepEqual(pickGames(owned, ['vrchat']).map((g) => g.appId), [438100])
   assert.deepEqual(pickGames(owned, ['PORTAL 2']).map((g) => g.appId), [620])
 })
 
-test('pickGames: 纯数字当 AppID', () => {
+test('pickGames: 纯数字当 AppID', async () => {
   assert.deepEqual(pickGames(owned, ['730']).map((g) => g.name), ['Counter-Strike 2'])
 })
 
-test('pickGames: 包含匹配，多个词按顺序累加并去重', () => {
+test('pickGames: 包含匹配，多个词按顺序累加并去重', async () => {
   assert.deepEqual(pickGames(owned, ['wukong', 'VRChat', '438100']).map((g) => g.appId), [2358720, 438100])
 })
 
-test('pickGames: 匹配到多个要报错并列出候选，不能猜', () => {
+test('pickGames: 匹配到多个要报错并列出候选，不能猜', async () => {
   const ambiguous = [...owned, { appId: 1, name: 'Portal 2 Soundtrack', minutes: 0 }]
   assert.throws(
     () => pickGames(ambiguous, ['portal']),
@@ -45,13 +45,13 @@ test('pickGames: 匹配到多个要报错并列出候选，不能猜', () => {
   )
 })
 
-test('pickGames: 找不到 / 空输入都要报错', () => {
+test('pickGames: 找不到 / 空输入都要报错', async () => {
   assert.throws(() => pickGames(owned, ['不存在的游戏']), /没找到名字包含/)
   assert.throws(() => pickGames(owned, ['123456789']), /库里没有 AppID/)
   assert.throws(() => pickGames(owned, []), /没有要挂的游戏/)
 })
 
-test('状态文件：写入合并、更新 updatedAt、权限 600', () => {
+test('状态文件：写入合并、更新 updatedAt、权限 600', async () => {
   clearState('idle')
   assert.equal(readState('idle'), null)
 
@@ -83,14 +83,14 @@ test('状态文件：写入合并、更新 updatedAt、权限 600', () => {
   assert.equal(readState('idle'), null)
 })
 
-test('pidAlive: 自己活着，明显不存在的 pid 死', () => {
+test('pidAlive: 自己活着，明显不存在的 pid 死', async () => {
   assert.equal(pidAlive(process.pid), true)
   assert.equal(pidAlive(0), false)
   assert.equal(pidAlive(-1), false)
   assert.equal(pidAlive(999_999), false)
 })
 
-test('命令登记：挂时长/登录命令都在，worker 是隐藏的', () => {
+test('命令登记：挂时长/登录命令都在，worker 是隐藏的', async () => {
   const names = steamCommands.map((c) => c.name)
   for (const name of ['steam login', 'steam login status', 'steam login cancel', 'steam idle start', 'steam idle status', 'steam idle stop', 'steam library']) {
     assert.ok(names.includes(name), `缺少命令 ${name}`)
@@ -99,7 +99,7 @@ test('命令登记：挂时长/登录命令都在，worker 是隐藏的', () => 
   assert.deepEqual(hidden.sort(), ['steam _idle-worker', 'steam _login-worker'])
 })
 
-test('命令参数：idle start 至少要一个游戏，未知选项要报错', () => {
+test('命令参数：idle start 至少要一个游戏，未知选项要报错', async () => {
   const start = steamCommands.find((c) => c.name === 'steam idle start')!
   assert.throws(() => parseCommandArgs(start, []), /缺少参数/)
   assert.throws(() => parseCommandArgs(start, ['VRChat', '--nope']), /Unknown option/)
@@ -118,4 +118,4 @@ test('密码登录：--password-stdin 必须带 --user，且在读密码之前�
   )
 })
 
-test.after(() => rmSync(home, { recursive: true, force: true }))
+test.after(async () => rmSync(home, { recursive: true, force: true }))

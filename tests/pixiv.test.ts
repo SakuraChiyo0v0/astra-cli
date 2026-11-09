@@ -36,7 +36,7 @@ function detail(over: Partial<IllustDetail> = {}): IllustDetail {
   }
 }
 
-test('单页作品：页号不参与替换，扩展名按原图取', () => {
+test('单页作品：页号不参与替换，扩展名按原图取', async () => {
   const pages = pageUrls(detail())
   assert.equal(pages.length, 1)
   assert.equal(pages[0]!.page, 0)
@@ -44,7 +44,7 @@ test('单页作品：页号不参与替换，扩展名按原图取', () => {
   assert.match(pages[0]!.original, /_p0\.jpg$/)
 })
 
-test('多页作品：每一页都换成自己的页号，regular 同步换', () => {
+test('多页作品：每一页都换成自己的页号，regular 同步换', async () => {
   const pages = pageUrls(detail({ pageCount: 3 }))
   assert.equal(pages.length, 3)
   assert.deepEqual(pages.map((p) => p.page), [0, 1, 2])
@@ -54,7 +54,7 @@ test('多页作品：每一页都换成自己的页号，regular 同步换', () 
   assert.ok(!pages[1]!.regular.includes('_p1_master1200_p'))
 })
 
-test('png 原图保留扩展名', () => {
+test('png 原图保留扩展名', async () => {
   const d = detail({
     urls: {
       original: 'https://i.pximg.net/img-original/img/x/1_p0.png',
@@ -65,14 +65,14 @@ test('png 原图保留扩展名', () => {
   assert.equal(pageUrls(d)[0]!.ext, 'png')
 })
 
-test('cookie 只回显「有没有」，不回显值', () => {
+test('cookie 只回显「有没有」，不回显值', async () => {
   assert.deepEqual(cookieDigest(''), { has: false, keys: 0 })
   const digest = cookieDigest('PHPSESSID=secret-value; device_token=abc')
   assert.deepEqual(digest, { has: true, keys: 2 })
   assert.ok(!JSON.stringify(digest).includes('secret-value'))
 })
 
-test('命令都登记上了，且名字以 pixiv 开头', () => {
+test('命令都登记上了，且名字以 pixiv 开头', async () => {
   const names = pixivCommands.map((c) => c.name)
   assert.deepEqual(names, [
     'pixiv info',
@@ -96,7 +96,7 @@ test('命令都登记上了，且名字以 pixiv 开头', () => {
   }
 })
 
-test('参数个数按声明拦住（info 至少一个 id，多 id 上限 200）', () => {
+test('参数个数按声明拦住（info 至少一个 id，多 id 上限 200）', async () => {
   const info = pixivCommands.find((c) => c.name === 'pixiv info')!
   assert.throws(() => parseCommandArgs(info, []), /缺少参数/)
   // 0.48 起 info 收多个 id（批量核验用），超出上限才拦

@@ -66,7 +66,7 @@ async function finalizeBook(job: JobView, items: JobItemView[]): Promise<string[
   const source = sourceById(meta.source)
   const book = await source.book(meta.bookId)
   const result = await packBook(meta.source, book, meta.plan, { simplified: meta.simplified, language: source.language })
-  patchJob(job.id, { meta: { output: { path: result.path, size: result.size, chapters: result.chapters, chars: result.chars, images: result.images, mirrored: result.mirrored, warnings: result.warnings } } })
+  await patchJob(job.id, { meta: { output: { path: result.path, size: result.size, chapters: result.chapters, chars: result.chars, images: result.images, mirrored: result.mirrored, warnings: result.warnings } } })
   return [`📖 ${result.title}：${result.chapters} 章 / ${result.chars} 字${result.images ? ` / ${result.images} 图` : ''}`, `→ ${result.path}`, ...result.warnings]
 }
 
@@ -81,7 +81,7 @@ async function finalizeIndex(job: JobView, items: JobItemView[]): Promise<string
   // 失败太多时不覆盖旧索引：缺了一大块的新索引比旧索引更糟
   if (failed > items.length / 5) return [`失败 ${failed}/${items.length} 页，没有覆盖旧索引`]
   saveIndex({ builtAt: new Date().toISOString(), pages: items.length, books })
-  patchJob(job.id, { meta: { output: { books: books.length, pages: items.length, failedPages: failed } } })
+  await patchJob(job.id, { meta: { output: { books: books.length, pages: items.length, failedPages: failed } } })
   return [`索引 ${books.length} 本（${items.length} 页${failed ? `，${failed} 页失败` : ''}）`]
 }
 
@@ -113,8 +113,8 @@ registerJobHandler(NOVEL_DOMAIN, {
     return job.kind === 'index' ? await finalizeIndex(job, items) : await finalizeBook(job, items)
   },
 
-  afterFinish(job, items) {
+  async afterFinish(job, items) {
     const meta = readBookMeta(job)
-    if (meta?.subscriptionId) recordSubscriptionChapters(meta.subscriptionId, job, items)
+    if (meta?.subscriptionId) await recordSubscriptionChapters(meta.subscriptionId, job, items)
   },
 })

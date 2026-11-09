@@ -13,7 +13,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, openSync } from 'node:fs'
 import path from 'node:path'
-import { db } from './db.ts'
+import { all, num, one, run } from './state.ts'
 import { AstraError, invalidInput } from './errors.ts'
 import { homePath } from './paths.ts'
 import { currentIdentity, currentToken } from './identity.ts'
@@ -54,8 +54,8 @@ function rowToSchedule(row: Record<string, unknown>): Schedule {
   return {
     name: String(row.name),
     command: String(row.command),
-    intervalMin: Number(row.interval_min),
-    enabled: Number(row.enabled) === 1,
+    intervalMin: num(row.interval_min),
+    enabled: num(row.enabled) === 1,
     owner: row.owner === null || row.owner === undefined ? null : String(row.owner),
     lastRunAt: row.last_run_at ? String(row.last_run_at) : null,
     nextRunAt: row.next_run_at ? String(row.next_run_at) : null,
@@ -72,7 +72,7 @@ function plusMinutes(iso: string, minutes: number): string {
   return new Date(Date.parse(iso) + minutes * 60_000).toISOString()
 }
 
-export function addSchedule(input: { name: string; command: string; interval: string; runNow?: boolean }): Schedule {
+export async function addSchedule(input: { name: string; command: string; interval: string; runNow?: boolean }): Promise<Schedule> {
   const name = input.name.trim()
   if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(name)) {
     throw invalidInput(`任务名不合法：${name}`, '小写字母/数字/下划线/短横线，最长 48 位')
@@ -82,29 +82,28 @@ export function addSchedule(input: { name: string; command: string; interval: st
   if (command.startsWith('astra ')) throw invalidInput('--cmd 不用写 astra 前缀', '例如 `--cmd "music subscribe run"`')
   const intervalMin = parseInterval(input.interval)
 
-  const exists = db().prepare('select 1 from schedules where name = ?').get(name)
+  const exists = await one('select 1 as x from schedules where name = ?', [name])
   if (exists) throw invalidInput(`调度已存在：${name}`, '`astra schedule list` 看现有计划，或先 remove')
 
   const now = nowIso()
-  db()
-    .prepare(
-      `insert into schedules (name, command, interval_min, enabled, owner, next_run_at, created_at)
-       values (?, ?, ?, 1, ?, ?, ?)`,
-    )
-    .run(name, command, intervalMin, currentIdentity().name, now, now)
+  await run(
+    `insert into schedules (name, command, interval_min, enabled, owner, next_run_at, created_at)
+     values (?, ?, ?, 1, ?, ?, ?)`,
+    [name, command, intervalMin, currentIdentity().name, now, now],
+  )
   recordAudit({ action: 'schedule.add', summary: `${name}：每 ${intervalMin} 分钟跑 ${command}`, ok: true })
-  const row = db().prepare('select * from schedules where name = ?').get(name) as Record<string, unknown>
-  return rowToSchedule(row)
+  const row = await one<Record<string, unknown>>('select * from schedules where name = ?', [name])
+  return rowToSchedule(row!)
 }
 
-export function listSchedules(): Schedule[] {
+export async function listSchedules(): Promise<Schedule[]> {
   const scope = ownerScope()
-  const rows = db().prepare('select * from schedules order by created_at desc').all() as unknown as Record<string, unknown>[]
+  const rows = await all<Record<string, unknown>>('select * from schedules order by created_at desc')
   return rows.map(rowToSchedule).filter((s) => (scope ? s.owner === scope : true))
 }
 
-function getSchedule(name: string): Schedule {
-  const row = db().prepare('select * from schedules where name = ?').get(name) as Record<string, unknown> | undefined
+async function getSchedule(name: string): Promise<Schedule> {
+  const row = await one<Record<string, unknown>>('select * from schedules where name = ?', [name])
   if (!row) throw new AstraError('NOT_FOUND', `没有这个调度：${name}`, { exitCode: 4, hint: '`astra schedule list` 看现有计划' })
   const schedule = rowToSchedule(row)
   const scope = ownerScope()
@@ -115,22 +114,20 @@ function getSchedule(name: string): Schedule {
 }
 
 /** 供 `schedule run` 用：按名字取（含归属校验）。 */
-export function getScheduleForRun(name: string): Schedule {
+export function getScheduleForRun(name: string): Promise<Schedule> {
   return getSchedule(name)
 }
 
-export function removeSchedule(name: string): boolean {
-  const schedule = getSchedule(name)
-  const n = db().prepare('delete from schedules where name = ?').run(schedule.name).changes
+export async function removeSchedule(name: string): Promise<boolean> {
+  const schedule = await getSchedule(name)
+  const n = await run('delete from schedules where name = ?', [schedule.name])
   recordAudit({ action: 'schedule.remove', summary: schedule.name, ok: true })
   return n > 0
 }
 
-export function setEnabled(name: string, enabled: boolean): Schedule {
-  const schedule = getSchedule(name)
-  db()
-    .prepare('update schedules set enabled = ?, next_run_at = ? where name = ?')
-    .run(enabled ? 1 : 0, enabled ? (schedule.nextRunAt ?? nowIso()) : schedule.nextRunAt, schedule.name)
+export async function setEnabled(name: string, enabled: boolean): Promise<Schedule> {
+  const schedule = await getSchedule(name)
+  await run('update schedules set enabled = ?, next_run_at = ? where name = ?', [enabled ? 1 : 0, enabled ? (schedule.nextRunAt ?? nowIso()) : schedule.nextRunAt, schedule.name])
   recordAudit({ action: enabled ? 'schedule.enable' : 'schedule.disable', summary: schedule.name, ok: true })
   return getSchedule(name)
 }
@@ -162,7 +159,7 @@ export function splitCommand(command: string): string[] {
 }
 
 /** 起一个分离进程跑这次调度，日志落 `<ASTRA_HOME>/logs/schedule-<name>.log`。 */
-export function spawnSchedule(schedule: Schedule): number {
+export async function spawnSchedule(schedule: Schedule): Promise<number> {
   const entry = process.argv[1]
   if (!entry) throw new AstraError('INTERNAL', '无法确定 CLI 入口文件', { exitCode: 1 })
   const logDir = homePath('logs')
@@ -182,25 +179,21 @@ export function spawnSchedule(schedule: Schedule): number {
   child.unref()
 
   const at = nowIso()
-  db()
-    .prepare('update schedules set last_run_at = ?, next_run_at = ?, last_status = ? where name = ?')
-    .run(at, plusMinutes(at, schedule.intervalMin), 'started', schedule.name)
+  await run('update schedules set last_run_at = ?, next_run_at = ?, last_status = ? where name = ?', [at, plusMinutes(at, schedule.intervalMin), 'started', schedule.name])
   recordAudit({ action: 'schedule.run', summary: `${schedule.name}：${schedule.command}`, ok: true })
   return child.pid ?? 0
 }
 
 /** 跑所有到期的调度，返回实际触发的名字。给 `schedule tick` 用。 */
-export function runDue(): string[] {
+export async function runDue(): Promise<string[]> {
   const at = nowIso()
-  const rows = db()
-    .prepare('select * from schedules where enabled = 1 and (next_run_at is null or next_run_at <= ?)')
-    .all(at) as unknown as Record<string, unknown>[]
+  const rows = await all<Record<string, unknown>>('select * from schedules where enabled = 1 and (next_run_at is null or next_run_at <= ?)', [at])
   const started: string[] = []
   for (const row of rows) {
     const schedule = rowToSchedule(row)
     const scope = ownerScope()
     if (scope && schedule.owner !== scope) continue
-    spawnSchedule(schedule)
+    await spawnSchedule(schedule)
     started.push(schedule.name)
   }
   return started

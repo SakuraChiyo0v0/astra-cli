@@ -28,14 +28,14 @@ const NIANLUN = [
   track('3348123746', '年轮', ['小雪'], 275000),
 ]
 
-test('只给歌名：多个版本并列 → 报歧义，不替用户选', () => {
+test('只给歌名：多个版本并列 → 报歧义，不替用户选', async () => {
   const candidates = pickLyricCandidates(NIANLUN, { title: '年轮', durationMs: null })
   assert.ok(candidates.length > 1, '应当有多个候选')
   // 关键：不能因为"第一条"就定了。汪苏泷排第一但那是男声版。
   assert.equal(pickUnique(candidates), null, '并列时必须返回 null，交给调用方报歧义')
 })
 
-test('歌名 + 歌手：张碧晨原版胜出，不被翻唱/对唱版干扰', () => {
+test('歌名 + 歌手：张碧晨原版胜出，不被翻唱/对唱版干扰', async () => {
   const candidates = pickLyricCandidates(NIANLUN, { title: '年轮 张碧晨', durationMs: null })
   const picked = pickUnique(candidates)
   assert.ok(picked, `应当能定下唯一版本，实际候选=${candidates.map((c) => c.track.id)}`)
@@ -45,7 +45,7 @@ test('歌名 + 歌手：张碧晨原版胜出，不被翻唱/对唱版干扰', (
   assert.ok(!candidates.some((c) => c.track.id === '1304922103' && c.titleScore >= 1))
 })
 
-test('给了基准时长：时长对不上的候选直接剔除', () => {
+test('给了基准时长：时长对不上的候选直接剔除', async () => {
   const candidates = pickLyricCandidates(NIANLUN, { title: '年轮', durationMs: 274_000 })
   // 汪苏泷 246s、对唱 113s 都该被 3 秒容差剔除
   assert.ok(!candidates.some((c) => c.track.id === '32897777'), '汪苏泷版差 28 秒，必须剔除')
@@ -53,17 +53,17 @@ test('给了基准时长：时长对不上的候选直接剔除', () => {
   assert.ok(candidates.some((c) => c.track.id === '32619064'), '张碧晨原版 274.5s 应当保留')
 })
 
-test('搜不到就是空，不回退到第一条', () => {
+test('搜不到就是空，不回退到第一条', async () => {
   assert.deepEqual(pickLyricCandidates(NIANLUN, { title: '完全不存在的歌', durationMs: null }), [])
   assert.equal(pickUnique([]), null)
 })
 
-test('单曲 ref 走直取，候选只有一个时直接用它', () => {
+test('单曲 ref 走直取，候选只有一个时直接用它', async () => {
   const only = pickLyricCandidates([track('1', '晴天', ['周杰伦'], 269000)], { title: '晴天', durationMs: null })
   assert.equal(pickUnique(only)?.track.id, '1')
 })
 
-test('歌词文件后缀约定：逐字写 .lrc，逐行写 .line.lrc', () => {
+test('歌词文件后缀约定：逐字写 .lrc，逐行写 .line.lrc', async () => {
   // 与下载时的约定一致（v0.12.5）：播放器只按 <歌名>.lrc 找 sidecar，
   // 换个扩展名等于永远不被读取
   assert.deepEqual(lyricFilePaths('/m/a.lrc', true), { main: '/m/a.lrc', line: '/m/a.line.lrc' })
@@ -73,7 +73,7 @@ test('歌词文件后缀约定：逐字写 .lrc，逐行写 .line.lrc', () => {
   assert.deepEqual(lyricFilePaths('/m/a.line.lrc', true), { main: '/m/a.lrc', line: '/m/a.line.lrc' })
 })
 
-test('制作人员行不算歌词', () => {
+test('制作人员行不算歌词', async () => {
   // 实测酷狗 KRC 把这三行带出来了，时间戳挤在开头几秒，
   // 播放器会当成第一句"歌词"高亮
   assert.equal(isCreditLine('[00:04.70] 词：汪苏泷'), true)

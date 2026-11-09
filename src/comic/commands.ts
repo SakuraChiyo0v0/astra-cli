@@ -108,14 +108,14 @@ const get: Command = {
     }
 
     if (shouldBackground({ background: values.background, wait: values.wait }, episodes.length)) {
-      const job = createJob({
+      const job = await createJob({
         domain: COMIC_DOMAIN,
         kind: chapter === 'all' ? 'album' : 'chapter',
         title: chapter === 'all' ? `「${album.title}」${episodes.length} 话` : `「${album.title}」第 ${chapter} 话`,
         items: chapterItems(album, episodes),
         meta: { albumId: album.id },
       })
-      spawnWorker(COMIC_DOMAIN, job.id)
+      await spawnWorker(COMIC_DOMAIN, job.id)
       return { data: jobStarted(job, album, episodes.map((e) => e.sort)) }
     }
 
@@ -286,13 +286,13 @@ const jobCmd: Command = {
     const id = positionals[0]!
     const waitSeconds = Math.min(600, Math.max(0, Number(values.wait ?? '0') || 0))
     const deadline = Date.now() + waitSeconds * 1000
-    let snapshot = getJob(id, false, COMIC_DOMAIN)
+    let snapshot = await getJob(id, false, COMIC_DOMAIN)
     while (waitSeconds > 0 && Date.now() < deadline && !signal.aborted && ['queued', 'running'].includes(snapshot.job.status)) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
-      snapshot = getJob(id, false, COMIC_DOMAIN)
+      snapshot = await getJob(id, false, COMIC_DOMAIN)
     }
     const withItems = values.items === true || values.failed === true
-    const full = getJob(id, withItems, COMIC_DOMAIN)
+    const full = await getJob(id, withItems, COMIC_DOMAIN)
     const items = values.failed === true ? full.items?.filter((i) => i.status === 'failed') : full.items
     return {
       data: {
@@ -317,7 +317,7 @@ const jobList: Command = {
   async run({ values }) {
     const limit = Number(values.limit ?? '10')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw invalidInput('--limit 必须是 1..100 的整数')
-    const jobs = listJobs(limit, values.active === true, COMIC_DOMAIN)
+    const jobs = await listJobs(limit, values.active === true, COMIC_DOMAIN)
     return {
       data: { total: jobs.length, jobs: jobs.map((j) => ({ ...j, statusLabel: statusLabel(j.status), progress: `${j.done + j.skipped}/${j.total}` })) },
       table: {
@@ -335,7 +335,7 @@ const jobCancel: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const j = cancelJob(positionals[0]!, COMIC_DOMAIN)
+    const j = await cancelJob(positionals[0]!, COMIC_DOMAIN)
     return { data: { ...j, statusLabel: statusLabel(j.status) } }
   },
 }
@@ -347,7 +347,7 @@ const jobResume: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const j = resumeJob(positionals[0]!, COMIC_DOMAIN)
+    const j = await resumeJob(positionals[0]!, COMIC_DOMAIN)
     return { data: { ...j, statusLabel: statusLabel(j.status) } }
   },
 }
@@ -361,7 +361,7 @@ const workerCmd: Command = {
   maxArgs: 1,
   async run({ positionals }) {
     await runWorker(COMIC_DOMAIN, positionals[0]!)
-    return { data: getJob(positionals[0]!, false, COMIC_DOMAIN).job }
+    return { data: (await getJob(positionals[0]!, false, COMIC_DOMAIN)).job }
   },
 }
 
@@ -412,7 +412,7 @@ const subAdd: Command = {
     const client = comicClient()
     const albumId = target.kind === 'photo' ? (await client.getChapter(target.id, undefined, signal)).albumId : target.id
     const album = await client.getAlbum(albumId, signal)
-    const { subscription, created } = addComicSubscription(album, { everyHours: every, backfill: values.backfill === true })
+    const { subscription, created } = await addComicSubscription(album, { everyHours: every, backfill: values.backfill === true })
     const warnings: string[] = []
     if (created) {
       warnings.push(values.backfill === true
@@ -436,8 +436,8 @@ const subList: Command = {
   usage: 'astra comic subscribe list',
   maxArgs: 0,
   async run() {
-    const subs = listComicSubscriptions()
-    const due = new Set(dueComicSubscriptions(Date.now(), subs).map((s) => s.id))
+    const subs = await listComicSubscriptions()
+    const due = new Set((await dueComicSubscriptions(Date.now(), subs)).map((s) => s.id))
     return {
       data: { total: subs.length, cron: COMIC_SUBSCRIBE_CRON, subscriptions: subs.map((s) => ({ ...subView(s), due: due.has(s.id) })) },
       table: {
@@ -465,7 +465,7 @@ const subSet: Command = {
     if (values.every !== undefined) patch.everyHours = parseEvery(values.every)
     if (values.enable === true) patch.enabled = true
     if (values.disable === true) patch.enabled = false
-    return { data: subView(setComicSubscription(positionals[0]!, patch)) }
+    return { data: subView(await setComicSubscription(positionals[0]!, patch)) }
   },
 }
 
@@ -476,7 +476,7 @@ const subRemove: Command = {
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
-    const sub = removeComicSubscription(positionals[0]!)
+    const sub = await removeComicSubscription(positionals[0]!)
     return { data: { removed: true, subscription: subView(sub) } }
   },
 }
@@ -498,8 +498,8 @@ const subRun: Command = {
   maxArgs: 0,
   async run({ values, signal }) {
     const targets = typeof values.id === 'string' && values.id
-      ? [findComicSubscription(values.id)]
-      : values.force === true ? listComicSubscriptions().filter((s) => s.enabled) : dueComicSubscriptions()
+      ? [await findComicSubscription(values.id)]
+      : values.force === true ? (await listComicSubscriptions()).filter((s) => s.enabled) : await dueComicSubscriptions()
     if (targets.length === 0) return { data: { ran: 0, results: [], note: '没有到点的订阅' } }
     const results: Record<string, unknown>[] = []
     const warnings: string[] = []

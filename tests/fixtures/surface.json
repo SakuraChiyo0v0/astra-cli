@@ -130,7 +130,8 @@
       "usage": "astra backup | astra backup list | astra backup restore <备份目录>",
       "options": {},
       "notes": [
-        "只备份 astra.db（曲库与任务历史）和三个会话文件；**不备份**音乐/视频文件本身",
+        "状态库是本机 SQLite 时备份 astra.db（曲库与任务历史）；是 PostgreSQL 时只备会话文件，数据库用 `astra db backup`",
+        "会话文件（三个）总是备份；**不备份**音乐/视频文件本身",
         "数据库用 SQLite 的 VACUUM INTO 生成一致快照，不会因为那一刻有写入而损坏",
         "默认保留最近 7 份；备份目录可用环境变量 ASTRA_BACKUP_DIR 指到别的盘",
         "`restore` 会覆盖当前曲库，但会先把当前库改名保留；有任务在跑时会拒绝"
@@ -1784,6 +1785,22 @@
         "--truncate": "导入前清空目标表（需要二次确认）",
         "--token <令牌>": "第一次不传，拿预览和令牌；带令牌再调一次才执行"
       }
+    },
+    {
+      "command": "db import-state",
+      "summary": "把老的 astra.db（0.55 及以前的独立状态库）搬进当前库",
+      "usage": "astra db import-state [--from <astra.db>] [--dry-run] [--keep-source]",
+      "options": {
+        "--from <文件>": "默认 <ASTRA_HOME>/astra.db",
+        "--dry-run": "只统计不写",
+        "--keep-source": "搬完不改名源文件"
+      },
+      "notes": [
+        "0.56.0 起曲库 / 任务 / 订阅 / 调度 / 审计和资产库在同一个库里；升级后跑一次，把老数据搬过来",
+        "幂等：按主键跳过已存在的行，跑两次结果一样",
+        "成功后源文件改名为 astra.db.migrated-<时间> 留底（--keep-source 不改名）",
+        "源里早期资产库的残留（assets / files / roots / events）不搬，会在 leftBehind 里报行数"
+      ]
     },
     {
       "command": "db restore",

@@ -5,7 +5,7 @@
  */
 import { readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
-import { db } from '../core/db.ts'
+import { all } from '../core/state.ts'
 import { getConfig } from '../core/config.ts'
 import { registerJobHandler, type ItemOutcome, type JobItemView } from '../core/jobs.ts'
 import { songDetails, albumInfo, type AlbumInfo, type Track } from './netease.ts'
@@ -45,7 +45,7 @@ export function qualitySummary(items: JobItemView[]): string {
 
 /** worker 启动时清掉上次被强杀留下的临时文件。 */
 async function sweepPartials(): Promise<void> {
-  const rows = db().prepare('select file_path from tracks').all() as { file_path: string }[]
+  const rows = await all<{ file_path: string }>('select file_path from tracks')
   const dirs = new Set(rows.filter((r) => r.file_path).map((r) => path.dirname(r.file_path)))
   for (const dir of dirs) {
     const names = await readdir(dir).catch(() => [] as string[])

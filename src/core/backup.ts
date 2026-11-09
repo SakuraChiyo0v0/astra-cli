@@ -15,10 +15,16 @@
  *
  * `astra.db` 是 WAL 模式，直接复制 `.db` 可能拿到不含最新事务的旧数据（WAL 还没 checkpoint）。
  * `VACUUM INTO` 由 SQLite 自己保证快照一致。
+ *
+ * ## 0.56.0：状态库可能是 PG
+ *
+ * 状态表并进了资产库那个库。配了 `db-url`（PG）时本机已经没有 `astra.db` 需要快照，
+ * 这里只备会话文件，数据库请用 `astra db backup`（pg_dump）—— 结果里 `database` 字段说明走了哪条路。
  */
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { db } from './db.ts'
+import { closeState, num, one, stateDb } from './state.ts'
+import { SqliteConn } from './db/sqlite.ts'
 import { homePath } from './paths.ts'
 import { AstraError } from './errors.ts'
 
@@ -33,6 +39,8 @@ export interface BackupResult {
   sessionCount: number
   /** 有没有备份到数据库。没下过东西时本来就没有库，属正常。 */
   hasDatabase: boolean
+  /** 数据库走的哪条路：`sqlite` = 快照进了这个目录；`postgres` = 不在这里，用 `astra db backup`。 */
+  database: 'sqlite' | 'postgres'
 }
 
 function stamp(): string {
@@ -45,7 +53,7 @@ function stamp(): string {
  *
  * `targetRoot` 默认 `<ASTRA_HOME>/backups`；建议配成音乐目录之外的独立盘。
  */
-export function backup(targetRoot?: string, options: { keep?: number } = {}): BackupResult {
+export async function backup(targetRoot?: string, options: { keep?: number } = {}): Promise<BackupResult> {
   const root = targetRoot ?? (process.env.ASTRA_BACKUP_DIR?.trim() || homePath('backups'))
   const dir = path.join(root, `astra-${stamp()}`)
   mkdirSync(dir, { recursive: true })
@@ -55,15 +63,15 @@ export function backup(targetRoot?: string, options: { keep?: number } = {}): Ba
   // 数据库：交给 SQLite 自己生成一致快照。
   // 注意：从没下载过东西时库里没有 astra.db（表是在第一次写数据时才建的），
   // 这种情况下只备份到会话是正常的，返回 hasDatabase: false 让调用方说清楚。
-  const dbSource = homePath('astra.db')
+  const current = await stateDb()
+  const database: BackupResult['database'] = current.dialect.name === 'postgres' ? 'postgres' : 'sqlite'
   let hasDatabase = false
-  if (existsSync(dbSource)) {
+  if (current.conn instanceof SqliteConn && existsSync(current.conn.filePath)) {
     hasDatabase = true
     const target = path.join(dir, 'astra.db')
     // VACUUM INTO 要求目标不存在
     rmSync(target, { force: true })
-    // 路径里可能有反斜杠（Windows），SQL 字符串里要转义单引号
-    db().prepare('vacuum into ?').run(target)
+    current.conn.vacuumInto(target)
     files.push({ name: 'astra.db', bytes: statSync(target).size })
   }
 
@@ -94,6 +102,7 @@ export function backup(targetRoot?: string, options: { keep?: number } = {}): Ba
     totalBytes: files.reduce((sum, f) => sum + f.bytes, 0),
     sessionCount,
     hasDatabase,
+    database,
   }
 }
 
@@ -128,19 +137,29 @@ export function listBackups(targetRoot?: string): { dir: string; name: string; b
  *
  * 只在没有任务在跑时调用 —— 跑到一半的任务会写不上库。
  */
-export function restore(backupDir: string): { restored: string; previousKept: string | null } {
+export async function restore(backupDir: string): Promise<{ restored: string; previousKept: string | null }> {
   const source = path.join(backupDir, 'astra.db')
   if (!existsSync(source)) throw new AstraError('BACKUP_NO_DB', `备份里没有 astra.db：${backupDir}`, { exitCode: 4 })
+  const current = await stateDb()
+  if (!(current.conn instanceof SqliteConn)) {
+    throw new AstraError('BACKUP_WRONG_DB', '当前状态库是 PostgreSQL，SQLite 快照不能直接覆盖回去', {
+      exitCode: 2,
+      hint: '用 `astra db import-state --from <备份目录>/astra.db` 把快照里的数据导进当前库',
+    })
+  }
 
-  const running = db().prepare("select count(*) n from jobs where status in ('running','queued')").get() as { n: number }
-  if (running.n > 0) {
-    throw new AstraError('JOBS_RUNNING', `还有 ${running.n} 个任务在跑，不能现在恢复`, {
+  const running = num((await one<{ n: number }>("select count(*) n from jobs where status in ('running','queued')"))?.n)
+  if (running > 0) {
+    throw new AstraError('JOBS_RUNNING', `还有 ${running} 个任务在跑，不能现在恢复`, {
       exitCode: 2,
       hint: '等任务结束后再试，或用 `astra jobs --active` 看看是哪些',
     })
   }
 
-  const target = homePath('astra.db')
+  const target = current.conn.filePath
+  // 先关掉自己的连接：开着的连接还挂着 WAL，覆盖主文件后旧 WAL 会被回放进新库
+  await closeState()
+  for (const suffix of ['-wal', '-shm']) rmSync(`${target}${suffix}`, { force: true })
   let previousKept: string | null = null
   if (existsSync(target)) {
     previousKept = `${target}.replaced-${stamp()}`

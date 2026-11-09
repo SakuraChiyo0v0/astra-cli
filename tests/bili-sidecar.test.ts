@@ -35,7 +35,7 @@ const INFO: VideoInfo = {
   ],
 }
 
-test('伴生文件替换扩展名，不是追加', () => {
+test('伴生文件替换扩展名，不是追加', async () => {
   // Emby/Jellyfin/Kodi 的规则是 `<stem>.<ext>`：同目录同名、不同扩展名才算同一条。
   // `暗香.mp3.jpg` 不会被当成 `暗香.mp3` 的封面 —— 它是孤儿文件，刮削器根本不看。
   assert.equal(sidecarPath('/v/01 绿色.mp4', 'nfo'), '/v/01 绿色.Metadata.nfo')
@@ -46,11 +46,11 @@ test('伴生文件替换扩展名，不是追加', () => {
   assert.equal(sidecarPath('/m/暗香.mp3', 'nfo'), '/m/暗香.Metadata.nfo')
 })
 
-test('文件名里有多个点也只在最后一个扩展名上替换', () => {
+test('文件名里有多个点也只在最后一个扩展名上替换', async () => {
   assert.equal(sidecarPath('/m/a.b.c.mp3', 'cover'), '/m/a.b.c.jpg')
 })
 
-test('配置解析：逗号 / 空格 / 中文逗号都认，all 是全集', () => {
+test('配置解析：逗号 / 空格 / 中文逗号都认，all 是全集', async () => {
   assert.deepEqual(sidecarKinds('nfo,cover'), ['nfo', 'cover'])
   assert.deepEqual(sidecarKinds('nfo cover'), ['nfo', 'cover'])
   assert.deepEqual(sidecarKinds('nfo，cover'), ['nfo', 'cover'])
@@ -62,7 +62,7 @@ test('配置解析：逗号 / 空格 / 中文逗号都认，all 是全集', () =
   assert.deepEqual(sidecarKinds('nfo,bogus'), ['nfo'])
 })
 
-test('nfo 含播放器刮削要的字段', () => {
+test('nfo 含播放器刮削要的字段', async () => {
   const nfo = buildNfo(INFO, INFO.pages[0]!)
   assert.match(nfo, /<title>绿色<\/title>/)
   assert.match(nfo, /<premiered>2024-03-29<\/premiered>/)
@@ -73,20 +73,20 @@ test('nfo 含播放器刮削要的字段', () => {
   assert.match(nfo, /<uniqueid type="cid">111<\/uniqueid>/)
 })
 
-test('nfo 转义 XML 特殊字符，不让简介里的 < > 破坏结构', () => {
+test('nfo 转义 XML 特殊字符，不让简介里的 < > 破坏结构', async () => {
   const nfo = buildNfo(INFO, INFO.pages[0]!)
   assert.match(nfo, /&lt;含尖括号&gt; &amp; 特殊字符/)
   // 没有裸的尖括号漏进去
   assert.doesNotMatch(nfo, /<plot>[^<]*<含尖括号/)
 })
 
-test('多分 P 时标题用分 P 名，原视频标题留在 originaltitle', () => {
+test('多分 P 时标题用分 P 名，原视频标题留在 originaltitle', async () => {
   const nfo = buildNfo(INFO, INFO.pages[1]!)
   assert.match(nfo, /<title>绿色 - 纯享版<\/title>/, '播放器里"这一集"的名字是分 P 名')
   assert.match(nfo, /<originaltitle>绿色<\/originaltitle>/)
 })
 
-test('音频默认落音乐库，--to bili 才回视频目录', () => {
+test('音频默认落音乐库，--to bili 才回视频目录', async () => {
   const base: { audioOnly?: boolean; audioTo?: 'music' | 'bili' } = {}
   const music = targetPathFor(INFO, INFO.pages[0]!, { ...base, audioOnly: true }, 80)
   const video = targetPathFor(INFO, INFO.pages[0]!, { ...base }, 80)
@@ -106,7 +106,7 @@ test('音频默认落音乐库，--to bili 才回视频目录', () => {
   assert.equal(musicP2.vars.title, '纯享版')
 })
 
-test('音频落盘的根目录：默认音乐库，配了 audio-dir 就独立，--to bili 进视频库', () => {
+test('音频落盘的根目录：默认音乐库，配了 audio-dir 就独立，--to bili 进视频库', async () => {
   const prevMusic = process.env.ASTRA_MUSIC_DIR
   const prevVideo = process.env.ASTRA_VIDEO_DIR
   const prevAudioDir = getConfig('bili.audio-dir')

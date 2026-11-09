@@ -27,7 +27,7 @@ const tracks = [
 
 const fakeSession = { cookie: 'MUSIC_U=fake', userId: '1', nickname: null, savedAt: '' }
 
-test('预览：不执行，只返回令牌；已经是红的自动跳过', () => {
+test('预览：不执行，只返回令牌；已经是红的自动跳过', async () => {
   const preview = like.prepareLike('like', tracks)
   assert.equal(preview.status, 'needs_confirmation')
   assert.equal(preview.action, 'like')
@@ -38,7 +38,7 @@ test('预览：不执行，只返回令牌；已经是红的自动跳过', () =>
   assert.match(preview.next, /--confirm/)
 })
 
-test('预览：全部已是目标状态时，明说不需要改动', () => {
+test('预览：全部已是目标状态时，明说不需要改动', async () => {
   const already = tracks.map((t) => ({ ...t, currentlyLiked: true }))
   const preview = like.prepareLike('like', already)
   assert.equal(preview.willChange, 0)
@@ -46,7 +46,7 @@ test('预览：全部已是目标状态时，明说不需要改动', () => {
   assert.match(preview.next, /不需要改动/)
 })
 
-test('取消红心：只挑当前是红的那些', () => {
+test('取消红心：只挑当前是红的那些', async () => {
   const mixed = [
     { id: '1', title: 'a', artists: ['x'], currentlyLiked: true },
     { id: '2', title: 'b', artists: ['x'], currentlyLiked: false },

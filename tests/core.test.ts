@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { feishuSign } from '../src/core/notify.ts'
 
-test('飞书签名：以 "timestamp\\nsecret" 为 key 对空串 HmacSHA256 再 base64', () => {
+test('飞书签名：以 "timestamp\\nsecret" 为 key 对空串 HmacSHA256 再 base64', async () => {
   const expected = createHmac('sha256', '1599360473\ndemo').update(Buffer.alloc(0)).digest('base64')
   assert.equal(feishuSign(1599360473, 'demo'), expected)
 })

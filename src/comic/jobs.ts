@@ -24,9 +24,9 @@ registerJobHandler(COMIC_DOMAIN, {
     return pages > 0 ? [`共 ${pages} 页`] : []
   },
   // 订阅：只把真的落盘了的话记进基线，失败的下一轮再补
-  afterFinish: (job) => {
+  afterFinish: async (job) => {
     const subscriptionId = typeof job.meta?.subscriptionId === 'string' ? job.meta.subscriptionId : ''
-    if (subscriptionId) recordComicSubscriptionChapters(subscriptionId, job.id)
+    if (subscriptionId) await recordComicSubscriptionChapters(subscriptionId, job.id)
   },
 
   async handle(item, ctx): Promise<ItemOutcome> {

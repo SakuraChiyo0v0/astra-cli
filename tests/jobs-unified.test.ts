@@ -19,15 +19,15 @@ before(async () => {
 
 const items = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `id${i}`, title: `t${i}`, subtitle: 's' }))
 
-test('两个域的任务能在一张表里列出来', () => {
-  const music = jobs.createJob({ domain: 'music', kind: 'album', title: '音乐任务', profile: 'flac', items: items(2) })
-  const bili = jobs.createJob({ domain: 'bili', kind: 'pages', title: 'B 站任务', profile: '1080P', items: items(3) })
+test('两个域的任务能在一张表里列出来', async () => {
+  const music = await jobs.createJob({ domain: 'music', kind: 'album', title: '音乐任务', profile: 'flac', items: items(2) })
+  const bili = await jobs.createJob({ domain: 'bili', kind: 'pages', title: 'B 站任务', profile: '1080P', items: items(3) })
 
   assert.equal(music.domain, 'music')
   assert.equal(bili.domain, 'bili')
 
   // 不传 domain → 全都要（这就是 `astra jobs` 的行为）
-  const all = jobs.listJobs(50, false)
+  const all = await jobs.listJobs(50, false)
   const ids = all.map((j) => j.id)
   assert.ok(ids.includes(music.id), '音乐任务应在全量列表里')
   assert.ok(ids.includes(bili.id), 'B 站任务应在全量列表里')
@@ -35,26 +35,26 @@ test('两个域的任务能在一张表里列出来', () => {
   assert.ok(domains.has('music') && domains.has('bili'))
 })
 
-test('传 domain 只返回该域', () => {
-  const onlyMusic = jobs.listJobs(50, false, 'music')
+test('传 domain 只返回该域', async () => {
+  const onlyMusic = await jobs.listJobs(50, false, 'music')
   assert.ok(onlyMusic.length > 0)
   assert.ok(onlyMusic.every((j) => j.domain === 'music'))
-  const onlyBili = jobs.listJobs(50, false, 'bili')
+  const onlyBili = await jobs.listJobs(50, false, 'bili')
   assert.ok(onlyBili.every((j) => j.domain === 'bili'))
 })
 
-test('任务 id 跨域唯一，按 id 能直接查到所属域', () => {
-  const j = jobs.createJob({ domain: 'music', kind: 'songs', title: 'x', items: items(1) })
-  const found = jobs.getJob(j.id, false)
+test('任务 id 跨域唯一，按 id 能直接查到所属域', async () => {
+  const j = await jobs.createJob({ domain: 'music', kind: 'songs', title: 'x', items: items(1) })
+  const found = await jobs.getJob(j.id, false)
   assert.equal(found.job.domain, 'music')
   assert.equal(found.job.id, j.id)
 })
 
-test('空任务被拒', () => {
-  assert.throws(() => jobs.createJob({ domain: 'music', kind: 'x', title: 'y', items: [] }), /没有内容/)
+test('空任务被拒', async () => {
+  await assert.rejects(async () => await jobs.createJob({ domain: 'music', kind: 'x', title: 'y', items: [] }), /没有内容/)
 })
 
-test('状态文案覆盖每个状态', () => {
+test('状态文案覆盖每个状态', async () => {
   for (const s of ['queued', 'running', 'done', 'partial', 'failed', 'cancelled', 'interrupted'] as const) {
     assert.equal(typeof jobs.statusLabel(s), 'string')
     assert.ok(jobs.statusLabel(s).length > 0)

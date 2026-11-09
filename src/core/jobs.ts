@@ -11,12 +11,14 @@
  * - 每处理完一项检查一次取消标记
  * - worker 进程没了而状态还是 running → 判定为中断，可以 `resume`
  * - 表和列是共用的，各域自己的业务字段（音质 / 画质 / 分 P）放进 `meta` JSON
+ *
+ * 0.56.0：表搬进统一的状态库（线上是 PG），所有读写变成异步。
  */
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { mkdirSync, openSync } from 'node:fs'
 import path from 'node:path'
-import { db } from './db.ts'
+import { all, num, numOrNull, one, run, tx } from './state.ts'
 import { AstraError } from './errors.ts'
 import { homePath } from './paths.ts'
 import { notify } from './notify.ts'
@@ -85,9 +87,9 @@ export interface WorkerContext {
   jobId: string
   domain: string
   /** 这些项已经不需要做了（被取消）。 */
-  cancelled: () => boolean
+  cancelled: () => Promise<boolean>
   /** 报告一项的进度（写进 job_items）。 */
-  report: (seq: number, outcome: ItemOutcome | { status: 'failed'; error: string }) => void
+  report: (seq: number, outcome: ItemOutcome | { status: 'failed'; error: string }) => Promise<void>
   /** 整个任务共用的上下文，比如"同一张专辑只查一次"的缓存。 */
   shared: Map<string, unknown>
 }
@@ -103,13 +105,13 @@ interface Handler {
   /** worker 启动时清理上次被强杀留下的临时文件。 */
   sweep?: () => Promise<void>
   /**
-   * 任务结束（完成 / 部分完成 / 失败 / 取消）后调一次。
+   * 任务结束（完成 / 部分完成 / 失败 / 取消）后调一次，会被 await。
    *
    * 该域需要按**实际结果**更新自己的状态时用 —— 比如订阅要记下
    * "这个视频的哪几个分 P 确实落盘了"。只有 `downloaded` / `skipped`
    * 的项才算数，失败的下次要重试。
    */
-  afterFinish?: (job: JobView, items: JobItemView[]) => void
+  afterFinish?: (job: JobView, items: JobItemView[]) => void | Promise<void>
   /**
    * 所有项跑完后、发通知**之前**调一次，会被 await。
    *
@@ -193,7 +195,29 @@ function ownerScope(): string | null {
   return identity.kind === 'owner' ? null : identity.name
 }
 
-function toView(row: JobRow): JobView {
+/** PG 的整数列可能回来是字符串，统一一次。 */
+function normalizeJob(row: JobRow): JobRow {
+  return {
+    ...row,
+    total: num(row.total),
+    done: num(row.done),
+    failed: num(row.failed),
+    skipped: num(row.skipped),
+    pid: numOrNull(row.pid),
+  }
+}
+
+function normalizeItem(row: ItemRow): ItemRow {
+  return { ...row, seq: num(row.seq) }
+}
+
+function domainOf(row: JobRow): string {
+  const meta = parseJson(row.meta)
+  return typeof meta?.domain === 'string' ? meta.domain : 'music'
+}
+
+async function toView(raw: JobRow): Promise<JobView> {
+  const row = normalizeJob(raw)
   const meta = parseJson(row.meta)
   let status = row.status as JobStatus
   // 刚建好、还没起 worker 的任务 pid 为空 —— 不能当成中断。早先 createJob 自己返回视图时
@@ -202,11 +226,11 @@ function toView(row: JobRow): JobView {
   const justCreated = status === 'queued' && !row.pid && Date.now() - Date.parse(row.created_at) < 60_000
   if ((status === 'running' || status === 'queued') && !justCreated && !alive(row.pid)) {
     status = 'interrupted'
-    db().prepare("update jobs set status = 'interrupted', updated_at = ? where id = ?").run(now(), row.id)
+    await run("update jobs set status = 'interrupted', updated_at = ? where id = ?", [now(), row.id])
   }
   return {
     id: row.id,
-    domain: typeof meta?.domain === 'string' ? meta.domain : 'music',
+    domain: domainOf(row),
     kind: row.kind,
     title: row.title,
     status,
@@ -223,7 +247,8 @@ function toView(row: JobRow): JobView {
   }
 }
 
-function itemView(row: ItemRow): JobItemView {
+function itemView(raw: ItemRow): JobItemView {
+  const row = normalizeItem(raw)
   const failed = row.status === 'failed'
   return {
     seq: row.seq,
@@ -245,12 +270,12 @@ function jobMeta(domain: string, extra: Record<string, unknown>): string {
   return JSON.stringify({ domain, ...extra })
 }
 
-function jobRow(id: string, domain?: string): JobRow {
+async function jobRow(id: string, domain?: string): Promise<JobRow> {
   const scope = ownerScope()
-  const rows = db().prepare('select * from jobs where id = ? or id like ?').all(id, `${id}%`) as unknown as JobRow[]
+  const rows = (await all<JobRow>('select * from jobs where id = ? or id like ?', [id, `${id}%`])).map(normalizeJob)
   // 别人的任务当作不存在，不暴露它们的存在
   const visible = scope ? rows.filter((r) => r.owner === scope) : rows
-  const filtered = domain ? visible.filter((r) => toView(r).domain === domain) : visible
+  const filtered = domain ? visible.filter((r) => domainOf(r) === domain) : visible
   if (filtered.length === 0) throw new AstraError('NOT_FOUND', `没有任务 ${id}`, { exitCode: 4, hint: '用 `jobs` 看最近的任务' })
   if (filtered.length > 1) throw new AstraError('AMBIGUOUS_ID', `任务 id 前缀 ${id} 对应多个任务`, { exitCode: 2, hint: '多写几位 id' })
   return filtered[0]!
@@ -266,27 +291,31 @@ export interface CreateJobOptions {
   meta?: Record<string, unknown>
 }
 
-export function createJob(options: CreateJobOptions): JobView {
+export async function createJob(options: CreateJobOptions): Promise<JobView> {
   if (options.items.length === 0) throw new AstraError('EMPTY_JOB', '任务里没有内容', { exitCode: 4 })
   const id = randomUUID().slice(0, 8)
-  const database = db()
-  database.exec('begin immediate')
-  try {
-    database
-      .prepare('insert into jobs (id, kind, title, status, quality, total, created_at, updated_at, meta, owner) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, options.kind, options.title, 'queued', options.profile ?? null, options.items.length, now(), now(), jobMeta(options.domain, options.meta ?? {}), currentIdentity().name)
-    const insert = database.prepare('insert into job_items (job_id, seq, native_id, title, artists, status, updated_at, meta) values (?, ?, ?, ?, ?, ?, ?, ?)')
-    options.items.forEach((item, i) => insert.run(id, i, item.id, item.title, item.subtitle ?? '', 'queued', now(), item.meta ? JSON.stringify(item.meta) : null))
-    database.exec('commit')
-  } catch (err) {
-    database.exec('rollback')
-    throw err
-  }
-  return getJob(id, false).job
+  await tx(async (conn) => {
+    await conn.exec(
+      'insert into jobs (id, kind, title, status, quality, total, created_at, updated_at, meta, owner) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, options.kind, options.title, 'queued', options.profile ?? null, options.items.length, now(), now(), jobMeta(options.domain, options.meta ?? {}), currentIdentity().name],
+    )
+    // 一次插一批：几百项的任务（整张歌单）逐条 insert 在 PG 上要上百次往返
+    const CHUNK = 200
+    for (let start = 0; start < options.items.length; start += CHUNK) {
+      const slice = options.items.slice(start, start + CHUNK)
+      const values: unknown[] = []
+      const marks = slice.map((item, offset) => {
+        values.push(id, start + offset, item.id, item.title, item.subtitle ?? '', 'queued', now(), item.meta ? JSON.stringify(item.meta) : null)
+        return '(?, ?, ?, ?, ?, ?, ?, ?)'
+      })
+      await conn.exec(`insert into job_items (job_id, seq, native_id, title, artists, status, updated_at, meta) values ${marks.join(', ')}`, values)
+    }
+  })
+  return (await getJob(id, false)).job
 }
 
 /** 起后台 worker。开发态（.ts）和打包态（.mjs）都用当前进程同样的入口与参数。 */
-export function spawnWorker(domain: string, jobId: string): number {
+export async function spawnWorker(domain: string, jobId: string): Promise<number> {
   const logDir = homePath('logs')
   mkdirSync(logDir, { recursive: true })
   const log = openSync(path.join(logDir, `job-${domain}-${jobId}.log`), 'a')
@@ -305,43 +334,41 @@ export function spawnWorker(domain: string, jobId: string): number {
   })
   child.unref()
   const pid = child.pid ?? 0
-  db().prepare('update jobs set pid = ?, updated_at = ? where id = ?').run(pid, now(), jobId)
+  await run('update jobs set pid = ?, updated_at = ? where id = ?', [pid, now(), jobId])
   return pid
 }
 
-export function getJob(id: string, withItems: boolean, domain?: string): { job: JobView; items?: JobItemView[] } {
-  const row = jobRow(id, domain)
-  const job = toView(row)
+export async function getJob(id: string, withItems: boolean, domain?: string): Promise<{ job: JobView; items?: JobItemView[] }> {
+  const row = await jobRow(id, domain)
+  const job = await toView(row)
   if (!withItems) return { job }
-  const items = (db().prepare('select * from job_items where job_id = ? order by seq').all(row.id) as unknown as ItemRow[]).map(itemView)
+  const items = (await all<ItemRow>('select * from job_items where job_id = ? order by seq', [row.id])).map(itemView)
   return { job, items }
 }
 
-export function listJobs(limit: number, activeOnly: boolean, domain?: string): JobView[] {
-  const rows = db().prepare('select * from jobs order by created_at desc limit ?').all(activeOnly ? 200 : limit) as unknown as JobRow[]
+export async function listJobs(limit: number, activeOnly: boolean, domain?: string): Promise<JobView[]> {
+  const rows = (await all<JobRow>('select * from jobs order by created_at desc limit ?', [activeOnly ? 200 : limit])).map(normalizeJob)
   const scope = ownerScope()
-  const views = rows
-    .map(toView)
-    .filter((j, i) => (scope ? rows[i]!.owner === scope : true))
-    .filter((j) => !domain || j.domain === domain)
+  const visible = rows.filter((r) => (scope ? r.owner === scope : true)).filter((r) => !domain || domainOf(r) === domain)
+  const views: JobView[] = []
+  for (const row of visible) views.push(await toView(row))
   return activeOnly ? views.filter((j) => j.status === 'running' || j.status === 'queued').slice(0, limit) : views
 }
 
-function refreshCounts(jobId: string): void {
-  db()
-    .prepare(
-      `update jobs set
-         done = (select count(*) from job_items where job_id = ? and status = 'downloaded'),
-         skipped = (select count(*) from job_items where job_id = ? and status = 'skipped'),
-         failed = (select count(*) from job_items where job_id = ? and status = 'failed'),
-         updated_at = ?
-       where id = ?`,
-    )
-    .run(jobId, jobId, jobId, now(), jobId)
+async function refreshCounts(jobId: string): Promise<void> {
+  await run(
+    `update jobs set
+       done = (select count(*) from job_items where job_id = ? and status = 'downloaded'),
+       skipped = (select count(*) from job_items where job_id = ? and status = 'skipped'),
+       failed = (select count(*) from job_items where job_id = ? and status = 'failed'),
+       updated_at = ?
+     where id = ?`,
+    [jobId, jobId, jobId, now(), jobId],
+  )
 }
 
-function isCancelled(jobId: string): boolean {
-  const row = db().prepare('select status from jobs where id = ?').get(jobId) as { status: string } | undefined
+async function isCancelled(jobId: string): Promise<boolean> {
+  const row = await one<{ status: string }>('select status from jobs where id = ?', [jobId])
   return row?.status === 'cancelled'
 }
 
@@ -351,29 +378,30 @@ function isCancelled(jobId: string): boolean {
  * 处理器在**同一进程**里串/并发执行；一个项失败不影响其它项。
  */
 export async function runWorker(domain: string, jobId: string): Promise<void> {
-  const row = jobRow(jobId, domain)
+  const row = await jobRow(jobId, domain)
   if (row.status === 'cancelled') return
   const handler = handlerFor(domain)
   if (handler.sweep) await handler.sweep()
 
-  db().prepare("update jobs set status = 'running', pid = ?, error = null, updated_at = ? where id = ?").run(process.pid, now(), row.id)
+  await run("update jobs set status = 'running', pid = ?, error = null, updated_at = ? where id = ?", [process.pid, now(), row.id])
   // 中断恢复：上次跑到一半的项重新排队
-  db().prepare("update job_items set status = 'queued' where job_id = ? and status = 'running'").run(row.id)
-  const pending = db().prepare("select * from job_items where job_id = ? and status in ('queued', 'failed') order by seq").all(row.id) as unknown as ItemRow[]
+  await run("update job_items set status = 'queued' where job_id = ? and status = 'running'", [row.id])
+  const pending = (await all<ItemRow>("select * from job_items where job_id = ? and status in ('queued', 'failed') order by seq", [row.id])).map(normalizeItem)
   const jobMetaParsed = parseJson(row.meta) ?? {}
 
-  const setItem = db().prepare('update job_items set status = ?, quality = ?, file_path = ?, error = ?, updated_at = ?, meta = coalesce(?, meta) where job_id = ? and seq = ?')
+  const setItem = (values: unknown[]): Promise<number> =>
+    run('update job_items set status = ?, quality = ?, file_path = ?, error = ?, updated_at = ?, meta = coalesce(?, meta) where job_id = ? and seq = ?', values)
   const ctx: WorkerContext = {
     jobId: row.id,
     domain,
     cancelled: () => isCancelled(row.id),
-    report: (seq, outcome) => {
+    report: async (seq, outcome) => {
       if (outcome.status === 'failed') {
-        setItem.run('failed', null, null, outcome.error.slice(0, 300), now(), null, row.id, seq)
+        await setItem(['failed', null, null, outcome.error.slice(0, 300), now(), null, row.id, seq])
       } else {
-        setItem.run(outcome.status, outcome.profile ?? null, outcome.path ?? null, outcome.note ?? null, now(), outcome.meta ? JSON.stringify(outcome.meta) : null, row.id, seq)
+        await setItem([outcome.status, outcome.profile ?? null, outcome.path ?? null, outcome.note ?? null, now(), outcome.meta ? JSON.stringify(outcome.meta) : null, row.id, seq])
       }
-      refreshCounts(row.id)
+      await refreshCounts(row.id)
     },
     shared: new Map(),
   }
@@ -381,16 +409,16 @@ export async function runWorker(domain: string, jobId: string): Promise<void> {
   let cursor = 0
   const worker = async (): Promise<void> => {
     for (;;) {
-      if (ctx.cancelled()) return
+      if (await ctx.cancelled()) return
       const item = pending[cursor]
       cursor += 1
       if (!item) return
-      setItem.run('running', null, null, null, now(), null, row.id, item.seq)
+      await setItem(['running', null, null, null, now(), null, row.id, item.seq])
       try {
         const outcome = await handler.handle({ seq: item.seq, id: item.native_id, meta: parseJson(item.meta) ?? {} }, ctx)
-        ctx.report(item.seq, outcome)
+        await ctx.report(item.seq, outcome)
       } catch (err) {
-        ctx.report(item.seq, { status: 'failed', error: (err as Error).message })
+        await ctx.report(item.seq, { status: 'failed', error: (err as Error).message })
       }
     }
   }
@@ -398,14 +426,17 @@ export async function runWorker(domain: string, jobId: string): Promise<void> {
   const concurrency = Math.max(1, Math.min(handler.concurrency(jobMetaParsed), pending.length || 1))
   await Promise.all(Array.from({ length: concurrency }, worker))
 
-  if (!isCancelled(row.id)) {
-    refreshCounts(row.id)
-    const counts = db().prepare('select total, done, skipped, failed from jobs where id = ?').get(row.id) as { total: number; done: number; skipped: number; failed: number }
-    const status: JobStatus = counts.failed === 0 ? 'done' : counts.done + counts.skipped > 0 ? 'partial' : 'failed'
+  if (!(await isCancelled(row.id))) {
+    await refreshCounts(row.id)
+    const counts = await one<{ total: number; done: number; skipped: number; failed: number }>('select total, done, skipped, failed from jobs where id = ?', [row.id])
+    const done = num(counts?.done)
+    const skipped = num(counts?.skipped)
+    const failed = num(counts?.failed)
+    const status: JobStatus = failed === 0 ? 'done' : done + skipped > 0 ? 'partial' : 'failed'
     // 有 finalize 的域：状态先留在 running，finalize 跑完（产物写好）再落最终状态。
     // 否则轮询 `--wait` 的调用方会在「已完成、产物还没出来」的空档拿到结果
     if (handler.finalize) await runFinalize(domain, row.id, status)
-    else db().prepare('update jobs set status = ?, updated_at = ? where id = ?').run(status, now(), row.id)
+    else await run('update jobs set status = ?, updated_at = ? where id = ?', [status, now(), row.id])
   }
   await finish(domain, row.id)
 }
@@ -416,45 +447,44 @@ const finalizeNotes = new Map<string, string[]>()
 async function runFinalize(domain: string, jobId: string, status: JobStatus): Promise<void> {
   const handler = handlerFor(domain)
   // finalize 看到的是「即将落定」的状态，便于它判断要不要出产物
-  db().prepare('update jobs set status = ?, updated_at = ? where id = ?').run(status, now(), jobId)
-  const snapshot = getJob(jobId, true, domain)
-  db().prepare("update jobs set status = 'running', updated_at = ? where id = ?").run(now(), jobId)
+  await run('update jobs set status = ?, updated_at = ? where id = ?', [status, now(), jobId])
+  const snapshot = await getJob(jobId, true, domain)
+  await run("update jobs set status = 'running', updated_at = ? where id = ?", [now(), jobId])
   // finalize 可能要几十秒（打包、传图）。期间用户 cancel 了，就以取消为准：
   // 最终状态只在「还是 running」时才写，不覆盖 cancelled
-  const settle = (next: JobStatus, error: string | null = null): void => {
-    db().prepare("update jobs set status = ?, error = coalesce(?, error), updated_at = ? where id = ? and status = 'running'").run(next, error, now(), jobId)
-  }
+  const settle = (next: JobStatus, error: string | null = null): Promise<number> =>
+    run("update jobs set status = ?, error = coalesce(?, error), updated_at = ? where id = ? and status = 'running'", [next, error, now(), jobId])
   try {
     finalizeNotes.set(jobId, await handler.finalize!(snapshot.job, snapshot.items ?? []))
-    settle(status)
+    await settle(status)
   } catch (err) {
     const message = (err as Error).message.slice(0, 300)
-    settle('failed', message)
+    await settle('failed', message)
     finalizeNotes.set(jobId, [`✗ ${message}`])
   }
 }
 
 /** 改任务的状态 / 错误 / meta（meta 是浅合并）。给 `finalize` 用。 */
-export function patchJob(jobId: string, patch: { status?: JobStatus; error?: string | null; meta?: Record<string, unknown> }): void {
-  const row = db().prepare('select meta from jobs where id = ?').get(jobId) as { meta: string | null } | undefined
+export async function patchJob(jobId: string, patch: { status?: JobStatus; error?: string | null; meta?: Record<string, unknown> }): Promise<void> {
+  const row = await one<{ meta: string | null }>('select meta from jobs where id = ?', [jobId])
   if (!row) return
   if (patch.meta) {
     const merged = { ...(parseJson(row.meta) ?? {}), ...patch.meta }
-    db().prepare('update jobs set meta = ?, updated_at = ? where id = ?').run(JSON.stringify(merged), now(), jobId)
+    await run('update jobs set meta = ?, updated_at = ? where id = ?', [JSON.stringify(merged), now(), jobId])
   }
-  if (patch.status) db().prepare('update jobs set status = ?, updated_at = ? where id = ?').run(patch.status, now(), jobId)
-  if (patch.error !== undefined) db().prepare('update jobs set error = ?, updated_at = ? where id = ?').run(patch.error, now(), jobId)
+  if (patch.status) await run('update jobs set status = ?, updated_at = ? where id = ?', [patch.status, now(), jobId])
+  if (patch.error !== undefined) await run('update jobs set error = ?, updated_at = ? where id = ?', [patch.error, now(), jobId])
 }
 
 async function finish(domain: string, jobId: string): Promise<void> {
   const handler = handlers.get(domain)
   const extra = finalizeNotes.get(jobId) ?? []
   finalizeNotes.delete(jobId)
-  const { job, items } = getJob(jobId, true, domain)
+  const { job, items } = await getJob(jobId, true, domain)
   // 域自己的收尾（按实际结果更新状态）。出问题不能影响通知。
   if (handler?.afterFinish) {
     try {
-      handler.afterFinish(job, items ?? [])
+      await handler.afterFinish(job, items ?? [])
     } catch {
       // 收尾失败不该让任务变红，下次检查会再补
     }
@@ -475,12 +505,11 @@ export function statusLabel(status: JobStatus): string {
   return { queued: '排队中', running: '处理中', done: '已完成', partial: '部分完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' }[status]
 }
 
-export function cancelJob(id: string, domain?: string): JobView {
-  const row = jobRow(id, domain)
+export async function cancelJob(id: string, domain?: string): Promise<JobView> {
+  const row = await jobRow(id, domain)
   if (['done', 'partial', 'failed', 'cancelled'].includes(row.status)) return toView(row)
-  db()
-    .prepare(`update jobs set status = 'cancelled', updated_at = ? where id = ?${ownerScope() ? ' and owner = ?' : ''}`)
-    .run(...(ownerScope() ? [now(), row.id, ownerScope()!] : [now(), row.id]))
+  const scope = ownerScope()
+  await run(`update jobs set status = 'cancelled', updated_at = ? where id = ?${scope ? ' and owner = ?' : ''}`, scope ? [now(), row.id, scope] : [now(), row.id])
   if (alive(row.pid) && row.pid !== process.pid) {
     try {
       process.kill(row.pid!)
@@ -488,21 +517,20 @@ export function cancelJob(id: string, domain?: string): JobView {
       // 已经退出
     }
   }
-  db().prepare("update job_items set status = 'queued' where job_id = ? and status = 'running'").run(row.id)
-  return getJob(row.id, false, domain).job
+  await run("update job_items set status = 'queued' where job_id = ? and status = 'running'", [row.id])
+  return (await getJob(row.id, false, domain)).job
 }
 
-export function resumeJob(id: string, domain?: string): JobView {
-  const row = jobRow(id, domain)
-  const view = toView(row)
+export async function resumeJob(id: string, domain?: string): Promise<JobView> {
+  const row = await jobRow(id, domain)
+  const view = await toView(row)
   if (view.status === 'running' || view.status === 'queued') {
     throw new AstraError('JOB_RUNNING', `任务 ${row.id} 还在跑`, { exitCode: 2, hint: `用 \`astra ${view.domain} job <id>\` 看进度` })
   }
-  const retryable = (db().prepare("select count(*) n from job_items where job_id = ? and status in ('queued', 'failed', 'running')").get(row.id) as { n: number }).n
+  const retryable = num((await one<{ n: number }>("select count(*) n from job_items where job_id = ? and status in ('queued', 'failed', 'running')", [row.id]))?.n)
   if (retryable === 0) throw new AstraError('NOTHING_TO_RESUME', `任务 ${row.id} 没有需要重试的项`, { exitCode: 2 })
-  db()
-    .prepare(`update jobs set status = 'queued', error = null, updated_at = ? where id = ?${ownerScope() ? ' and owner = ?' : ''}`)
-    .run(...(ownerScope() ? [now(), row.id, ownerScope()!] : [now(), row.id]))
-  spawnWorker(view.domain, row.id)
-  return getJob(row.id, false, domain).job
+  const scope = ownerScope()
+  await run(`update jobs set status = 'queued', error = null, updated_at = ? where id = ?${scope ? ' and owner = ?' : ''}`, scope ? [now(), row.id, scope] : [now(), row.id])
+  await spawnWorker(view.domain, row.id)
+  return (await getJob(row.id, false, domain)).job
 }

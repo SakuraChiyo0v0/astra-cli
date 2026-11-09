@@ -11,7 +11,7 @@
  * 硬啃只会一直失败。合集 / 系列 / 收藏夹的接口是稳的。
  */
 import { randomUUID } from 'node:crypto'
-import { db } from '../core/db.ts'
+import { all, num, recordSubscriptionRun, run } from '../core/state.ts'
 import { AstraError } from '../core/errors.ts'
 import { progress } from '../core/output.ts'
 import { createJob, spawnWorker } from '../core/jobs.ts'
@@ -104,25 +104,26 @@ function toView(row: Row): BiliSubscription {
     // 老订阅（v0.12 之前建的）没存画质，跑的时候按 80（1080p）算。
     // 只回一个 null 的话，调用方没法判断"继承了什么"，所以把实际会用的值一并说明。
     qualityNote: row.quality === null ? '未指定，运行时按 1080p（qn 80）下载' : null,
-    everyHours: row.every_hours,
-    enabled: row.enabled === 1,
+    everyHours: num(row.every_hours),
+    enabled: num(row.enabled) === 1,
     lastCheckedAt: row.last_checked_at,
     lastSeen,
     lastJobId: row.last_job_id,
-    audioOnly: row.audio_only === 1,
+    audioOnly: num(row.audio_only) === 1,
     audioAlbum: row.audio_album,
     pagesMode: row.pages_mode === 'first' ? 'first' : 'all',
     seenPages: parseSeenPages(row.seen_pages),
   }
 }
 
-export function listBiliSubscriptions(): BiliSubscription[] {
-  const rows = db().prepare("select * from subscriptions where kind like 'bili-%' order by rowid desc").all() as unknown as Row[]
+export async function listBiliSubscriptions(): Promise<BiliSubscription[]> {
+  // 以前是 `order by rowid desc`（SQLite 独有）。rowid 单调递增，等价于按建订阅时间倒序
+  const rows = await all<Row>("select * from subscriptions where kind like 'bili-%' order by created_at desc")
   return rows.map(toView)
 }
 
-export function findBiliSubscription(idOrPrefix: string): BiliSubscription {
-  const rows = db().prepare("select * from subscriptions where kind like 'bili-%' and (id = ? or id like ?)").all(idOrPrefix, `${idOrPrefix}%`) as unknown as Row[]
+export async function findBiliSubscription(idOrPrefix: string): Promise<BiliSubscription> {
+  const rows = await all<Row>("select * from subscriptions where kind like 'bili-%' and (id = ? or id like ?)", [idOrPrefix, `${idOrPrefix}%`])
   if (rows.length === 0) throw new AstraError('NOT_FOUND', `没有订阅 ${idOrPrefix}`, { exitCode: 4, hint: '用 `astra bili subscribe list` 看' })
   if (rows.length > 1) throw new AstraError('AMBIGUOUS_ID', `订阅 id 前缀 ${idOrPrefix} 对应多个`, { exitCode: 2, hint: '多写几位' })
   return toView(rows[0]!)
@@ -155,26 +156,27 @@ export async function addBiliSubscription(input: { target: string; everyHours: n
     : ref.kind === 'series' ? withMid('series', ref.mid, ref.seriesId)
     : withMid('season', ref.mid, ref.seasonId)
   const id = randomUUID().slice(0, 8)
-  db()
-    .prepare('insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, last_seen, created_at, audio_only, audio_album, pages_mode) values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)')
-    .run(
+  await run(
+    'insert into subscriptions (id, kind, target_id, title, quality, every_hours, enabled, last_seen, created_at, audio_only, audio_album, pages_mode) values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)',
+    [
       id, kind, targetId, collection.title, input.quality, input.everyHours,
       JSON.stringify(collection.items.map((v) => v.bvid)), new Date().toISOString(),
       input.audioOnly === true ? 1 : 0,
       input.audioAlbum ?? null,
       input.pagesMode === 'first' ? 'first' : 'all',
-    )
+    ],
+  )
   // 建订阅时把当前已有的一批记为基线 —— 第一次 run 不会把整个合集重下一遍
   return findBiliSubscription(id)
 }
 
-export function removeBiliSubscription(idOrPrefix: string): boolean {
-  const sub = findBiliSubscription(idOrPrefix)
-  return db().prepare('delete from subscriptions where id = ?').run(sub.id).changes > 0
+export async function removeBiliSubscription(idOrPrefix: string): Promise<boolean> {
+  const sub = await findBiliSubscription(idOrPrefix)
+  return (await run('delete from subscriptions where id = ?', [sub.id])) > 0
 }
 
-export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; audioAlbum?: string | null; pagesMode?: 'all' | 'first' }): BiliSubscription {
-  const sub = findBiliSubscription(idOrPrefix)
+export async function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: number; enabled?: boolean; quality?: string | null; audioOnly?: boolean; audioAlbum?: string | null; pagesMode?: 'all' | 'first' }): Promise<BiliSubscription> {
+  const sub = await findBiliSubscription(idOrPrefix)
   const sets: string[] = []
   const values: (string | number | null)[] = []
   if (patch.everyHours !== undefined) {
@@ -203,7 +205,7 @@ export function setBiliSubscription(idOrPrefix: string, patch: { everyHours?: nu
   }
   if (sets.length > 0) {
     values.push(sub.id)
-    db().prepare(`update subscriptions set ${sets.join(', ')} where id = ?`).run(...values)
+    await run(`update subscriptions set ${sets.join(', ')} where id = ?`, values)
   }
   return findBiliSubscription(sub.id)
 }
@@ -332,16 +334,14 @@ export function planPages(
  * 它不是"磁盘现状"的完整真相（手删的文件它不知道），
  * 但作为一个"别重下已经下过的"的判据，它是对的且稳定的。
  */
-function makeHistoryProbe(): (bvid: string, page: number) => boolean {
+async function makeHistoryProbe(): Promise<(bvid: string, page: number) => boolean> {
   const done = new Set<string>()
   try {
     // 只取下成功的项。失败 / 取消的不算 —— 那正是"下次要补"的。
     //
     // `jobs` 表没有 domain 列（域信息在 kind / meta 里），所以从 `job_items`
     // 的 meta 认 bvid：bili 的项才有 `bvid` 字段，音乐的没有，天然区分开了。
-    const rows = db()
-      .prepare("select meta from job_items where status in ('downloaded', 'skipped') and meta like '%\"bvid\"%'")
-      .all() as unknown as { meta: string | null }[]
+    const rows = await all<{ meta: string | null }>("select meta from job_items where status in ('downloaded', 'skipped') and meta like '%\"bvid\"%'")
     for (const row of rows) {
       let meta: Record<string, unknown> = {}
       try {
@@ -366,7 +366,7 @@ export async function runBiliSubscription(
   idOrPrefix: string,
   options: { force?: boolean; rescanPages?: boolean; signal?: AbortSignal } = {},
 ): Promise<BiliRunResult> {
-  const sub = findBiliSubscription(idOrPrefix)
+  const sub = await findBiliSubscription(idOrPrefix)
   const collection = await fetchByTarget(sub.targetId, 500, options.signal)
   const currentIds = collection.items.map((v) => v.bvid)
   const previous = sub.lastSeen
@@ -400,7 +400,7 @@ export async function runBiliSubscription(
   // 核对模式底下"下过没有"以**磁盘实际文件**为准：这是 `--rescan-pages` 的正确语义。
   // 它只读、幂等，只补缺的那些 —— 不会像"清空记录"那样把整个合集重下一遍。
   const existsOnDisk = options.rescanPages === true
-    ? makeHistoryProbe()
+    ? await makeHistoryProbe()
     : undefined
 
   const plan = baseline
@@ -415,7 +415,7 @@ export async function runBiliSubscription(
   if (plan.tasks.length > 0) {
     const quality = Number(sub.quality ?? '80') || 80
     const items = pageTasksToItems(plan.tasks, collection.title, quality, sub.audioOnly, sub.audioAlbum)
-    const job = createJob({
+    const job = await createJob({
       domain: BILI_DOMAIN,
       kind: 'subscribe',
       title: `订阅「${sub.title}」新增 ${plan.tasks.length} 项`,
@@ -424,7 +424,7 @@ export async function runBiliSubscription(
       // 任务跑完后要按这个 id 回写"哪几个分 P 真的下过了"
       meta: { subscriptionId: sub.id },
     })
-    spawnWorker(BILI_DOMAIN, job.id)
+    await spawnWorker(BILI_DOMAIN, job.id)
     jobId = job.id
     note = `发现 ${plan.tasks.length} 个待下分 P，已开任务 ${job.id}`
     progress('bili.subscribe.new', { id: sub.id, count: plan.tasks.length, jobId: job.id })
@@ -447,14 +447,13 @@ export async function runBiliSubscription(
   }
 
   const now = new Date().toISOString()
-  db()
-    .prepare('update subscriptions set last_checked_at = ?, last_seen = ?, seen_pages = ?, last_job_id = coalesce(?, last_job_id) where id = ?')
-    .run(now, JSON.stringify(currentIds), JSON.stringify(nextSeenPages), jobId, sub.id)
-  db()
-    .prepare("insert or replace into subscription_runs (subscription_id, ran_at, new_tracks, job_id, note) values (?, ?, ?, ?, ?)")
-    .run(sub.id, now, plan.tasks.length, jobId, note)
+  await run(
+    'update subscriptions set last_checked_at = ?, last_seen = ?, seen_pages = ?, last_job_id = coalesce(?, last_job_id) where id = ?',
+    [now, JSON.stringify(currentIds), JSON.stringify(nextSeenPages), jobId, sub.id],
+  )
+  await recordSubscriptionRun(sub.id, now, plan.tasks.length, jobId, note)
 
-  return { subscription: findBiliSubscription(sub.id), newCount: plan.tasks.length, jobId, note, baseline }
+  return { subscription: await findBiliSubscription(sub.id), newCount: plan.tasks.length, jobId, note, baseline }
 }
 
 /**
@@ -467,14 +466,15 @@ export async function runBiliSubscription(
  * 从 `job_items` 读而不是在内存里传：worker 是独立进程，
  * 内存里的待下清单在 `subscribe run` 返回时就没了。
  */
-export function recordSubscriptionPages(subscriptionId: string, jobId: string | null): void {
+export async function recordSubscriptionPages(subscriptionId: string, jobId: string | null): Promise<void> {
   if (!jobId) return
-  const rows = db()
-    .prepare("select native_id, status, meta from job_items where job_id = ? and status in ('downloaded', 'skipped')")
-    .all(jobId) as unknown as { native_id: string; status: string; meta: string | null }[]
+  const rows = await all<{ native_id: string; status: string; meta: string | null }>(
+    "select native_id, status, meta from job_items where job_id = ? and status in ('downloaded', 'skipped')",
+    [jobId],
+  )
   if (rows.length === 0) return
 
-  const sub = findBiliSubscription(subscriptionId)
+  const sub = await findBiliSubscription(subscriptionId)
   const next: SeenPages = { ...sub.seenPages }
   for (const row of rows) {
     let meta: Record<string, unknown> = {}
@@ -492,14 +492,12 @@ export function recordSubscriptionPages(subscriptionId: string, jobId: string | 
     if (!list.includes(pageNo)) list.push(pageNo)
     next[bvid] = list.sort((a, b) => a - b)
   }
-  db()
-    .prepare('update subscriptions set seen_pages = ? where id = ?')
-    .run(JSON.stringify(next), sub.id)
+  await run('update subscriptions set seen_pages = ? where id = ?', [JSON.stringify(next), sub.id])
 }
 
 /** 到点该跑的订阅。 */
-export function dueBiliSubscriptions(now = Date.now()): BiliSubscription[] {
-  return listBiliSubscriptions().filter((s) => {
+export async function dueBiliSubscriptions(now = Date.now()): Promise<BiliSubscription[]> {
+  return (await listBiliSubscriptions()).filter((s) => {
     if (!s.enabled) return false
     if (!s.lastCheckedAt) return true
     return now - new Date(s.lastCheckedAt).getTime() >= s.everyHours * 3600 * 1000

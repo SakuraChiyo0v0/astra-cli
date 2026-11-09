@@ -18,7 +18,7 @@ let home = ''
 let musicDir = ''
 const fixtures = path.resolve('tests/fixtures')
 
-before(() => {
+before(async () => {
   home = mkdtempSync(path.join(tmpdir(), 'astra-retag-'))
   musicDir = path.join(home, 'music')
   mkdirSync(musicDir, { recursive: true })
@@ -28,8 +28,8 @@ before(() => {
 
 after(async () => {
   // Windows 上 SQLite 的句柄不放手就删不掉临时目录（EPERM）。先关库再清。
-  const { closeDb } = await import('../src/core/db.ts')
-  closeDb()
+  const { closeState } = await import('../src/core/state.ts')
+  await closeState()
   if (home) rmSync(home, { recursive: true, force: true })
 })
 
@@ -265,16 +265,16 @@ test('曲库记录跟着更新，`have` 不会报文件缺失', async () => {
   const { planRetag, executeRetag } = await import('../src/music/retag.ts')
   const { saveTrack, findTrack } = await import('../src/music/library.ts')
   const file = placeFixture('tone.mp3', 'lib/旧/01 库歌.mp3')
-  saveTrack({
+  await saveTrack({
     platform: 'netease', id: '801', title: '库歌', artists: ['库歌手'], album: '库专辑',
     durationMs: 1000, path: file, format: 'mp3', quality: '320k', bytes: null, bps: null,
     audioSha256: null, sourceId: null,
   })
 
-  const plan = await planRetag({ tracks: [findTrack('netease', '801')!] })
+  const plan = await planRetag({ tracks: [(await findTrack('netease', '801'))!] })
   await executeRetag(plan)
 
-  const after = findTrack('netease', '801')!
+  const after = (await findTrack('netease', '801'))!
   assert.equal(after.path, plan.items[0]!.to, '曲库路径没更新')
   assert.equal(after.missing, false, '曲库说文件缺失')
 })
