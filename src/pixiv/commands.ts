@@ -721,7 +721,7 @@ const top: Command = {
   options: {
     pages: { type: 'string', description: '拉最近几页（每页 60），默认 3；要全量就写 lastPage 的数（几十页）', valueName: 'n' },
     also: { type: 'string', description: '额外关键词，逗号分隔，合并进同一个候选池再排序（如 "あめちゃん,ニディガ"）', valueName: 'kw' },
-    limit: { type: 'string', description: '返回条数，默认 20', valueName: 'n' },
+    limit: { type: 'string', description: '返回条数，默认 20；上限 500（配合 --pages 一起放大）', valueName: 'n' },
     type: { type: 'string', description: '分类：all / illust / manga / ugoira（本地过滤），默认 all', valueName: 't' },
     r18: { type: 'boolean', description: '包含 R-18 作品（默认过滤掉）' },
     ...SL_OPTIONS,
@@ -730,7 +730,7 @@ const top: Command = {
   async run({ positionals, values }) {
     const keyword = positionals.join(' ')
     const pages = num(values.pages, 3, 1, 200, '--pages')
-    const limit = num(values.limit, 20, 1, 100, '--limit')
+    const limit = num(values.limit, 20, 1, 500, '--limit')
 
     const keywords = [keyword, ...(typeof values.also === 'string'
       ? values.also.split(',').map((k) => k.trim()).filter(Boolean)
