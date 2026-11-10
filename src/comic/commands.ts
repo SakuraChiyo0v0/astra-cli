@@ -61,6 +61,8 @@ function jobView(job: JobView): Record<string, unknown> {
     id: job.id, kind: job.kind, title: job.title, status: job.status, statusLabel: statusLabel(job.status),
     total: job.total, done: job.done, skipped: job.skipped, failed: job.failed, error: job.error,
     output: (job.meta?.output ?? null) as Record<string, unknown> | null,
+    // 限流时任务在原地等：在等哪个源、为什么、等到几点（ISO）。没在等就是 null
+    waiting: (job.status === 'running' ? job.meta?.waiting ?? null : null) as Record<string, unknown> | null,
     createdAt: job.createdAt, updatedAt: job.updatedAt,
   }
 }
@@ -138,7 +140,7 @@ const get: Command = {
     '作品名只在「完全同名」时自动选（多个源都有就取 komiic 优先）；否则报 AMBIGUOUS，details.candidates 是候选',
     '--group 不给就取第一个分组（拷贝漫画是单行本优先）；分组名看 `astra comic info`',
     '落盘 comic.dir / ASTRA_COMIC_DIR：<作品>/<分组>/<第01卷>/001.jpg；已下完整的页会跳过',
-    'Komiic 匿名每天约 300 张；拷贝漫画请求太密会被限流约 1 小时。遇到时该项记失败、错误里写何时可以 resume',
+    'Komiic 匿名每天约 300 张；拷贝漫画请求太密会被限流约 1 小时。遇到时任务原地等到解除再接着下，整本结束只通知一次；等待状态看 `astra comic job <id>` 的 data.waiting',
     '立刻返回任务 id；`--wait 300` 等它跑完（最多 600 秒）',
   ],
   options: {
@@ -240,7 +242,7 @@ const jobResume: Command = {
   name: 'comic job resume',
   summary: '重试漫画任务里失败 / 没跑完的话，只补缺的页',
   usage: 'astra comic job resume <id>',
-  notes: ['额度 / 限流失败时，错误里写了大约几点可以 resume；早了会再失败一次，不会重下已有的页'],
+  notes: ['限流现在由任务自己等；只有连续等了 6 次仍被拒、或 worker 被重启打断时才需要 resume。不会重下已有的页'],
   minArgs: 1,
   maxArgs: 1,
   async run({ positionals }) {
