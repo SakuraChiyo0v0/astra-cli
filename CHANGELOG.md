@@ -1,3 +1,13 @@
+## 0.58.1 — 2026-11-10
+
+**修：root 启动时写出的文件是 `---------- root:root`，SMB / Navidrome / hermes 都读不了**
+
+- 原因：运维和 cron 用 `docker exec hermes astra ...` 调用时是 root；群晖 ACL 共享目录给 root 新建的文件和目录 mode 都是 000
+  （和 umask 无关，`echo x > f` 也一样），而 hermes（uid 1000）在同一目录写是正常的
+- 修法：进程一启动、打开任何文件之前，root 就切成 `ASTRA_HOME` 的属主（线上是 hermes:uucp）；后台 worker、ffmpeg 继承新身份
+- 不切的情况：非 POSIX、本来就不是 root、`ASTRA_HOME` 属主就是 root、`ASTRA_KEEP_ROOT=1`；切失败只记进度不报错
+- 存量的 root 文件不会自动改，用 `chown -R hermes:uucp` 修
+
 ## 0.58.0 — 2026-11-10
 
 **运行状态并进同一个库；按领域懒加载**

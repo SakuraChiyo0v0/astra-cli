@@ -16,6 +16,7 @@ import { describeCommand, parseCommandArgs, type Command } from './core/command.
 import { renderTable } from './core/output.ts'
 import { CONFIG_KEYS, getConfig, listConfig, musicRoot, setConfig, unsetConfig } from './core/config.ts'
 import { astraHome } from './core/paths.ts'
+import { dropRootPrivileges } from './core/privileges.ts'
 import { closeState } from './core/state.ts'
 import { setPinnedEntry } from './core/entry.ts'
 import { runDoctor } from './core/doctor.ts'
@@ -466,6 +467,8 @@ export async function groupCommands(arg: string): Promise<string[]> {
 }
 
 async function main(): Promise<number> {
+  // 在打开任何文件、数据库之前：root 启动时切成 ASTRA_HOME 的属主（见 core/privileges.ts）
+  dropRootPrivileges(astraHome())
   const argv = process.argv.slice(2)
   const pretty = argv.includes('--pretty')
   const wantTable = argv.includes('--table')
