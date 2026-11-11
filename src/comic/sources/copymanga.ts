@@ -18,6 +18,19 @@ import { fetchBytes, fetchJson, sleep } from '../fetch.ts'
 import { QuotaError, type ChapterRef, type ComicInfo, type Group, type ComicSource, type PageRef, type SearchHit } from './types.ts'
 
 const APIS = ['https://api.copy2000.online', 'https://api.copy-manga.com']
+/** 登录令牌（拷贝漫画网页 cookie 里的 token）。有则用账号身份，无则匿名。 */
+function tokenFile(): string {
+  return homePath('comic', 'copymanga-token.txt')
+}
+
+function loginToken(): string {
+  const f = tokenFile()
+  try {
+    return existsSync(f) ? readFileSync(f, 'utf8').trim() : ''
+  } catch {
+    return ''
+  }
+}
 const SECRET = Buffer.from('M2FmMDg1OTAzMTEwMzJlZmUwNjYwNTUwYTA1NjNhNTM=', 'base64')
 const APP_VER = '3.0.6'
 const URL_RE = /(?:copymanga|mangacopy|copy-?manga|copy\d+|\d+copy)\.\w+\/comic\/([\w-]+)/
@@ -68,7 +81,9 @@ function headers(): Record<string, string> {
   return {
     'user-agent': `COPY/${APP_VER}`, source: 'copyApp', deviceinfo: d.deviceinfo, dt: today(), platform: '3',
     referer: `com.copymanga.app-${APP_VER}`, version: APP_VER, device: d.device, pseudoid: d.pseudoid,
-    accept: 'application/json', region: '0', authorization: 'Token', umstring: 'b4c89ca4104ea9a97750314d791520ac',
+    accept: 'application/json', region: '0',
+    authorization: loginToken() ? `Token ${loginToken()}` : 'Token',
+    umstring: 'b4c89ca4104ea9a97750314d791520ac',
     'x-auth-timestamp': ts, 'x-auth-signature': signature(ts),
   }
 }

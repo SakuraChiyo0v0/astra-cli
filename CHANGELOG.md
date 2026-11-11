@@ -1,3 +1,7 @@
+## 0.58.4
+
+- `comic`：拷贝漫画支持登录令牌（`<ASTRA_HOME>/comic/copymanga-token.txt`，600）。有令牌时请求头带 `authorization: Token <token>`，账号身份下不再被当成破解版回 code 210；无令牌行为不变。
+
 ## 0.58.3
 
 `pixiv top --limit` 上限 100 → 500。
