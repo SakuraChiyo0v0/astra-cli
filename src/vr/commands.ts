@@ -773,9 +773,13 @@ const groupLeaveCmd = writeCommand({
   maxArgs: 1,
   async prepare({ positionals, signal }) {
     const groupId = positionals[0]!
-    // 只允许退自己真的在的群
+    // 只允许退自己真的在的群：/groups/{id} 不返回 isMember（那是成员关系字段），
+    // 必须从「我的群组」列表里核对，否则每个群都会被判成「不在群里」。
     const g = await api.group(groupId, signal)
-    if (!g.isMember) throw new AstraError('NOT_A_MEMBER', `你不在「${g.name}」里`, { exitCode: 4 })
+    const mine = await api.myGroups({ limit: 200, signal })
+    if (!mine.some((x) => x.id === groupId)) {
+      throw new AstraError('NOT_A_MEMBER', `你不在「${g.name}」里`, { exitCode: 4 })
+    }
     return {
       params: { groupId },
       preview: { groupId, name: g.name, memberCount: g.memberCount },

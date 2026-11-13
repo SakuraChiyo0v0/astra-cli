@@ -138,10 +138,11 @@ export async function selectFallbackAvatar(avatarId: string, signal?: AbortSigna
  * 返回的群组对象只反映当时状态。要确认是否真的进了，用 `vr groups member` 再看一次。
  */
 export async function joinGroup(groupId: string, signal?: AbortSignal): Promise<ActionResult> {
-  return send('PUT', '/groups/' + encodeURIComponent(groupId) + '/join', undefined, signal)
+  return send('POST', '/groups/' + encodeURIComponent(groupId) + '/join', undefined, signal)
 }
 
 /** 离开群组。退出与被移出/申请被拒不是一回事，这里只转述上游结果。 */
 export async function leaveGroup(groupId: string, signal?: AbortSignal): Promise<ActionResult> {
-  return send('PUT', '/groups/' + encodeURIComponent(groupId) + '/leave', undefined, signal)
+  // 上游只认 POST（PUT 会 405，且仅 /api/1 有这条路由）
+  return send('POST', '/groups/' + encodeURIComponent(groupId) + '/leave', undefined, signal)
 }

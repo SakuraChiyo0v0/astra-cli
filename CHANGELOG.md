@@ -1,3 +1,15 @@
+## 0.58.7
+
+- `vr groups leave` / `join`：上游只认 `POST`（`PUT` 回 405），改为 POST。
+
+## 0.58.6
+
+- `vr groups leave`：之前用 `/groups/{id}` 的 `isMember` 判「在不在群里」，而该字段上游不返回，导致所有群都被拒成 `NOT_A_MEMBER`。改成对照「我的群组」列表核对。
+
+## 0.58.5
+
+- `vr groups`：列表里的 id 之前是成员关系 id（`gmem_`），拿去 `vr groups info` / `leave` 会 404。现在改用 `groupId`（`grp_`），并把这些条目标成 `isMember: true`。
+
 ## 0.58.4
 
 - `comic`：拷贝漫画支持登录令牌（`<ASTRA_HOME>/comic/copymanga-token.txt`，600）。有令牌时请求头带 `authorization: Token <token>`，账号身份下不再被当成破解版回 code 210；无令牌行为不变。

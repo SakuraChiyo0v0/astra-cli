@@ -291,6 +291,8 @@ export interface VrGroup {
 
 interface RawGroup {
   id?: string
+  groupId?: string
+  isRepresenting?: boolean
   name?: string
   shortCode?: string
   description?: string
@@ -324,7 +326,13 @@ export async function myGroups(options: { limit?: number; offset?: number; signa
     query: { n: options.limit ?? 50, offset: options.offset ?? 0 },
     ...(options.signal ? { signal: options.signal } : {}),
   })
-  return (Array.isArray(raw) ? raw : []).map(toGroup)
+  // /users/{id}/groups 返回的是「成员关系」：id=gmem_xxx，真正的群 id 在 groupId=grp_xxx。
+  // 直接用 gmem_ 去 /groups/{id} 会 404，所以这里统一换成 groupId。
+  return (Array.isArray(raw) ? raw : []).map((g) => ({
+    ...toGroup(g),
+    id: g.groupId ?? g.id ?? '',
+    isMember: true,
+  }))
 }
 
 export async function group(groupId: string, signal?: AbortSignal): Promise<VrGroup> {
