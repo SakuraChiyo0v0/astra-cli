@@ -30,4 +30,5 @@ export const DOMAINS: DomainEntry[] = [
   { name: 'novel', load: async () => (await import('./novel/manifest.ts')).domain },
   { name: 'comic', load: async () => (await import('./comic/manifest.ts')).domain },
   { name: 'archive', load: async () => (await import('./archive/manifest.ts')).domain },
+  { name: 'mail', load: async () => (await import('./mail/manifest.ts')).domain },
 ]

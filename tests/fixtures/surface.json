@@ -3677,6 +3677,84 @@
         "消息条数和最大 id 都没变的会话会跳过，适合 cron 反复跑",
         "先 astra db migrate，缺会话表迁移时会拒绝写入"
       ]
+    },
+    {
+      "command": "mail login",
+      "summary": "添加一个邮箱（IMAP 只读），授权码从 stdin 读",
+      "usage": "mail login <名字> <邮箱地址> [--host imap.qq.com] [--folder INBOX] [--port 993] [--default]",
+      "options": {
+        "--host <主机>": "IMAP 主机（能按邮箱域名自动认，认不出才需要给）",
+        "--folder <目录>": "邮箱目录，默认 INBOX",
+        "--port <端口>": "IMAP 端口，默认 993",
+        "--default": "把这个邮箱设成默认账号"
+      },
+      "notes": [
+        "授权码从 stdin 读，不进 argv、不回显：`printf %s \"$CODE\" | astra mail login qq 123@qq.com`",
+        "QQ/163 要先在邮箱设置里开启 IMAP 并生成授权码，用登录密码连不上",
+        "只做只读取信，不发信、不删信、不改已读状态"
+      ]
+    },
+    {
+      "command": "mail accounts",
+      "summary": "列出已配置的邮箱（授权码脱敏）",
+      "usage": "mail accounts",
+      "options": {}
+    },
+    {
+      "command": "mail default",
+      "summary": "设置默认邮箱",
+      "usage": "mail default <名字>",
+      "options": {}
+    },
+    {
+      "command": "mail logout",
+      "summary": "删掉一个邮箱的授权码",
+      "usage": "mail logout <名字>",
+      "options": {},
+      "notes": [
+        "只删本机配置；邮箱侧的授权码要自己去邮箱设置里撤销"
+      ]
+    },
+    {
+      "command": "mail code",
+      "summary": "取最新的邮箱验证码（两步验证用）",
+      "usage": "mail code [--account qq] [--minutes 10] [--from 关键词] [--wait 秒] [--any]",
+      "options": {
+        "--account <名字>": "账号名（默认用 mail.json 里的 default）",
+        "--minutes <分钟>": "只看最近多少分钟内的邮件（默认 10）",
+        "--from <关键词>": "按发件人过滤（子串，不区分大小写）",
+        "--wait <秒>": "最多等多少秒（每 5 秒查一次），默认 0 = 只查一次",
+        "--any": "不过滤掉没抽到码的邮件（排障用）"
+      },
+      "notes": [
+        "默认只找最近 10 分钟内、能抽出验证码的邮件，按时间倒序返回，`code` 是最新那封的码",
+        "`--wait 120` 会每 5 秒重新查一次，来新邮件立刻返回（做两步验证时用）",
+        "抽不到码时 `code` 为 null，`matches` 为空数组 —— 不是报错，只是这封不像验证码邮件",
+        "只读：取信不会把邮件标成已读"
+      ]
+    },
+    {
+      "command": "mail list",
+      "summary": "列出最近的邮件（顺带抽出验证码）",
+      "usage": "mail list [--account qq] [--limit 10] [--minutes 1440] [--from 关键词]",
+      "options": {
+        "--account <名字>": "账号名（默认用 mail.json 里的 default）",
+        "--minutes <分钟>": "只看最近多少分钟内的邮件（默认 10）",
+        "--from <关键词>": "按发件人过滤（子串，不区分大小写）",
+        "--limit <条数>": "最多返回几封（1..40，默认 10）"
+      },
+      "notes": [
+        "不发信、不删信、不标已读；只回摘要，正文前 160 字在 JSON 的 preview 里"
+      ]
+    },
+    {
+      "command": "mail doctor",
+      "summary": "检查邮箱能不能连上、目录里有多少封",
+      "usage": "mail doctor [名字]",
+      "options": {},
+      "notes": [
+        "三态：没配置账号 / 连不上（网络或授权码）/ 正常（给出目录里邮件数与最新一封时间）"
+      ]
     }
   ],
   "hidden": [

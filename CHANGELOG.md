@@ -1,3 +1,17 @@
+## 0.58.8
+
+**新：`astra mail` —— 从邮箱里取验证码（IMAP 只读）**
+
+- `mail login <名字> <邮箱>`：授权码走 stdin（不进 argv、不回显），先真连一次再落盘 `<ASTRA_HOME>/mail.json`（600）；
+  QQ/163/Gmail/Outlook 按域名自动认 IMAP 主机
+- `mail code [--minutes 10] [--from steam] [--wait 120] [--account qq]`：返回最新验证码 + 候选列表；
+  `--wait` 每 5 秒查一次，来新邮件立刻返回（做两步验证时用）
+- `mail list` / `mail accounts` / `mail default` / `mail logout` / `mail doctor`
+- 抽取规则：关键词行 + 其后 3 行优先（Steam 客服支援码把码单独放一行）；再退到全文 6 位数字；
+  字母数字混合码只在关键词附近取，订单号/运单号不会被误抓
+- 只读：全部用 `BODY.PEEK[]`，取信不把邮件标成已读；不发信、不删信
+- 自带最小 IMAP 客户端（`node:tls`，约 4 条命令的协议面），不引第三方依赖
+
 ## 0.58.7
 
 - `vr groups leave` / `join`：上游只认 `POST`（`PUT` 回 405），改为 POST。
