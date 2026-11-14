@@ -53,11 +53,24 @@ export class ImapClient {
   private closed = false
   private tagSeq = 0
 
+  /**
+   * 建传输层。单独一个方法是为了让测试能换成假 socket —— 协议解析（行 + 字面量）
+   * 才是容易写错的地方，靠真服务器验一轮不够快也验不全。
+   */
+  protected createSocket(opts: ImapOptions): tls.TLSSocket {
+    return tls.connect({
+      host: opts.host,
+      port: opts.port ?? 993,
+      servername: opts.host,
+      rejectUnauthorized: true,
+    })
+  }
+
   async connect(opts: ImapOptions): Promise<void> {
     const port = opts.port ?? 993
     const timeout = opts.timeoutMs ?? 20_000
     this.socket = await new Promise<tls.TLSSocket>((resolve, reject) => {
-      const socket = tls.connect({ host: opts.host, port, servername: opts.host, rejectUnauthorized: true })
+      const socket = this.createSocket(opts)
       const timer = setTimeout(() => {
         socket.destroy()
         reject(new AstraError('IMAP_TIMEOUT', `连接 ${opts.host}:${port} 超时`, { exitCode: 5, retryable: true }))
