@@ -18,6 +18,7 @@ const HINT_WORDS = [
   '动态码',
   '一次性',
   '确认码',
+  '激活码',
   '验证代码',
   '安全码',
   '支援碼',
@@ -26,6 +27,7 @@ const HINT_WORDS = [
   'security code',
   'passcode',
   'one-time',
+  'one time',
   'otp',
 ]
 
@@ -38,6 +40,10 @@ function looksLikeCode(candidate: string): boolean {
 }
 
 export function extractCode(subject: string, body: string): string {
+  const whole = `${subject}\n${body}`.toLowerCase()
+  // 没有任何「这是验证码邮件」的迹象时直接给空：促销邮件里的 app id（/app/733050/）、
+  // 状态告警里的年份都会是 6 位数字，按形状硬抽就是给用户一个错码。
+  if (!HINT_WORDS.some((w) => whole.includes(w))) return ''
   const lines = `${subject}\n${body}`.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
 
   for (let i = 0; i < lines.length; i += 1) {

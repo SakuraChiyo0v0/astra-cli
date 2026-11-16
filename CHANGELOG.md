@@ -1,3 +1,14 @@
+## 0.58.9
+
+**修：`mail code` 会把促销邮件里的 app id 当成验证码**
+
+- 现象：Steam 愿望单特卖的邮件被抽出 `733050`（那是 `store.steampowered.com/app/733050/` 的商品 id）、
+  GitHub 告警抽出 `2026`（日期年份）、DeepSeek 状态告警抽出 `2026`
+- 现在先看整封信里有没有「验证码 / 激活码 / one-time code / security code / OTP」这类迹象，
+  **没有就直接返回空**，不再按「6 位数字」的形状硬抽
+- 顺带补了 `激活码` / `one-time` / `one time` 三个关键词（和风天气的注册激活邮件、VRChat 的一次性码）
+- 新增 4 条固定向量：三类真实误报 + VRChat 一次性码 + 中文激活码
+
 ## 0.58.8
 
 **新：`astra mail` —— 从邮箱里取验证码（IMAP 只读）**

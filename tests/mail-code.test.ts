@@ -30,6 +30,31 @@ test('mail: 订单号不会被当成验证码', () => {
   assert.equal(extractCode('物流', '运单 7731122334455，预计明天送达'), '')
 })
 
+test('mail: 促销/告警邮件里的数字不当验证码（真实误报样本）', () => {
+  assert.equal(
+    extractCode('Lines Infinite from your Steam wishlist is now on sale!',
+      'Hello SakuraChiyo! The following items on your wishlist are on sale: Bodycam - 20% off! <https://store.steampowered.com/app/733050/Bodycam/> Cheers'),
+    '',
+  )
+  assert.equal(
+    extractCode('[SakuraChiyo0v0/vrc-web] Run failed: image - main (60c7d24)',
+      'Repository: SakuraChiyo0v0/vrc-web Workflow: image Finished: 2026-11-14 02:25:28 UTC'),
+    '',
+  )
+  assert.equal(extractCode('DeepSeek 网页/Chat 性能下降', '故障：DeepSeek 网页/Chat 性能下降，开始时间 2026-11-14'), '')
+})
+
+test('mail: 英文 one-time code 仍能抽（VRChat）', () => {
+  assert.equal(
+    extractCode('Your One-Time Code is 853746', "Hello, SakuraChiyoQAQ. Here's your one-time security code: 853746 This code is only valid for 15 minutes."),
+    '853746',
+  )
+})
+
+test('mail: 中文激活码', () => {
+  assert.equal(extractCode('[和风天气]注册激活', '请将下列6位数字激活码输入到激活页面。\n577995'), '577995')
+})
+
 test('mail: 编码字解码', () => {
   assert.equal(decodeWords('=?UTF-8?B?6aqM6K+B56CB?='), '验证码')
   assert.equal(decodeWords('=?GBK?B?0enWpMLr?='), '验证码')
