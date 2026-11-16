@@ -15,6 +15,10 @@ export const SCRAMBLE_268850 = 268850
 export const SCRAMBLE_421926 = 421926
 
 export const ORDER_BY_LATEST = 'mr'
+/** 最多观看（热度排序）。上游未公开，但实测有效。 */
+export const ORDER_BY_VIEW = 'mv'
+/** 最多收藏。 */
+export const ORDER_BY_FAV = 'tf'
 export const TIME_ALL = 'a'
 
 export const BUILTIN_API_DOMAINS = [

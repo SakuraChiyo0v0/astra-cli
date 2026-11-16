@@ -9,6 +9,7 @@ import { checkWritable } from '../core/doctor.ts'
 import { getConfig } from '../core/config.ts'
 import { mkdirSync } from 'node:fs'
 import { jmClient, searchMainTag, type AlbumDetail, type SearchHit, type SearchScope } from './client.ts'
+import { ORDER_BY_FAV, ORDER_BY_LATEST, ORDER_BY_VIEW } from './constants.ts'
 import { downloadAlbum } from './download.ts'
 import { cancelJob, createJob, getJob, listJobs, resumeJob, runWorker, spawnWorker, statusLabel, type JobView } from '../core/jobs.ts'
 import { chapterItems, JM_DOMAIN } from './jobs.ts'
@@ -175,6 +176,7 @@ const search: Command = {
     scope: { type: 'string', description: '搜索范围：site（默认）/ work / author / tag / actor', valueName: 'scope' },
     page: { type: 'string', description: '页码，从 1 开始', valueName: 'n' },
     limit: { type: 'string', description: '最多返回几条，默认 20', valueName: 'n' },
+    by: { type: 'string', description: '排序：latest（默认）/ view 最多观看 / fav 最多收藏', valueName: 'view|fav|latest' },
   },
   minArgs: 1,
   async run({ positionals, values, signal }) {
@@ -185,7 +187,10 @@ const search: Command = {
     const scope = scopeRaw as SearchScope
     const page = Math.max(1, Number(values.page ?? '1') || 1)
     const limit = Math.max(1, Math.min(80, Number(values.limit ?? '20') || 20))
-    const result = await jmClient().search(query, page, scope, signal)
+    const byRaw = typeof values.by === 'string' && values.by.trim() ? values.by.trim() : 'latest'
+    const order = byRaw === 'view' ? ORDER_BY_VIEW : byRaw === 'fav' ? ORDER_BY_FAV : byRaw === 'latest' ? ORDER_BY_LATEST : null
+    if (!order) throw invalidInput(`--by 只能是 latest / view / fav`, '例如 `--by view`')
+    const result = await jmClient().search(query, page, scope, signal, order)
     const items = result.items.slice(0, limit)
     const decision = searchDecision(result.redirectId, items, result.total)
     return {

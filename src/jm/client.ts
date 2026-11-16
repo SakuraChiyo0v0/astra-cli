@@ -15,7 +15,9 @@ import {
   BUILTIN_API_DOMAINS,
   BUILTIN_IMAGE_DOMAINS,
   DOMAIN_SERVER_URLS,
+  ORDER_BY_FAV,
   ORDER_BY_LATEST,
+  ORDER_BY_VIEW,
   SCRAMBLE_220980,
   TIME_ALL,
 } from './constants.ts'
@@ -330,12 +332,12 @@ export class JmClient {
     return String(SCRAMBLE_220980)
   }
 
-  async search(query: string, page = 1, scope: SearchScope = 'site', signal?: AbortSignal): Promise<SearchPage> {
+  async search(query: string, page = 1, scope: SearchScope = 'site', signal?: AbortSignal, order: string = ORDER_BY_LATEST): Promise<SearchPage> {
     const qs = new URLSearchParams({
       main_tag: searchMainTag(scope),
       search_query: query,
       page: String(page),
-      o: ORDER_BY_LATEST,
+      o: order,
       t: TIME_ALL,
     })
     const data = (await this.api(`/search?${qs}`, signal)) as Record<string, unknown>

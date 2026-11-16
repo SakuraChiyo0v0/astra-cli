@@ -2533,7 +2533,8 @@
       "options": {
         "--scope <scope>": "搜索范围：site（默认）/ work / author / tag / actor",
         "--page <n>": "页码，从 1 开始",
-        "--limit <n>": "最多返回几条，默认 20"
+        "--limit <n>": "最多返回几条，默认 20",
+        "--by <view|fav|latest>": "排序：latest（默认）/ view 最多观看 / fav 最多收藏"
       },
       "notes": [
         "默认 --scope site：站内全文，对标题和正文",
