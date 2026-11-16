@@ -19,6 +19,12 @@ export const ORDER_BY_LATEST = 'mr'
 export const ORDER_BY_VIEW = 'mv'
 /** 最多收藏。 */
 export const ORDER_BY_FAV = 'tf'
+/** 最多点赞/人气。 */
+export const ORDER_BY_POPULAR = 'mp'
+/** 最多下载。 */
+export const ORDER_BY_DOWNLOAD = 'md'
+/** 趋势。 */
+export const ORDER_BY_TRENDING = 'tr'
 export const TIME_ALL = 'a'
 
 export const BUILTIN_API_DOMAINS = [

@@ -1,3 +1,11 @@
+## 0.59.1
+
+`jm search --by` 补齐上游实际认的排序码：`latest / view / fav / popular / download / trending`。
+
+- 实测 `o=mp`（人气）、`o=md`（最多下载）、`o=tr`（趋势）各自返回不同首条，不是摆设
+- `t`（时间窗 a/t/w/m/y）服务端完全不生效：同样的排序下首条与总数一致，所以不暴露
+- 依旧没有全站榜：空关键词返回 0 条
+
 ## 0.59.0
 
 `jm search --by view|fav|latest`：按热度/收藏排序（上游未公开参数，实测有效）。
