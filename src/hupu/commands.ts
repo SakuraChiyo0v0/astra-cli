@@ -8,7 +8,8 @@ import type { Command } from '../core/command.ts'
 import { invalidInput } from '../core/errors.ts'
 import { okResult } from '../core/output.ts'
 import { BOARDS, fetchPost, listBoard, tidOf, type HupuPost } from './api.ts'
-import { countPosts, openHupuDb, readPost, savePost, searchPosts, type HupuPostRow } from './db.ts'
+import { countPosts, openHupuDb, readPost, readScoreBoard, savePost, saveScoreBoard, searchPosts, type HupuPostRow } from './db.ts'
+import { SPORTS, fetchScoreBoard, listMatches, listSchedule, locateMatch, parentMatchOf, type HupuScoreBoard } from './match.ts'
 
 function num(value: unknown, fallback: number, min: number, max: number, name: string): number {
   if (value === undefined) return fallback
@@ -247,4 +248,138 @@ const doctor: Command = {
   },
 }
 
-export const hupuCommands: Command[] = [list, post, find, boards, doctor]
+const match: Command = {
+  name: 'hupu match',
+  summary: '虎扑赛程：比分、评分人数、当场最高分',
+  usage: 'astra hupu match [--sport nba] [--limit 10] [--date 2026-11-17]',
+  notes: [
+    '走 match-api.hupu.com，匿名，不需要 Cookie；路径里带客户端版本号，虎扑发版后可能失效。',
+    '接口一次返回整个赛季，这里取最近结束/即将开始的若干场，最新的在前。',
+    '足球只有英超（epl）和世界杯（worldcup）；其它联赛 id 上游返回空数组，不报错。',
+  ],
+  options: {
+    sport: { type: 'string', description: '赛事 id，默认 nba；`--sport list` 看全部', valueName: 'id' },
+    limit: { type: 'string', description: '取多少场，默认 10，上限 200', valueName: 'n' },
+    date: { type: 'string', description: '只保留这一天（YYYY-MM-DD）', valueName: 'd' },
+  },
+  maxArgs: 0,
+  async run({ values }) {
+    const sport = String(values.sport ?? 'nba').trim() || 'nba'
+    if (sport === 'list') {
+      return {
+        ...okResult({ count: SPORTS.length, sports: SPORTS }),
+        table: { headers: ['id', '赛事'], rows: SPORTS.map((s) => [s.id, s.label]) },
+      }
+    }
+    const limit = num(values.limit, 10, 1, 200, '--limit')
+    const date = values.date ? String(values.date).trim() : ''
+    const { anchorId, matches } = await listSchedule(sport)
+    let window: typeof matches
+    if (date) {
+      window = matches.filter((m) => (m.startAt ?? '').startsWith(date))
+    } else {
+      const idx = anchorId ? matches.findIndex((m) => m.matchId === anchorId) : -1
+      if (idx >= 0) {
+        window = matches.slice(Math.max(0, idx - limit + 1), idx + 1)
+      } else {
+        const lastDone = matches.map((m) => m.status).lastIndexOf('COMPLETED')
+        window = lastDone >= 0 ? matches.slice(Math.max(0, lastDone - limit + 1), lastDone + 1) : matches
+      }
+    }
+    const picked = window.slice(-limit).reverse()
+    return {
+      ...okResult({
+        sport,
+        total: matches.length,
+        returned: picked.length,
+        truncated: matches.length > picked.length,
+        matches: picked,
+      }),
+      table: {
+        headers: ['时间', '比赛', '评分人数', '最高分', '状态'],
+        rows: picked.map((m) => [
+          m.startAt ?? '-',
+          m.teams.join(' vs ') || m.intro,
+          m.scoreCountText ?? '-',
+          m.topName ? `${m.topName} ${m.topScore ?? '-'}` : '-',
+          m.status,
+        ]),
+      },
+    }
+  },
+}
+
+const score: Command = {
+  name: 'hupu score',
+  summary: '一场虎扑比赛的全部球员评分（均分/评分人数/分布/热评）',
+  usage: 'astra hupu score <matchId|比赛编号> [--sport nba] [--refresh] [--top 20]',
+  notes: [
+    '匿名接口，赛后数据固定，所以默认查库（crawl.hupu_score）；--refresh 重抓。',
+    'matchId 从 `astra hupu match` 拿（19 位）；也接受评分树的比赛编号（如 8970）。',
+    '热评取每条评分下的第一条高亮评论（hotText / hotLight）。',
+  ],
+  options: {
+    sport: { type: 'string', description: '定位 matchId 时用哪个赛事，默认 nba', valueName: 'id' },
+    refresh: { type: 'boolean', description: '忽略缓存，重新抓一次', valueName: '' },
+    top: { type: 'string', description: '返回多少个条目，默认 20，上限 100', valueName: 'n' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values }) {
+    const raw = (positionals[0] ?? '').trim()
+    const sport = String(values.sport ?? 'nba').trim() || 'nba'
+    const top = num(values.top, 20, 1, 100, '--top')
+    if (!/^\d{3,}$/.test(raw)) {
+      throw invalidInput('给 matchId 或比赛编号', '例：astra hupu score 1537808033030078464')
+    }
+
+    let matchNo = raw
+    if (raw.length >= 10) {
+      const hit = await locateMatch(raw, sport)
+      if (!hit.topItemNo) {
+        throw invalidInput('这场比赛还没有评分条目', '评分只对已开赛的比赛有数据，换一场再试')
+      }
+      matchNo = await parentMatchOf(hit.topItemNo)
+    }
+
+    const db = await openHupuDb()
+    let board: HupuScoreBoard | null = null
+    let source = 'live'
+    if (!values.refresh) {
+      const cached = await readScoreBoard(db, matchNo)
+      if (cached) {
+        board = cached.board
+        source = 'cache'
+      }
+    }
+    if (!board) {
+      board = await fetchScoreBoard(matchNo)
+      await saveScoreBoard(db, matchNo, board)
+    }
+    const items = board.items.slice(0, top)
+    return {
+      ...okResult({
+        source,
+        matchNo,
+        title: board.title,
+        peopleTotal: board.peopleTotal,
+        total: board.items.length,
+        returned: items.length,
+        truncated: board.items.length > items.length,
+        items,
+      }),
+      table: {
+        headers: ['球员', '均分', '评分人数', '评论', '热评亮'],
+        rows: items.map((i) => [
+          i.name,
+          i.avg === null ? '-' : i.avg.toFixed(1),
+          i.people === null ? '-' : String(i.people),
+          i.comments === null ? '-' : String(i.comments),
+          i.hotLight === null ? '-' : String(i.hotLight),
+        ]),
+      },
+    }
+  },
+}
+
+export const hupuCommands: Command[] = [list, post, find, match, score, boards, doctor]

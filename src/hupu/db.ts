@@ -1,14 +1,14 @@
 /**
- * 虎扑帖子落库（`crawl.hupu_post`）。
+ * 虎扑帖子与评分落库。
  *
- * 为什么落库：详情页抓一次就够了，正文不会天天变；存下来之后 `post` 默认命中缓存、
- * `find` 能直接搜历史看过的帖子，不用再打网络。
+ *  - `crawl.hupu_post`：正文抓一次就够，`post` 默认命中缓存
+ *  - `crawl.hupu_score`：一场比赛的评分赛后不会变，存整份解析结果
  *
- * tid 用 text 而不是 bigint：虎扑 id 目前 9 位、在 JS 安全整数内，但用 text 省掉
- * 来回 Number() 转换，也避免以后位数变长时精度问题。
+ * tid / match_no 用 text：虎扑 id 在 JS 安全整数内，但用 text 省掉来回 Number() 转换。
  */
 import type { Conn } from '../core/db/adapter.ts'
 import { openDatabase, type Database } from '../core/db/index.ts'
+import type { HupuScoreBoard } from './match.ts'
 
 export interface HupuPostRow {
   tid: string
@@ -50,6 +50,12 @@ export async function ensureSchema(conn: Conn, dialectName = 'postgres'): Promis
     fetched_at text
   )`)
   await conn.exec(`create index if not exists hupu_post_fetched_idx on ${t('hupu_post')} (fetched_at)`)
+  await conn.exec(`create table if not exists ${t('hupu_score')} (
+    match_no text primary key,
+    title text,
+    payload text,
+    fetched_at text
+  )`)
 }
 
 function toRow(row: Record<string, unknown>): HupuPostRow {
@@ -122,4 +128,35 @@ export async function countPosts(db: Database): Promise<number> {
   const t = (name: string) => tableName(db.dialect.name, name)
   const rows = await db.conn.query<Record<string, unknown>>(`select count(*) as n from ${t('hupu_post')}`)
   return Number(rows[0]?.n ?? 0)
+}
+
+/** 已存的评分：赛后数据不会变，命中即返回（`--refresh` 才重抓）。 */
+export async function readScoreBoard(
+  db: Database,
+  matchNo: string,
+): Promise<{ board: HupuScoreBoard; fetchedAt: string } | null> {
+  const t = (name: string) => tableName(db.dialect.name, name)
+  const p = db.dialect.name === 'postgres' ? '$1' : '?'
+  const rows = await db.conn.query<Record<string, unknown>>(`select * from ${t('hupu_score')} where match_no = ${p}`, [matchNo])
+  const row = rows[0]
+  if (!row) return null
+  try {
+    const board = JSON.parse(String(row.payload ?? '')) as HupuScoreBoard
+    return { board, fetchedAt: String(row.fetched_at ?? '') }
+  } catch {
+    return null
+  }
+}
+
+export async function saveScoreBoard(db: Database, matchNo: string, board: HupuScoreBoard): Promise<void> {
+  const t = (name: string) => tableName(db.dialect.name, name)
+  const pg = db.dialect.name === 'postgres'
+  const p = (i: number) => (pg ? `$${i}` : '?')
+  await db.conn.query(
+    `insert into ${t('hupu_score')} (match_no, title, payload, fetched_at)
+     values (${p(1)},${p(2)},${p(3)},${p(4)})
+     on conflict (match_no) do update set
+       title = excluded.title, payload = excluded.payload, fetched_at = excluded.fetched_at`,
+    [matchNo, board.title, JSON.stringify(board), new Date().toISOString()],
+  )
 }

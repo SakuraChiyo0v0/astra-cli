@@ -3022,6 +3022,36 @@
       ]
     },
     {
+      "command": "hupu match",
+      "summary": "虎扑赛程：比分、评分人数、当场最高分",
+      "usage": "astra hupu match [--sport nba] [--limit 10] [--date 2026-11-17]",
+      "options": {
+        "--sport <id>": "赛事 id，默认 nba；`--sport list` 看全部",
+        "--limit <n>": "取多少场，默认 10，上限 200",
+        "--date <d>": "只保留这一天（YYYY-MM-DD）"
+      },
+      "notes": [
+        "走 match-api.hupu.com，匿名，不需要 Cookie；路径里带客户端版本号，虎扑发版后可能失效。",
+        "接口一次返回整个赛季，这里取最近结束/即将开始的若干场，最新的在前。",
+        "足球只有英超（epl）和世界杯（worldcup）；其它联赛 id 上游返回空数组，不报错。"
+      ]
+    },
+    {
+      "command": "hupu score",
+      "summary": "一场虎扑比赛的全部球员评分（均分/评分人数/分布/热评）",
+      "usage": "astra hupu score <matchId|比赛编号> [--sport nba] [--refresh] [--top 20]",
+      "options": {
+        "--sport <id>": "定位 matchId 时用哪个赛事，默认 nba",
+        "--refresh": "忽略缓存，重新抓一次",
+        "--top <n>": "返回多少个条目，默认 20，上限 100"
+      },
+      "notes": [
+        "匿名接口，赛后数据固定，所以默认查库（crawl.hupu_score）；--refresh 重抓。",
+        "matchId 从 `astra hupu match` 拿（19 位）；也接受评分树的比赛编号（如 8970）。",
+        "热评取每条评分下的第一条高亮评论（hotText / hotLight）。"
+      ]
+    },
+    {
       "command": "hupu boards",
       "summary": "可用的虎扑板块路径",
       "usage": "astra hupu boards",

@@ -1,3 +1,14 @@
+## 0.61.0
+
+`astra hupu match` / `astra hupu score`：虎扑赛程与球员评分（独立域名，匿名可用，不需要签名）。
+
+- 接口来自 `bidabrain/hupuX` 的 `doc/api/match-score.md`（2026-09 实测），2026-11-17 复验通过：
+  `match-api.hupu.com/…/getScheduleListByTagForH5`（赛程，419KB/27 天）+ `games.mobileapi.hupu.com/1/8.0.99/…/score_tree`（评分树）
+- `hupu match [--sport nba] [--limit 10] [--date YYYY-MM-DD]`：比分、评分人数、当场最高分；`--sport list` 列出实测有数据的 12 个赛事
+- `hupu score <matchId|比赛编号> [--refresh] [--top 20]`：一场的全部评分条目（均分/评分人数/评论数/分数分布/高亮热评），赛后数据固定，默认查库 `crawl.hupu_score`
+- 解析层 `parseSchedule` / `parseScoreBoard` 是纯函数，`tests/hupu-score.test.ts` 用构造响应锁字段（含缺失字段保持 null）
+- 已知约束：足球只有英超与世界杯；接口路径带客户端版本号，虎扑发版后需更新（`hupu doctor` 会探）
+
 ## 0.60.0
 
 新增 `astra hupu` 域：虎扑社区只读（列表 / 正文 / 本地库搜索），匿名网页即可，不需要登录和代理。
