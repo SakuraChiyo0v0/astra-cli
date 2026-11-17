@@ -218,9 +218,18 @@ const doctor: Command = {
         table: { headers: ['项', '值'], rows: [['列表', '0 条——页面结构可能变了'], ['耗时', `${listMs}ms`]] },
       }
     }
-    const first = items[0]!
     const t2 = Date.now()
-    const detail = await fetchPost(first.tid)
+    // 热帖榜里常有纯图帖，挑一条有正文的来验解析（最多试 3 条）
+    let detail = await fetchPost(items[0]!.tid)
+    if (detail.content.length === 0) {
+      for (const item of items.slice(1, 3)) {
+        const next = await fetchPost(item.tid)
+        if (next.content.length > 0) {
+          detail = next
+          break
+        }
+      }
+    }
     const detailMs = Date.now() - t2
     const bodyOk = detail.content.length > 0 || detail.images > 0
     return {
@@ -331,13 +340,20 @@ const score: Command = {
     const raw = (positionals[0] ?? '').trim()
     const sport = String(values.sport ?? 'nba').trim() || 'nba'
     const top = num(values.top, 20, 1, 100, '--top')
-    if (!/^\d{3,}$/.test(raw)) {
-      throw invalidInput('给 matchId 或节点编号', '例：astra hupu score 1537808033030078464')
+    // 支持 `astra hupu score lol_bo:7932` 这种直接给「类型:编号」的写法
+    const colon = raw.indexOf(':')
+    const explicitType = colon > 0 ? raw.slice(0, colon).trim() : ''
+    const explicitNo = colon > 0 ? raw.slice(colon + 1).trim() : ''
+    if (colon > 0 ? !/^\d+$/.test(explicitNo) : !/^\d{3,}$/.test(raw)) {
+      throw invalidInput(
+        '给 matchId、节点编号或 类型:编号',
+        '例：astra hupu score 1537808033030078464 / astra hupu score lol_bo:7932',
+      )
     }
 
-    let nodeType = String(values.type ?? 'basketball_match').trim() || 'basketball_match'
-    let nodeNo = raw
-    if (raw.length >= 10) {
+    let nodeType = (explicitType || String(values.type ?? 'basketball_match')).trim() || 'basketball_match'
+    let nodeNo = explicitNo || raw
+    if (!explicitNo && raw.length >= 10) {
       const hit = await locateMatch(raw, sport)
       if (!hit.topItemNo) {
         throw invalidInput('这场比赛还没有评分条目', '评分只对已开赛的比赛有数据，换一场再试')

@@ -57,7 +57,7 @@ export function stripTags(s: string): string {
   return decodeEntities(s.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')).trim()
 }
 
-async function getHtml(url: string): Promise<string> {
+async function getHtml(url: string): Promise<{ html: string; finalUrl: string }> {
   let res: Response
   try {
     res = await fetch(url, {
@@ -85,7 +85,7 @@ async function getHtml(url: string): Promise<string> {
       hint: '等几分钟再试，并把抓取频率降下来；不要自动重试',
     })
   }
-  return html
+  return { html, finalUrl: res.url || url }
 }
 
 /**
@@ -195,7 +195,18 @@ export interface ListOptions {
 }
 
 export async function listBoard({ board, limit }: ListOptions): Promise<HupuListItem[]> {
-  const html = await getHtml(`${BASE}/${encodeURIComponent(board)}`)
+  const url = `${BASE}/${encodeURIComponent(board)}`
+  const { html, finalUrl } = await getHtml(url)
+  // 不存在的板块会被 302 到首页/其它路径；只看 status 会把它当成「有帖子」
+  const wantPath = `/${board}`.replace(/\/$/, '').toLowerCase()
+  const gotPath = new URL(finalUrl).pathname.replace(/\/$/, '').toLowerCase()
+  // 无效板块不一定 302：实测会 200 + 通用首页内容，标题固定是「虎扑社区-虎扑网」
+  const pageTitle = (/<title>([\s\S]*?)<\/title>/.exec(html)?.[1] ?? '').trim()
+  if (gotPath !== wantPath || pageTitle === '虎扑社区-虎扑网') {
+    throw new AstraError('HUPU_BOARD_NOT_FOUND', `板块 ${board} 不存在（返回的是首页内容）`, {
+      hint: '用 `astra hupu boards` 看已验证的路径；其它板块路径是 /<board>',
+    })
+  }
   return parseList(html).slice(0, limit)
 }
 
@@ -203,7 +214,13 @@ export async function fetchPost(tid: string): Promise<HupuPost> {
   if (!/^\d{4,}$/.test(tid)) {
     throw new AstraError('INVALID_INPUT', '帖子 id 必须是纯数字', { hint: '可以用帖子链接里的那串数字' })
   }
-  const html = await getHtml(`${BASE}/${tid}.html`)
+  const { html } = await getHtml(`${BASE}/${tid}.html`)
+  // 删帖/隐藏帖在网页上是 200 + 提示页（title 为空、没有 main-thread）
+  if (!/main-thread/.test(html) && /404|不存在|已删除/.test(html.slice(0, 30_000))) {
+    throw new AstraError('HUPU_POST_NOT_FOUND', `帖子 ${tid} 不存在或已删除`, {
+      hint: '确认 tid；被删/隐藏的帖子网页返回 200 但正文是提示页',
+    })
+  }
   return parsePost(html, tid)
 }
 
