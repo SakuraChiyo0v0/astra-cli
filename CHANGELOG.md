@@ -1,3 +1,15 @@
+## 0.61.1
+
+`astra hupu score` 支持电竞评分：世界赛/联赛按**单局**给分。
+
+- 电竞评分树的父节点是 `lol_bo`（单局，self 名叫「第 4 局」）而不是 `basketball_match`；
+  父类型改为从赛程的 `scoreOutBizType` 推导，不再写死篮球
+- 直接给节点编号时用 `--type` 指定父类型（默认 `basketball_match`）
+- 缓存键改成 `type:no`，篮球和电竞不会撞号
+- 实测：`--sport lol` 里有 46 场全球总决赛（入围赛 6 / 瑞士轮 33 / 淘汰赛 7）；
+  抽查某场淘汰赛 375.1万人评分，单局 32 个条目（Bin 10.0 / 24.1万人、Knight 10.0、Viper 9.8）
+- `worlds` / `msi` / `s` 这些 businessId 返回空——**世界赛挂在 `lol` 下**
+
 ## 0.61.0
 
 `astra hupu match` / `astra hupu score`：虎扑赛程与球员评分（独立域名，匿名可用，不需要签名）。

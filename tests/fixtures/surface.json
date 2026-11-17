@@ -3038,16 +3038,18 @@
     },
     {
       "command": "hupu score",
-      "summary": "一场虎扑比赛的全部球员评分（均分/评分人数/分布/热评）",
-      "usage": "astra hupu score <matchId|比赛编号> [--sport nba] [--refresh] [--top 20]",
+      "summary": "一场比赛的全部评分（篮球按整场、电竞按单局）",
+      "usage": "astra hupu score <matchId|节点编号> [--sport nba] [--type basketball_match] [--refresh] [--top 20]",
       "options": {
         "--sport <id>": "定位 matchId 时用哪个赛事，默认 nba",
+        "--type <t>": "直接给节点编号时的父类型，默认 basketball_match",
         "--refresh": "忽略缓存，重新抓一次",
         "--top <n>": "返回多少个条目，默认 20，上限 100"
       },
       "notes": [
         "匿名接口，赛后数据固定，所以默认查库（crawl.hupu_score）；--refresh 重抓。",
-        "matchId 从 `astra hupu match` 拿（19 位）；也接受评分树的比赛编号（如 8970）。",
+        "matchId 从 `astra hupu match` 拿（19 位）时会自动判断父节点类型：篮球是整场，电竞是单局（lol_bo）。",
+        "直接给节点编号时用 --type 指定类型（basketball_match / lol_bo），否则按篮球整场处理。",
         "热评取每条评分下的第一条高亮评论（hotText / hotLight）。"
       ]
     },

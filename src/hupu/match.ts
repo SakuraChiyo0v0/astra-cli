@@ -43,6 +43,8 @@ export interface HupuMatch {
   topName: string | null
   topScore: number | null
   topItemNo: string | null
+  /** 评分条目类型：篮球 `basketball_item`、电竞 `lol_item`。父节点类型由它推导。 */
+  topItemType: string | null
 }
 
 export interface HupuScoreItem {
@@ -136,6 +138,7 @@ export function parseSchedule(payload: Record<string, unknown>): HupuMatch[] {
         topName: strOrNull(item.name),
         topScore: numOrNull(item.scoreNum),
         topItemNo: strOrNull(item.scoreOutBizNo),
+        topItemType: strOrNull(item.scoreOutBizType),
       })
     }
   }
@@ -175,15 +178,19 @@ export function parseScoreBoard(payload: Record<string, unknown>, fallbackTitle 
   return { title, peopleTotal, items }
 }
 
-/** 某场比赛的评分条目（含比分标题）。 */
-export async function fetchScoreBoard(matchNo: string, itemType = 'basketball'): Promise<HupuScoreBoard> {
-  const url = `${SCORE_ORIGIN}/getCurAndSubNodeByBizKey?outBizType=${itemType}_match&outBizNo=${encodeURIComponent(matchNo)}&relation=CHILD&page=1&pageSize=100`
+/** 评分节点（比赛/单局）下全部被评分的条目。`nodeType` 由赛程的 `scoreOutBizType` 推导：篮球 `basketball_match`、电竞 `lol_bo`。 */
+export async function fetchScoreBoard(nodeType: string, nodeNo: string): Promise<HupuScoreBoard> {
+  const url = `${SCORE_ORIGIN}/getCurAndSubNodeByBizKey?outBizType=${encodeURIComponent(nodeType)}&outBizNo=${encodeURIComponent(nodeNo)}&relation=CHILD&page=1&pageSize=100`
   return parseScoreBoard(await getJson(url, 'https://m.hupu.com/'))
 }
 
-/** 从球员条的 outBizNo 反查所属比赛（评分树里比赛节点才有全部条目）。 */
-export async function parentMatchOf(itemNo: string, itemType = 'basketball'): Promise<string> {
-  const url = `${SCORE_ORIGIN}/getSelfByBizKey?outBizType=${itemType}_item&outBizNo=${encodeURIComponent(itemNo)}`
+/**
+ * 从条目（球员/选手）反查它的父节点类型和编号。
+ * 篮球的父是整场（`basketball_match`），电竞的父是单局（`lol_bo`）——所以必须把类型一起带出去，
+ * 不能只返回编号。
+ */
+export async function parentOf(itemNo: string, itemType: string): Promise<{ type: string; no: string }> {
+  const url = `${SCORE_ORIGIN}/getSelfByBizKey?outBizType=${encodeURIComponent(itemType)}&outBizNo=${encodeURIComponent(itemNo)}`
   const payload = await getJson(url, 'https://m.hupu.com/')
   const data = (payload.data ?? {}) as Record<string, unknown>
   const links = (data.linkNodes ?? []) as Array<Record<string, unknown>>
@@ -191,9 +198,10 @@ export async function parentMatchOf(itemNo: string, itemType = 'basketball'): Pr
     if (strOrNull(link.target) !== 'PARENT') continue
     const key = (link.outBizKey ?? {}) as Record<string, unknown>
     const no = strOrNull(key.outBizNo)
-    if (no) return no
+    const type = strOrNull(key.outBizType)
+    if (no && type) return { type, no }
   }
-  throw new AstraError('HUPU_SCORE_NO_PARENT', '这条评分没有所属比赛（可能是单条评分）', {
+  throw new AstraError('HUPU_SCORE_NO_PARENT', '这条评分没有父节点（可能是单条评分）', {
     hint: '换一场比赛再试',
   })
 }

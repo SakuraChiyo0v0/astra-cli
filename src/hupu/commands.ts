@@ -9,7 +9,7 @@ import { invalidInput } from '../core/errors.ts'
 import { okResult } from '../core/output.ts'
 import { BOARDS, fetchPost, listBoard, tidOf, type HupuPost } from './api.ts'
 import { countPosts, openHupuDb, readPost, readScoreBoard, savePost, saveScoreBoard, searchPosts, type HupuPostRow } from './db.ts'
-import { SPORTS, fetchScoreBoard, listMatches, listSchedule, locateMatch, parentMatchOf, type HupuScoreBoard } from './match.ts'
+import { SPORTS, fetchScoreBoard, listMatches, listSchedule, locateMatch, parentOf, type HupuScoreBoard } from './match.ts'
 
 function num(value: unknown, fallback: number, min: number, max: number, name: string): number {
   if (value === undefined) return fallback
@@ -311,15 +311,17 @@ const match: Command = {
 
 const score: Command = {
   name: 'hupu score',
-  summary: '一场虎扑比赛的全部球员评分（均分/评分人数/分布/热评）',
-  usage: 'astra hupu score <matchId|比赛编号> [--sport nba] [--refresh] [--top 20]',
+  summary: '一场比赛的全部评分（篮球按整场、电竞按单局）',
+  usage: 'astra hupu score <matchId|节点编号> [--sport nba] [--type basketball_match] [--refresh] [--top 20]',
   notes: [
     '匿名接口，赛后数据固定，所以默认查库（crawl.hupu_score）；--refresh 重抓。',
-    'matchId 从 `astra hupu match` 拿（19 位）；也接受评分树的比赛编号（如 8970）。',
+    'matchId 从 `astra hupu match` 拿（19 位）时会自动判断父节点类型：篮球是整场，电竞是单局（lol_bo）。',
+    '直接给节点编号时用 --type 指定类型（basketball_match / lol_bo），否则按篮球整场处理。',
     '热评取每条评分下的第一条高亮评论（hotText / hotLight）。',
   ],
   options: {
     sport: { type: 'string', description: '定位 matchId 时用哪个赛事，默认 nba', valueName: 'id' },
+    type: { type: 'string', description: '直接给节点编号时的父类型，默认 basketball_match', valueName: 't' },
     refresh: { type: 'boolean', description: '忽略缓存，重新抓一次', valueName: '' },
     top: { type: 'string', description: '返回多少个条目，默认 20，上限 100', valueName: 'n' },
   },
@@ -330,37 +332,42 @@ const score: Command = {
     const sport = String(values.sport ?? 'nba').trim() || 'nba'
     const top = num(values.top, 20, 1, 100, '--top')
     if (!/^\d{3,}$/.test(raw)) {
-      throw invalidInput('给 matchId 或比赛编号', '例：astra hupu score 1537808033030078464')
+      throw invalidInput('给 matchId 或节点编号', '例：astra hupu score 1537808033030078464')
     }
 
-    let matchNo = raw
+    let nodeType = String(values.type ?? 'basketball_match').trim() || 'basketball_match'
+    let nodeNo = raw
     if (raw.length >= 10) {
       const hit = await locateMatch(raw, sport)
       if (!hit.topItemNo) {
         throw invalidInput('这场比赛还没有评分条目', '评分只对已开赛的比赛有数据，换一场再试')
       }
-      matchNo = await parentMatchOf(hit.topItemNo)
+      const parent = await parentOf(hit.topItemNo, hit.topItemType ?? 'basketball_item')
+      nodeType = parent.type
+      nodeNo = parent.no
     }
+    const cacheKey = `${nodeType}:${nodeNo}`
 
     const db = await openHupuDb()
     let board: HupuScoreBoard | null = null
     let source = 'live'
     if (!values.refresh) {
-      const cached = await readScoreBoard(db, matchNo)
+      const cached = await readScoreBoard(db, cacheKey)
       if (cached) {
         board = cached.board
         source = 'cache'
       }
     }
     if (!board) {
-      board = await fetchScoreBoard(matchNo)
-      await saveScoreBoard(db, matchNo, board)
+      board = await fetchScoreBoard(nodeType, nodeNo)
+      await saveScoreBoard(db, cacheKey, board)
     }
     const items = board.items.slice(0, top)
     return {
       ...okResult({
         source,
-        matchNo,
+        nodeType,
+        nodeNo,
         title: board.title,
         peopleTotal: board.peopleTotal,
         total: board.items.length,
@@ -369,7 +376,7 @@ const score: Command = {
         items,
       }),
       table: {
-        headers: ['球员', '均分', '评分人数', '评论', '热评亮'],
+        headers: ['球员/选手', '均分', '评分人数', '评论', '热评亮'],
         rows: items.map((i) => [
           i.name,
           i.avg === null ? '-' : i.avg.toFixed(1),

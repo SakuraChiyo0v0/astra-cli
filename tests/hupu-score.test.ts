@@ -51,6 +51,7 @@ test('parseSchedule：摊平赛程，比分/胜者/最高分都对', () => {
   assert.equal(m.topName, '谢伊-吉尔杰斯-亚历山大')
   assert.equal(m.topScore, 9.7)
   assert.equal(m.topItemNo, '238397')
+  assert.equal(m.topItemType, 'basketball_item')
   assert.ok(m.startAt && m.startAt.length === 16, `startAt 应是 YYYY-MM-DD HH:mm，实际 ${m.startAt}`)
 })
 
