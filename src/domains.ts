@@ -22,6 +22,7 @@ export const DOMAINS: DomainEntry[] = [
   { name: 'douyin', load: async () => (await import('./douyin/manifest.ts')).domain },
   { name: 'lol', load: async () => (await import('./lol/manifest.ts')).domain },
   { name: 'heybox', load: async () => (await import('./heybox/manifest.ts')).domain },
+  { name: 'hupu', load: async () => (await import('./hupu/manifest.ts')).domain },
   { name: 'llm', load: async () => (await import('./llm/manifest.ts')).domain },
   { name: 'device', load: async () => (await import('./device/manifest.ts')).domain },
   { name: 'x', load: async () => (await import('./x/manifest.ts')).domain },

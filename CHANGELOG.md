@@ -1,3 +1,15 @@
+## 0.60.0
+
+新增 `astra hupu` 域：虎扑社区只读（列表 / 正文 / 本地库搜索），匿名网页即可，不需要登录和代理。
+
+- `hupu list [--board topic-daily] [--n 20]`：板块帖子列表；实测 `topic-daily`、`bxj`（步行街）、`nba` 都能打开（200 / 300KB 上下）
+- `hupu post <tid|链接> [--refresh] [--chars 1200]`：正文；**默认先查库**，命中不发请求，`--refresh` 才重抓；纯图帖返回 `images` 计数
+- `hupu find <关键词>`：只搜本地库（`crawl.hupu_post`），不打网络；返回 `total`（库内总量）与 `returned`
+- `hupu boards` / `hupu doctor`：板块表与自检（列表 + 第一篇详情，页面改版会先在这里红）
+- 解析层抽成纯函数 `parseList` / `parsePost`，`tests/hupu-parse.test.ts` 用固定 HTML 锁行为：列表按 tid 去重、标题序号洗掉、正文两副本去重、工具栏（推荐/评论/分享）与回帖不进正文
+- 不做回帖（页面异步加载）、搜索（App 签名）、发帖点亮（登录态）。遇到人机验证直接 `HUPU_BLOCKED` 报错，不自动重试
+- 频率：列表不缓存（内容一直在变）；批量抓取请配间隔与有界并发 —— 5 分钟那个说法来自小黑盒的实测约束，虎扑没测到，别照搬
+
 ## 0.59.1
 
 `jm search --by` 补齐上游实际认的排序码：`latest / view / fav / popular / download / trending`。

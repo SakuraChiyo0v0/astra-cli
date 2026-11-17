@@ -2983,6 +2983,63 @@
       ]
     },
     {
+      "command": "hupu list",
+      "summary": "虎扑板块帖子列表（热帖榜 / 步行街 / NBA）",
+      "usage": "astra hupu list [--board topic-daily] [--n 20]",
+      "options": {
+        "--board <path>": "板块路径，默认 topic-daily",
+        "--n <n>": "取多少条，默认 20，上限 100"
+      },
+      "notes": [
+        "匿名网页，不需要登录。默认板块 topic-daily（每日热帖榜）。",
+        "其它板块路径直接传：bxj 步行街、nba、湿乎乎等；`astra hupu boards` 看已验证的那几个。",
+        "列表页内容一直在变，所以不做缓存；批量抓取请自己控制间隔。"
+      ]
+    },
+    {
+      "command": "hupu post",
+      "summary": "虎扑帖子正文（默认先查库）",
+      "usage": "astra hupu post <tid|链接> [--refresh] [--chars 1200]",
+      "options": {
+        "--refresh": "忽略缓存，重新抓一次",
+        "--chars <n>": "正文最多返回多少字，默认 1200，上限 20000"
+      },
+      "notes": [
+        "默认先查本地库，命中就不发请求；要最新内容用 --refresh。",
+        "纯图帖正文为空，会带 images 计数。作者字段取不到时是 null，不做猜测。",
+        "不做回帖：那部分在页面里是异步加载的。"
+      ]
+    },
+    {
+      "command": "hupu find",
+      "summary": "在本地虎扑库里搜帖子（标题+正文）",
+      "usage": "astra hupu find <关键词> [--limit 20]",
+      "options": {
+        "--limit <n>": "返回多少条，默认 20，上限 100"
+      },
+      "notes": [
+        "只搜抓过的帖子，不打网络。报数用 total（库内总量），不是 returned。"
+      ]
+    },
+    {
+      "command": "hupu boards",
+      "summary": "可用的虎扑板块路径",
+      "usage": "astra hupu boards",
+      "options": {},
+      "notes": [
+        "verified=false 表示路径没实测过；能打开就说明可用，打不开换个路径再试。"
+      ]
+    },
+    {
+      "command": "hupu doctor",
+      "summary": "虎扑域自检：能否打开列表、能否解析正文",
+      "usage": "astra hupu doctor",
+      "options": {},
+      "notes": [
+        "会真实打两次请求（列表 + 第一篇详情）。页面改版时会在这里先红。"
+      ]
+    },
+    {
       "command": "llm provider add",
       "summary": "添加/更新一个 OpenAI 兼容端点（base-url + key + 模型名）",
       "usage": "astra llm provider add <名字> --base-url <url> --key <key> [--model <文本模型>] [--image-model <生图模型>] [--edit-model <改图模型>] [--default] [--force]",
