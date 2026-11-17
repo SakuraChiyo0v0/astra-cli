@@ -47,7 +47,8 @@ const POST_HTML = `
       <p>找了澳洲女朋友以后的一些感受，接触过国内女生和澳洲本地女生。</p>
     </div>
   </div>
-  <div class="post-toolbar">推荐 (341)评论 (109)收藏分享QQ微信扫一扫分享举报只看楼主含AI生成内容</div>
+  <span class="post-user_post-user-comp-info-bottom-from__x">由<span>皇马妹妹<!-- --> </span>发表在<a href="/bxj">步行街主干道</a></span>
+  <div class="post-toolbar">推荐<!-- --> (341)评论<!-- --> (109)收藏分享QQ微信扫一扫分享举报只看楼主含AI生成内容</div>
   <div>这些回帖亮了</div>
   <div class="thread-comment">这种是要遭报应的</div>
 </body></html>`
@@ -58,6 +59,7 @@ test('parsePost：标题/板块/正文去重，工具栏与回帖不进正文', 
   assert.equal(post.board, '步行街主干道')
   assert.equal(post.views, 341)
   assert.equal(post.replies, 109)
+  assert.equal(post.author, '皇马妹妹')
   assert.ok(post.content.includes('找了澳洲女朋友以后的一些感受'))
   assert.ok(post.content.includes('她们普遍比较独立'))
   // 只出现一次（seo-dom 副本被去重）

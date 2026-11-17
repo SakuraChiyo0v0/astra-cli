@@ -38,7 +38,7 @@ export const BOARDS: Array<{ board: string; label: string; verified: boolean }> 
   { board: 'topic-daily', label: '热帖榜（每日）', verified: true },
   { board: 'bxj', label: '步行街', verified: true },
   { board: 'nba', label: 'NBA', verified: true },
-  { board: 'cba', label: 'CBA', verified: false },
+  { board: 'cba', label: 'CBA', verified: true },
 ]
 
 function decodeEntities(s: string): string {
@@ -126,23 +126,25 @@ export function boardOf(rawTitle: string): string | null {
  * 页面里正文有主楼和 `seo-dom` 两个副本，洗的时候整段去重；工具栏（推荐/评论/分享）按特征切掉。
  */
 export function parsePost(html: string, tid: string): HupuPost {
-  const titleRaw = /<title>([\s\S]*?)<\/title>/.exec(html)?.[1] ?? ''
+  // 虎扑在「推荐<!-- --> (67)」这类位置插了 HTML 注释，先去掉再匹配，否则数字取不到
+  const clean = html.replace(/<!--[\s\S]*?-->/g, '')
+  const titleRaw = /<title>([\s\S]*?)<\/title>/.exec(clean)?.[1] ?? ''
   const rawTitle = stripTags(titleRaw)
   const segs = rawTitle
     .split(/[-_]/)
     .map((s) => s.trim())
     .filter(Boolean)
   const hasSiteSuffix = segs.length >= 2 && /虎扑/.test(segs[segs.length - 1] ?? '')
-  const board = hasSiteSuffix && segs.length >= 3 ? (segs[segs.length - 2] ?? null) : null
+  const boardFromPost = /发表在<a[^>]*>([^<]{2,20})<\/a>/.exec(clean)?.[1]?.trim() ?? null
+  const board = boardFromPost ?? (hasSiteSuffix && segs.length >= 3 ? (segs[segs.length - 2] ?? null) : null)
   const title = (hasSiteSuffix ? segs.slice(0, board ? -2 : -1) : segs).join('-') || rawTitle
 
-  const authorRaw =
-    /class="[^"]*author[^"]*"[^>]*>\s*(?:<a[^>]*>)?([^<]{2,30})/i.exec(html)?.[1]?.trim() ?? null
-  const author = authorRaw && !authorRaw.startsWith('作者') && !authorRaw.includes('：') ? authorRaw : null
-
-  const stats = /推荐\s*\((\d+)\)\s*评论\s*\((\d+)\)/.exec(html)
-  const views = stats ? Number(stats[1]) : null
-  const replies = stats ? Number(stats[2]) : null
+  // 页面原文：由<span class="…">皇马妹妹</span>发表在<a …>步行街主干道</a>
+  const author = /由<span[^>]*>([^<]{1,30}?)<\/span>发表在/.exec(clean)?.[1]?.trim() ?? null
+  const viewsM = /推荐\s*\((\d+)\)/.exec(clean)
+  const repliesM = /评论\s*\((\d+)\)/.exec(clean)
+  const views = viewsM ? Number(viewsM[1]) : null
+  const replies = repliesM ? Number(repliesM[1]) : null
 
   const attrAt = html.search(/class="[^"]*main-thread[^"]*"/)
   const mainStart = attrAt >= 0 ? html.indexOf('>', attrAt) + 1 : -1
