@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { parseSchedule, parseScoreBoard } from '../src/hupu/match.ts'
+import { parseSchedule, parseScoreBoard, summarizeRounds, type RoundScore } from '../src/hupu/match.ts'
 
 const SCHEDULE = {
   result: {
@@ -109,4 +109,27 @@ test('parseScoreBoard：没有 self 时用兜底标题', () => {
   assert.equal(board.title, '兜底')
   assert.equal(board.peopleTotal, null)
   assert.deepEqual(board.items, [])
+})
+
+test('summarizeRounds：按人数加权 + 简单平均，两个口径都给', () => {
+  const rounds: RoundScore[] = [
+    { round: '第4局', avg: 10.0, people: 241256, comments: 17114, hotText: null, hotLight: null },
+    { round: '第3局', avg: 10.0, people: 103800, comments: 5729, hotText: null, hotLight: null },
+    { round: '第2局', avg: 9.9, people: 79102, comments: 2547, hotText: null, hotLight: null },
+    { round: '第1局', avg: 8.2, people: 32071, comments: 3110, hotText: null, hotLight: null },
+  ]
+  const s = summarizeRounds(rounds)
+  assert.equal(s.rounds, 4)
+  assert.equal(s.totalPeople, 456229)
+  // 人数加权（实测 Bin 决赛四局）
+  assert.equal(s.weightedAvg, 9.86)
+  // 每局等权，能看出「第一局被喷惨了」
+  assert.equal(s.simpleAvg, 9.53)
+})
+
+test('summarizeRounds：空输入给 null，不编 0', () => {
+  const s = summarizeRounds([])
+  assert.equal(s.weightedAvg, null)
+  assert.equal(s.simpleAvg, null)
+  assert.equal(s.totalPeople, 0)
 })

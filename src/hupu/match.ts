@@ -233,3 +233,75 @@ export async function locateMatch(matchId: string, sport: string): Promise<HupuM
   }
   return hit
 }
+
+/** 评分树的子节点（整场 → 各局）。 */
+export async function listChildren(nodeType: string, nodeNo: string): Promise<Array<{ name: string; no: string; subCount: number }>> {
+  const url = `${SCORE_ORIGIN}/getCurAndSubNodeByBizKey?outBizType=${encodeURIComponent(nodeType)}&outBizNo=${encodeURIComponent(nodeNo)}&relation=CHILD&page=1&pageSize=50`
+  const payload = await getJson(url, 'https://m.hupu.com/')
+  const data = (payload.data ?? {}) as Record<string, unknown>
+  const rows = (((data.pageResult ?? {}) as Record<string, unknown>).data ?? []) as Array<Record<string, unknown>>
+  const out: Array<{ name: string; no: string; subCount: number }> = []
+  for (const row of rows) {
+    const node = (row.node ?? {}) as Record<string, unknown>
+    const no = strOrNull(node.bizId)
+    const name = strOrNull(node.name)
+    if (!no || !name) continue
+    out.push({ name, no, subCount: numOrNull(row.subNodeCount) ?? 0 })
+  }
+  return out
+}
+
+/** 把 matchId 一路往上翻到「整场」（电竞会经过 单局 → 整场 两层）。 */
+export async function matchNodeOf(matchId: string, sport: string): Promise<{ type: string; no: string; match: HupuMatch }> {
+  const match = await locateMatch(matchId, sport)
+  if (!match.topItemNo) {
+    throw new AstraError('HUPU_MATCH_NOT_RATED', '这场比赛还没有评分条目', {
+      hint: '评分只对已开赛的比赛有数据',
+    })
+  }
+  let parent = await parentOf(match.topItemNo, match.topItemType ?? 'basketball_item')
+  if (parent.type.endsWith('_bo')) {
+    parent = await parentOf(parent.no, parent.type)
+  }
+  return { type: parent.type, no: parent.no, match }
+}
+
+export interface RoundScore {
+  round: string
+  avg: number | null
+  people: number | null
+  comments: number | null
+  hotText: string | null
+  hotLight: number | null
+}
+
+export interface PlayerSummary {
+  totalPeople: number
+  /** 按各局评分人数加权（更接近「整场看完再打分」的直觉）。 */
+  weightedAvg: number | null
+  /** 各局均分的简单平均（每局等权，避免人数差太大时被单局吃掉）。 */
+  simpleAvg: number | null
+  rounds: number
+}
+
+/** 两位小数四舍五入。先用 toFixed(6) 抹掉浮点噪声，否则 38.1/4 会算成 9.524999…，被舍成 9.52。 */
+function round2(v: number): number {
+  return Math.round(Number((Math.round(v * 1e6) / 1e6).toFixed(6)) * 100) / 100
+}
+
+/** 多局分数汇总。纯函数：虎扑只给局级分数，「整场总分」只能这样合出来。 */
+export function summarizeRounds(rounds: RoundScore[]): PlayerSummary {
+  const usable = rounds.filter((r) => r.avg !== null && (r.people ?? 0) > 0)
+  const totalPeople = rounds.reduce((s, r) => s + (r.people ?? 0), 0)
+  if (usable.length === 0) {
+    return { totalPeople, weightedAvg: null, simpleAvg: null, rounds: rounds.length }
+  }
+  const weighted = usable.reduce((s, r) => s + (r.avg as number) * (r.people as number), 0)
+  const denom = usable.reduce((s, r) => s + (r.people as number), 0)
+  return {
+    totalPeople,
+    weightedAvg: denom > 0 ? round2(weighted / denom) : null,
+    simpleAvg: round2(usable.reduce((s, r) => s + (r.avg as number), 0) / usable.length),
+    rounds: rounds.length,
+  }
+}

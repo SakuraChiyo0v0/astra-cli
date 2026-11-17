@@ -3054,6 +3054,21 @@
       ]
     },
     {
+      "command": "hupu player",
+      "summary": "某选手在一场比赛里各局的评分 + 汇总（电竞按局合并）",
+      "usage": "astra hupu player <名字> [--match <matchId>] [--sport lol]",
+      "options": {
+        "--match <id>": "matchId，默认该赛事最近一场",
+        "--sport <id>": "赛事 id，默认 nba"
+      },
+      "notes": [
+        "不给 --match 时用该赛事最近一场有评分的比赛。",
+        "虎扑只给「局」级分数，整场汇总是 astra 自己合的：weightedAvg 按各局评分人数加权，simpleAvg 每局等权，两个都给你自己看。",
+        "篮球是整场一个节点，只有一行；电竞（lol）会展开每局。",
+        "名字先精确匹配，没命中再做包含匹配，都没有就把候选名字列出来。"
+      ]
+    },
+    {
       "command": "hupu boards",
       "summary": "可用的虎扑板块路径",
       "usage": "astra hupu boards",

@@ -9,7 +9,19 @@ import { invalidInput } from '../core/errors.ts'
 import { okResult } from '../core/output.ts'
 import { BOARDS, fetchPost, listBoard, tidOf, type HupuPost } from './api.ts'
 import { countPosts, openHupuDb, readPost, readScoreBoard, savePost, saveScoreBoard, searchPosts, type HupuPostRow } from './db.ts'
-import { SPORTS, fetchScoreBoard, listMatches, listSchedule, locateMatch, parentOf, type HupuScoreBoard } from './match.ts'
+import {
+  SPORTS,
+  fetchScoreBoard,
+  listChildren,
+  listMatches,
+  listSchedule,
+  locateMatch,
+  matchNodeOf,
+  parentOf,
+  summarizeRounds,
+  type HupuScoreBoard,
+  type RoundScore,
+} from './match.ts'
 
 function num(value: unknown, fallback: number, min: number, max: number, name: string): number {
   if (value === undefined) return fallback
@@ -405,4 +417,109 @@ const score: Command = {
   },
 }
 
-export const hupuCommands: Command[] = [list, post, find, match, score, boards, doctor]
+const player: Command = {
+  name: 'hupu player',
+  summary: '某选手在一场比赛里各局的评分 + 汇总（电竞按局合并）',
+  usage: 'astra hupu player <名字> [--match <matchId>] [--sport lol]',
+  notes: [
+    '不给 --match 时用该赛事最近一场有评分的比赛。',
+    '虎扑只给「局」级分数，整场汇总是 astra 自己合的：weightedAvg 按各局评分人数加权，simpleAvg 每局等权，两个都给你自己看。',
+    '篮球是整场一个节点，只有一行；电竞（lol）会展开每局。',
+    '名字先精确匹配，没命中再做包含匹配，都没有就把候选名字列出来。',
+  ],
+  options: {
+    match: { type: 'string', description: 'matchId，默认该赛事最近一场', valueName: 'id' },
+    sport: { type: 'string', description: '赛事 id，默认 nba', valueName: 'id' },
+  },
+  minArgs: 1,
+  maxArgs: 1,
+  async run({ positionals, values }) {
+    const name = (positionals[0] ?? '').trim()
+    if (!name) throw invalidInput('给选手名', '例：astra hupu player Bin --sport lol')
+    const sport = String(values.sport ?? 'nba').trim() || 'nba'
+
+    let matchId = String(values.match ?? '').trim()
+    if (!matchId) {
+      const { matches } = await listSchedule(sport)
+      const last = [...matches].reverse().find((m) => m.topItemNo)
+      if (!last) throw invalidInput('赛程里没有带评分的比赛', '先跑 `astra hupu match` 看看有哪些已结束的比赛')
+      matchId = last.matchId
+    }
+    const { type, no, match } = await matchNodeOf(matchId, sport)
+
+    const groups: Array<{ label: string; items: HupuScoreBoard['items'] }> = []
+    const kids = type.endsWith('_match') ? await listChildren(type, no) : []
+    if (kids.some((k) => k.subCount > 0)) {
+      for (const kid of kids) {
+        const board = await fetchScoreBoard(type.replace(/_match$/, '_bo'), kid.no)
+        groups.push({ label: kid.name, items: board.items })
+      }
+    } else {
+      const board = await fetchScoreBoard(type, no)
+      groups.push({ label: type.endsWith('_match') ? '整场' : type, items: board.items })
+    }
+
+    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '')
+    const wanted = norm(name)
+    const allNames = new Set<string>()
+    for (const g of groups) for (const it of g.items) allNames.add(it.name)
+
+    const pick = (matchFn: (n: string) => boolean): RoundScore[] => {
+      const out: RoundScore[] = []
+      for (const g of groups) {
+        for (const it of g.items) {
+          if (!matchFn(norm(it.name))) continue
+          out.push({
+            round: g.label,
+            avg: it.avg,
+            people: it.people,
+            comments: it.comments,
+            hotText: it.hotText,
+            hotLight: it.hotLight,
+          })
+        }
+      }
+      return out
+    }
+
+    let rounds = pick((n) => n === wanted)
+    if (rounds.length === 0) rounds = pick((n) => n.includes(wanted))
+    if (rounds.length === 0) {
+      throw invalidInput(`没找到「${name}」`, `候选：${[...allNames].slice(0, 15).join('、')}`)
+    }
+
+    const summary = summarizeRounds(rounds)
+    return {
+      ...okResult({
+        name,
+        matchId,
+        matchTitle: match.intro,
+        nodeType: type,
+        nodeNo: no,
+        summary,
+        rounds,
+      }),
+      table: {
+        headers: ['局', '均分', '评分人数', '评论', '热评亮'],
+        rows: [
+          ...rounds.map((r) => [
+            r.round,
+            r.avg === null ? '-' : r.avg.toFixed(1),
+            r.people === null ? '-' : String(r.people),
+            r.comments === null ? '-' : String(r.comments),
+            r.hotLight === null ? '-' : String(r.hotLight),
+          ]),
+          [
+            `合计（${summary.rounds} 局）`,
+            summary.weightedAvg === null ? '-' : `${summary.weightedAvg.toFixed(2)} 加权`,
+            String(summary.totalPeople),
+            summary.simpleAvg === null ? '-' : `简单均 ${summary.simpleAvg.toFixed(2)}`,
+            '-',
+          ],
+        ],
+      },
+    }
+  },
+}
+
+export const hupuCommands: Command[] = [list, post, find, match, score, player, boards, doctor]
